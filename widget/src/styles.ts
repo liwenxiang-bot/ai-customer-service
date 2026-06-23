@@ -78,7 +78,7 @@ export function buildStyles(themeColor: string): string {
 
 /* Input */
 .acs-input { border-top:1px solid var(--acs-border); padding:10px 12px; background:var(--acs-bg); display:flex; gap:8px; align-items:flex-end; }
-.acs-input textarea { flex:1; resize:none; border:1px solid var(--acs-border); border-radius:12px; padding:9px 12px; font-size:14px;
+.acs-input textarea { flex:1; resize:none; border:1px solid var(--acs-border); border-radius:12px; padding:9px 12px; font-size:16px;
   background:var(--acs-input-bg); color:var(--acs-text); outline:none; max-height:120px; line-height:1.5; }
 .acs-input textarea:focus { border-color:var(--acs-primary); }
 .acs-send { background:var(--acs-primary); border:none; color:#fff; width:38px; height:38px; border-radius:50%; cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
