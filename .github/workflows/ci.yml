@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: acs
+          POSTGRES_PASSWORD: acs_dev_pass
+          POSTGRES_DB: acs
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U acs" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      REDIS_HOST: localhost
+      APP_SECRET_KEY: ci-secret
+      JWT_SECRET: ci-jwt
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check app
+      - name: Migrate
+        run: alembic upgrade head
+      - name: Test
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: "**/pnpm-lock.yaml"
+      - name: Build widget
+        run: cd widget && pnpm install --no-frozen-lockfile && pnpm build
+      - name: Build admin
+        run: cd admin && pnpm install --no-frozen-lockfile && pnpm build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t acs-backend .
+      - name: Build admin image
+        run: docker build -f admin/Dockerfile -t acs-admin .

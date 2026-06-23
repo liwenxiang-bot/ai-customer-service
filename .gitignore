@@ -1,0 +1,42 @@
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Node
+node_modules/
+admin/dist/
+widget/dist/
+*.local
+.vite/
+
+# Editors / OS / tooling
+.DS_Store
+.idea/
+.vscode/
+.claude/
+*.swp
+*.tsbuildinfo
+
+# Logs / data
+*.log
+/data/
+/tmp/

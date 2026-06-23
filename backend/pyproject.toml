@@ -1,0 +1,25 @@
+[project]
+name = "acs-backend"
+version = "0.1.0"
+description = "AI Customer Service — backend (FastAPI)"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W"]
+# B008: FastAPI Depends() in defaults is idiomatic.
+# B904: HTTPException re-raises in API handlers intentionally drop the cause.
+ignore = ["B008", "B904", "E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.alembic]
+script_location = "alembic"

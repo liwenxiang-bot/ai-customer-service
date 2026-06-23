@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ACS Widget Dev</title>
+    <style>
+      body { font-family: sans-serif; padding: 40px; background: #fafafa; }
+    </style>
+  </head>
+  <body>
+    <h1>AI 客服 Widget — 开发预览</h1>
+    <p>右下角应出现客服按钮。后端需运行在 http://localhost:8000。</p>
+    <script>
+      window.ACS_CONFIG = { channelKey: "default", mode: "popup", baseUrl: "http://localhost:8000" };
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
