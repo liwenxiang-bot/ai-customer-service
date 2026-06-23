@@ -22,6 +22,12 @@ export function Conversations() {
   };
   useEffect(load, [JSON.stringify(params)]);
 
+  // Deep-link from a handoff notification (?session=ID) → auto-open that conversation.
+  useEffect(() => {
+    const sid = new URLSearchParams(window.location.search).get("session");
+    if (sid) conversationApi.detail(sid).then(setDetail).catch(() => {});
+  }, []);
+
   const columns = [
     { title: "标题", dataIndex: "title", render: (t: string) => t || "—" },
     { title: "渠道", dataIndex: "channel_type", width: 110, render: (c: string) => <Tag>{c}</Tag> },

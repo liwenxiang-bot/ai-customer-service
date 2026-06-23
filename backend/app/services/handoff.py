@@ -46,7 +46,8 @@ async def create_handoff(
 
     # Notify the operator. Best-effort: failure is recorded, not fatal.
     title = "🔔 转人工提醒"
-    link = f"{settings.app_base_url}/admin/conversations/{session.id}"
+    base = (settings.admin_base_url or settings.app_base_url).rstrip("/")
+    link = f"{base}/conversations?session={session.id}"
     body = (
         f"> 渠道：{session.channel_type}\n"
         f"> 用户：{session.end_user_display or session.end_user_id or '匿名'}\n"
