@@ -24,7 +24,8 @@ export function buildStyles(themeColor: string): string {
   border: 1px solid var(--acs-border);
 }
 .acs-fullscreen .acs-panel {
-  position: fixed; inset: 0; width: 100%; height: 100%; max-height: none; border-radius: 0; box-shadow: none;
+  position: fixed; inset: 0; width: 100%; height: 100%; max-height: none; border-radius: 0;
+  box-shadow: none; border: none;   /* 全屏时去掉悬浮窗那圈 1px 边框 */
   margin: 0 auto; max-width: 820px;
 }
 
