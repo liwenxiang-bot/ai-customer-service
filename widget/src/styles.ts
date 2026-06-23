@@ -77,6 +77,9 @@ export function buildStyles(themeColor: string): string {
 /* Escalation banner */
 .acs-escalation { font-size:12.5px; background:#fff7ed; color:#9a3412; border:1px solid #fed7aa; border-radius:10px; padding:8px 12px; }
 
+/* Human agent label */
+.acs-human-label { font-size:11px; color:#10b981; font-weight:600; margin-bottom:3px; }
+
 /* Input */
 .acs-input { border-top:1px solid var(--acs-border); padding:10px 12px; background:var(--acs-bg); display:flex; gap:8px; align-items:flex-end; }
 .acs-input textarea { flex:1; resize:none; border:1px solid var(--acs-border); border-radius:12px; padding:9px 12px; font-size:16px;

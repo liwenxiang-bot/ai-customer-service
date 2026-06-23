@@ -11,6 +11,8 @@ Reconnect/backfill: the client passes its session_id and uid on the URL and may 
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -20,12 +22,18 @@ from app.channels.base import InboundMessage
 from app.channels.web import web_adapter
 from app.core.logging import get_logger
 from app.core.ratelimit import check_chat_limits
+from app.core.redis_client import get_redis
 from app.db.session import session_scope
 from app.models.conversation import Message as DBMessage
 from app.models.enums import ChannelType, MessageRole
 from app.services.channel import get_web_channel, is_origin_allowed
 from app.services.conversation import handle_turn
 from app.services.feedback import set_feedback
+from app.services.takeover import (
+    is_takeover,
+    persist_customer_message,
+    push_channel,
+)
 
 router = APIRouter()
 log = get_logger("chat.ws")
@@ -68,6 +76,17 @@ async def chat_ws(
         {"type": "connected", "session_id": session_id or None, "end_user_id": end_user_id}
     )
 
+    # Background task that relays operator (takeover) messages to this socket.
+    push_task: asyncio.Task | None = None
+
+    def ensure_push_listener(sid: str) -> None:
+        nonlocal push_task
+        if sid and push_task is None:
+            push_task = asyncio.create_task(_push_listener(websocket, sid))
+
+    if session_id:
+        ensure_push_listener(session_id)
+
     try:
         while True:
             payload = await websocket.receive_json()
@@ -109,11 +128,19 @@ async def chat_ws(
                 )
                 continue
 
+            # ---- Human takeover: AI paused, just persist; the operator replies via push ----
+            if session_id and await is_takeover(session_id):
+                async with session_scope() as db:
+                    await persist_customer_message(db, session_id, text)
+                await websocket.send_json({"type": "received"})
+                continue
+
             new_sid = await _run_turn(
                 websocket, end_user_id, ip, text, session_id, channel_key, payload
             )
             # Adopt the (possibly newly created) session id for the rest of the connection.
             session_id = new_sid or session_id
+            ensure_push_listener(session_id)
 
     except WebSocketDisconnect:
         log.info("ws_disconnect", end_user_id=end_user_id)
@@ -121,6 +148,34 @@ async def chat_ws(
         log.warning("ws_error", error=str(exc))
         try:
             await websocket.send_json({"type": "error", "message": "连接出现异常"})
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        if push_task is not None:
+            push_task.cancel()
+
+
+async def _push_listener(websocket: WebSocket, session_id: str) -> None:
+    """Subscribe to the session's Redis channel and forward operator pushes to the WS."""
+    pubsub = get_redis().pubsub()
+    channel = push_channel(session_id)
+    try:
+        await pubsub.subscribe(channel)
+        async for message in pubsub.listen():
+            if message.get("type") != "message":
+                continue
+            try:
+                await websocket.send_json(json.loads(message["data"]))
+            except Exception:  # noqa: BLE001 — socket gone
+                break
+    except asyncio.CancelledError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        log.debug("push_listener_error", error=str(exc))
+    finally:
+        try:
+            await pubsub.unsubscribe(channel)
+            await pubsub.aclose()
         except Exception:  # noqa: BLE001
             pass
 
@@ -183,6 +238,7 @@ async def _send_history(ws: WebSocket, session_id: str, limit: int) -> None:
                     "content": m.content,
                     "citations": m.citations,
                     "feedback": m.feedback,
+                    "from_human": m.model == "human",
                     "created_at": m.created_at.isoformat() if m.created_at else None,
                 }
                 for m in rows

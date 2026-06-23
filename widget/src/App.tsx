@@ -27,6 +27,7 @@ interface Msg {
   streaming?: boolean;
   toolLabel?: string;
   escalated?: boolean;
+  fromHuman?: boolean;
 }
 
 function uidFor(channelKey: string): string {
@@ -98,10 +99,25 @@ export function App({ config }: { config: WidgetConfig }) {
               content: m.content,
               citations: m.citations,
               feedback: m.feedback,
+              fromHuman: m.from_human,
               status: "sent",
             }))
           );
         }
+        break;
+      case "human_takeover":
+      case "ai_resumed":
+      case "human_ended":
+        if (ev.message) appendSystem(ev.message);
+        break;
+      case "human_message":
+        setMessages((prev) => [
+          ...prev,
+          { id: ev.message_id || "h-" + Date.now(), role: "assistant", content: ev.content, fromHuman: true },
+        ]);
+        break;
+      case "received":
+        markLastUserSent();
         break;
       case "message_start":
         setBusy(true);
@@ -242,6 +258,7 @@ export function App({ config }: { config: WidgetConfig }) {
             {messages.map((m) => (
               <div class={`acs-msg ${m.role}`} key={m.id}>
                 {m.escalated && <div class="acs-escalation">🔔 已为你转接人工，稍后会有同事跟进。</div>}
+                {m.fromHuman && <div class="acs-human-label">👤 人工客服</div>}
                 <div
                   class="acs-bubble"
                   dangerouslySetInnerHTML={{

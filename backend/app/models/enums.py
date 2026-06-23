@@ -27,6 +27,7 @@ class SessionStatus(StrEnum):
     IDLE = "idle"
     CLOSED = "closed"
     ESCALATED = "escalated"      # handed off, awaiting human
+    HUMAN_TAKEOVER = "human_takeover"  # operator actively chatting; AI paused
     HUMAN_HANDLED = "human_handled"
 
 

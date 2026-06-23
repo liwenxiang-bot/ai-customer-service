@@ -16,6 +16,7 @@ from app.models.admin import AdminUser
 from app.models.conversation import Message, Session
 from app.models.enums import SessionStatus
 from app.services import knowledge as ksvc
+from app.services import takeover as tk
 
 router = APIRouter(prefix="/conversations", tags=["admin-conversations"])
 
@@ -148,3 +149,61 @@ async def to_knowledge(
     )
     await db.commit()
     return {"ok": True, "item_id": str(item.id)}
+
+
+# ----------------------------------------------------------- live human takeover
+async def _get_session_or_404(db: AsyncSession, session_id: str) -> Session:
+    try:
+        s = await db.get(Session, uuid.UUID(session_id))
+    except (ValueError, TypeError):
+        s = None
+    if not s:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return s
+
+
+@router.post("/{session_id}/takeover")
+async def takeover(
+    session_id: str, db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """Operator takes over: AI pauses, operator chats live with the customer."""
+    session = await _get_session_or_404(db, session_id)
+    await tk.start_takeover(db, session)
+    await db.commit()
+    return {"ok": True, "status": session.status}
+
+
+class ReplyIn(BaseModel):
+    content: str
+
+
+@router.post("/{session_id}/reply")
+async def reply(
+    session_id: str, body: ReplyIn, db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """Operator sends a message; it is pushed live to the customer's chat window."""
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="内容不能为空")
+    session = await _get_session_or_404(db, session_id)
+    msg = await tk.operator_reply(db, session, content)
+    await db.commit()
+    return {"ok": True, "message_id": str(msg.id)}
+
+
+class ReleaseIn(BaseModel):
+    resume_ai: bool = True
+
+
+@router.post("/{session_id}/release")
+async def release(
+    session_id: str, body: ReleaseIn, db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """End takeover. resume_ai=True → AI resumes; False → mark session human-handled."""
+    session = await _get_session_or_404(db, session_id)
+    await tk.end_takeover(db, session, resume_ai=body.resume_ai)
+    await db.commit()
+    return {"ok": True, "status": session.status}

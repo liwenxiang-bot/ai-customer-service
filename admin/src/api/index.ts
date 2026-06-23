@@ -71,6 +71,9 @@ export const conversationApi = {
   detail: (id: string) => api.get(`/conversations/${id}`).then((r) => r.data),
   markHandled: (id: string) => api.post(`/conversations/${id}/mark-handled`).then((r) => r.data),
   toKnowledge: (id: string, body: any) => api.post(`/conversations/${id}/to-knowledge`, body).then((r) => r.data),
+  takeover: (id: string) => api.post(`/conversations/${id}/takeover`).then((r) => r.data),
+  reply: (id: string, content: string) => api.post(`/conversations/${id}/reply`, { content }).then((r) => r.data),
+  release: (id: string, resumeAi: boolean) => api.post(`/conversations/${id}/release`, { resume_ai: resumeAi }).then((r) => r.data),
 };
 
 // ---- Handoff ----

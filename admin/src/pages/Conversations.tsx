@@ -66,58 +66,128 @@ function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
   const { message } = AntApp.useApp();
   const [kModal, setKModal] = useState<any>(null);
   const [form] = Form.useForm();
-  if (!detail) return null;
-  const s = detail.session;
+  const [live, setLive] = useState<any>(detail);
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const sid = detail?.session?.id;
+  const status = live?.session?.status;
+  const inTakeover = status === "human_takeover";
+
+  // Reset local state when a different conversation is opened.
+  useEffect(() => { setLive(detail); setReplyText(""); }, [sid]);
+
+  // Poll while the drawer is open so the operator sees the customer's replies live.
+  useEffect(() => {
+    if (!sid) return;
+    const t = setInterval(() => { conversationApi.detail(sid).then(setLive).catch(() => {}); }, 3000);
+    return () => clearInterval(t);
+  }, [sid]);
+
+  if (!detail || !live) return null;
+  const s = live.session;
+  const refresh = () => conversationApi.detail(sid).then(setLive).catch(() => {});
+
+  const doTakeover = async () => {
+    try { await conversationApi.takeover(sid); message.success("已接管，AI 已暂停，可直接回复客户"); refresh(); }
+    catch (e) { message.error(apiError(e)); }
+  };
+  const doRelease = async (resumeAi: boolean) => {
+    try {
+      await conversationApi.release(sid, resumeAi);
+      message.success(resumeAi ? "已结束接管，AI 恢复" : "已结束并标记完成");
+      refresh(); onChanged();
+    } catch (e) { message.error(apiError(e)); }
+  };
+  const sendReply = async () => {
+    const c = replyText.trim();
+    if (!c) return;
+    setSending(true);
+    try { await conversationApi.reply(sid, c); setReplyText(""); await refresh(); }
+    catch (e) { message.error(apiError(e)); }
+    finally { setSending(false); }
+  };
 
   return (
     <Drawer title="对话详情" width={720} open={!!detail} onClose={onClose}
-      extra={editable && s.escalated && <Button onClick={async () => { await conversationApi.markHandled(s.id); message.success("已标记完成"); onChanged(); onClose(); }}>标记已处理</Button>}
+      extra={editable && (
+        <Space>
+          {!inTakeover && <Button type="primary" onClick={doTakeover}>接管对话</Button>}
+          {inTakeover && <Button onClick={() => doRelease(true)}>结束接管 (AI 恢复)</Button>}
+          {inTakeover && <Button danger onClick={() => doRelease(false)}>结束并完成</Button>}
+          {s.escalated && !inTakeover && (
+            <Button onClick={async () => { await conversationApi.markHandled(s.id); message.success("已标记完成"); onChanged(); onClose(); }}>标记已处理</Button>
+          )}
+        </Space>
+      )}
     >
       <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
         <Descriptions.Item label="渠道">{s.channel_type}</Descriptions.Item>
         <Descriptions.Item label="用户">{s.end_user_display || s.end_user_id}</Descriptions.Item>
-        <Descriptions.Item label="状态">{s.escalated ? <Tag color="red">待人工</Tag> : s.status}</Descriptions.Item>
+        <Descriptions.Item label="状态">
+          {inTakeover ? <Tag color="green">人工接管中</Tag> : s.escalated ? <Tag color="red">待人工</Tag> : s.status}
+        </Descriptions.Item>
         <Descriptions.Item label="创建时间">{s.created_at?.replace("T", " ").slice(0, 19)}</Descriptions.Item>
         {s.summary && <Descriptions.Item label="摘要" span={2}>{s.summary}</Descriptions.Item>}
       </Descriptions>
 
       <Timeline
-        items={detail.messages.map((m: any) => ({
-          dot: m.role === "user" ? <UserOutlined /> : <RobotOutlined style={{ color: "#4f46e5" }} />,
-          children: (
-            <div>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                {m.role === "user" ? "用户" : "客服"}
-                {m.degraded && <Tag color="orange" style={{ marginLeft: 8 }}>降级</Tag>}
-                {m.model && <Tag style={{ marginLeft: 8 }}>{m.model}</Tag>}
-                {m.latency_ms > 0 && <span style={{ color: "#999", fontSize: 12, marginLeft: 8 }}>{m.latency_ms}ms · {m.prompt_tokens + m.completion_tokens} tokens · ${m.cost_usd?.toFixed(5)}</span>}
-              </div>
-              <div style={{ whiteSpace: "pre-wrap", marginBottom: 6 }}>{m.content}</div>
-              {m.tool_calls?.length > 0 && (
-                <Collapse size="small" ghost items={[{
-                  key: "t", label: <span><ToolOutlined /> 工具调用 ({m.tool_calls.length})</span>,
-                  children: m.tool_calls.map((tc: any, i: number) => (
-                    <div key={i} style={{ fontSize: 12, marginBottom: 8, background: "#fafafa", padding: 8, borderRadius: 6 }}>
-                      <b>{tc.name}</b> <Tag color={tc.status === "ok" ? "green" : "red"}>{tc.status}</Tag> {tc.duration_ms}ms
-                      <div style={{ color: "#666" }}>参数：{JSON.stringify(tc.arguments)}</div>
-                      <div style={{ color: "#666" }}>结果：{String(tc.result).slice(0, 200)}</div>
-                    </div>
-                  )),
-                }]} />
-              )}
-              {m.citations?.length > 0 && (
-                <div style={{ marginTop: 4 }}>
-                  {m.citations.map((c: any) => <Tooltip key={c.ref} title={c.snippet}><Tag icon={<BookOutlined />} color="blue">[{c.ref}] {c.title}</Tag></Tooltip>)}
+        items={live.messages.map((m: any) => {
+          const isHuman = m.model === "human";
+          return {
+            dot: m.role === "user" ? <UserOutlined /> : <RobotOutlined style={{ color: isHuman ? "#10b981" : "#4f46e5" }} />,
+            children: (
+              <div>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  {m.role === "user" ? "用户" : isHuman ? "人工客服" : "客服"}
+                  {isHuman && <Tag color="green" style={{ marginLeft: 8 }}>人工</Tag>}
+                  {m.degraded && <Tag color="orange" style={{ marginLeft: 8 }}>降级</Tag>}
+                  {!isHuman && m.model && <Tag style={{ marginLeft: 8 }}>{m.model}</Tag>}
+                  {m.latency_ms > 0 && <span style={{ color: "#999", fontSize: 12, marginLeft: 8 }}>{m.latency_ms}ms · {m.prompt_tokens + m.completion_tokens} tokens · ${m.cost_usd?.toFixed(5)}</span>}
                 </div>
-              )}
-              {m.trace_id && <div style={{ color: "#bbb", fontSize: 11, marginTop: 4 }}>trace: {m.trace_id}</div>}
-              {editable && m.role === "assistant" && m.content && (
-                <a style={{ fontSize: 12 }} onClick={() => { form.setFieldsValue({ content: m.content, title: "" }); setKModal(m); }}>加入知识库</a>
-              )}
-            </div>
-          ),
-        }))}
+                <div style={{ whiteSpace: "pre-wrap", marginBottom: 6 }}>{m.content}</div>
+                {m.tool_calls?.length > 0 && (
+                  <Collapse size="small" ghost items={[{
+                    key: "t", label: <span><ToolOutlined /> 工具调用 ({m.tool_calls.length})</span>,
+                    children: m.tool_calls.map((tc: any, i: number) => (
+                      <div key={i} style={{ fontSize: 12, marginBottom: 8, background: "#fafafa", padding: 8, borderRadius: 6 }}>
+                        <b>{tc.name}</b> <Tag color={tc.status === "ok" ? "green" : "red"}>{tc.status}</Tag> {tc.duration_ms}ms
+                        <div style={{ color: "#666" }}>参数：{JSON.stringify(tc.arguments)}</div>
+                        <div style={{ color: "#666" }}>结果：{String(tc.result).slice(0, 200)}</div>
+                      </div>
+                    )),
+                  }]} />
+                )}
+                {m.citations?.length > 0 && (
+                  <div style={{ marginTop: 4 }}>
+                    {m.citations.map((c: any) => <Tooltip key={c.ref} title={c.snippet}><Tag icon={<BookOutlined />} color="blue">[{c.ref}] {c.title}</Tag></Tooltip>)}
+                  </div>
+                )}
+                {m.trace_id && <div style={{ color: "#bbb", fontSize: 11, marginTop: 4 }}>trace: {m.trace_id}</div>}
+                {editable && m.role === "assistant" && !isHuman && m.content && (
+                  <a style={{ fontSize: 12 }} onClick={() => { form.setFieldsValue({ content: m.content, title: "" }); setKModal(m); }}>加入知识库</a>
+                )}
+              </div>
+            ),
+          };
+        })}
       />
+
+      {/* Live reply box — only while actively taken over. */}
+      {editable && inTakeover && (
+        <div style={{ position: "sticky", bottom: 0, background: "#fff", paddingTop: 12, borderTop: "1px solid #f0f0f0" }}>
+          <Space.Compact style={{ width: "100%" }}>
+            <Input.TextArea
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              autoSize={{ minRows: 1, maxRows: 4 }}
+              placeholder="输入回复，回车直接发给客户（Shift+Enter 换行）…"
+              onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); sendReply(); } }}
+            />
+            <Button type="primary" loading={sending} onClick={sendReply}>发送</Button>
+          </Space.Compact>
+        </div>
+      )}
 
       <Modal title="加入知识库" open={!!kModal} onCancel={() => setKModal(null)} onOk={async () => {
         const v = await form.validateFields();
