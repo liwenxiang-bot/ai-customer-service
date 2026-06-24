@@ -13,6 +13,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
 )
 from pydantic import BaseModel, Field
@@ -95,14 +96,26 @@ async def chat_upload(
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="文件过大（上限 10MB）")
 
-    url = await storage.put_object(data, content_type, prefix=f"chat/{channel_key}")
+    key = await storage.put_object(data, content_type, prefix=f"chat/{channel_key}")
     return {
-        "url": url,
+        "url": storage.media_url(key),
+        "key": key,
         "name": file.filename or "file",
         "content_type": content_type,
         "size": len(data),
         "kind": "image" if content_type.startswith("image/") else "file",
     }
+
+
+@router.get("/media/{key:path}")
+async def chat_media(key: str):
+    """Public proxy that streams a stored attachment back from object storage, so image
+    URLs are reachable by the browser (and the LLM) without exposing MinIO directly."""
+    try:
+        data, content_type = await storage.fetch_object(key)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="附件不存在") from exc
+    return Response(content=data, media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
 
 
 class MessageIn(BaseModel):

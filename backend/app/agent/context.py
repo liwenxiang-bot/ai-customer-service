@@ -9,9 +9,12 @@ see tasks/summarize). This caps cost and avoids blowing the model window
 
 from __future__ import annotations
 
+import base64
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import storage
 from app.core.logging import get_logger
 from app.llm.types import Message
 from app.models.config import AIConfig
@@ -52,7 +55,20 @@ def _is_image(att: dict) -> bool:
     return att.get("kind") == "image" or str(att.get("content_type", "")).startswith("image/")
 
 
-def _content_for(m: DBMessage, *, vision: bool, latest: bool) -> str | list:
+async def _image_payload_url(a: dict) -> str | None:
+    """Inline the image as a base64 data URL (works regardless of whether the LLM/relay
+    can fetch our media URL); fall back to the public URL if the object can't be read."""
+    key = a.get("key")
+    if key:
+        try:
+            data, ct = await storage.fetch_object(key)
+            return f"data:{ct};base64,{base64.b64encode(data).decode()}"
+        except Exception:  # noqa: BLE001 — fall back to the public URL
+            log.warning("image_inline_failed", key=key)
+    return a.get("url")
+
+
+async def _content_for(m: DBMessage, *, vision: bool, latest: bool) -> str | list:
     """Render a message's content. Images are sent as multimodal parts only for the
     current turn when vision is on; otherwise attachments degrade to a text note."""
     atts = m.attachments or []
@@ -64,8 +80,10 @@ def _content_for(m: DBMessage, *, vision: bool, latest: bool) -> str | list:
         if m.content:
             parts.append({"type": "text", "text": m.content})
         for a in atts:
-            if _is_image(a) and a.get("url"):
-                parts.append({"type": "image_url", "image_url": {"url": a["url"]}})
+            if _is_image(a):
+                url = await _image_payload_url(a)
+                if url:
+                    parts.append({"type": "image_url", "image_url": {"url": url}})
         files = [a.get("name") or "附件" for a in atts if not _is_image(a)]
         if files:
             parts.append({"type": "text", "text": f"（另附文件：{'、'.join(files)}）"})
@@ -125,7 +143,7 @@ async def build_messages(
         messages.append(
             {
                 "role": m.role,
-                "content": _content_for(m, vision=image_understanding, latest=m.seq == latest_user_seq),
+                "content": await _content_for(m, vision=image_understanding, latest=m.seq == latest_user_seq),
             }
         )
 
