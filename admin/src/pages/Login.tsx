@@ -1,20 +1,46 @@
-import { useState } from "react";
-import { Button, Card, Form, Input, Typography, App as AntApp } from "antd";
+import { useEffect, useState } from "react";
+import { Button, Card, Checkbox, Form, Input, Typography, App as AntApp } from "antd";
 import { LockOutlined, UserOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { apiError } from "../api/client";
+
+const REMEMBER_KEY = "acs_login_remember";
+
+// Lightweight local persistence for the "remember me" convenience on trusted machines.
+// (base64 is obfuscation, not encryption — leave unchecked on shared computers.)
+const enc = (s: string) => btoa(unescape(encodeURIComponent(s)));
+const dec = (s: string) => {
+  try { return decodeURIComponent(escape(atob(s))); } catch { return ""; }
+};
 
 export function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
   const { message } = AntApp.useApp();
   const [loading, setLoading] = useState(false);
+  const [form] = Form.useForm();
 
-  const onFinish = async (v: { email: string; password: string }) => {
+  // Pre-fill from a previously remembered login.
+  useEffect(() => {
+    const saved = localStorage.getItem(REMEMBER_KEY);
+    if (saved) {
+      try {
+        const { email, password } = JSON.parse(saved);
+        form.setFieldsValue({ email, password: dec(password || ""), remember: true });
+      } catch { /* ignore corrupt value */ }
+    }
+  }, [form]);
+
+  const onFinish = async (v: { email: string; password: string; remember?: boolean }) => {
     setLoading(true);
     try {
       await login(v.email, v.password);
+      if (v.remember) {
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ email: v.email, password: enc(v.password) }));
+      } else {
+        localStorage.removeItem(REMEMBER_KEY);
+      }
       nav("/dashboard");
     } catch (e) {
       message.error(apiError(e));
@@ -30,20 +56,20 @@ export function Login() {
           <Typography.Title level={3} style={{ marginBottom: 4 }}>🤖 AI 客服后台</Typography.Title>
           <Typography.Text type="secondary">运营管理后台 · 登录</Typography.Text>
         </div>
-        <Form layout="vertical" onFinish={onFinish} initialValues={{ email: "admin@example.com" }}>
+        <Form form={form} layout="vertical" onFinish={onFinish}>
           <Form.Item name="email" rules={[{ required: true, message: "请输入邮箱" }]}>
-            <Input size="large" prefix={<UserOutlined />} placeholder="邮箱" />
+            <Input size="large" prefix={<UserOutlined />} placeholder="邮箱" autoComplete="username" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: "请输入密码" }]}>
-            <Input.Password size="large" prefix={<LockOutlined />} placeholder="密码" />
+            <Input.Password size="large" prefix={<LockOutlined />} placeholder="密码" autoComplete="current-password" />
+          </Form.Item>
+          <Form.Item name="remember" valuePropName="checked" style={{ marginBottom: 16 }}>
+            <Checkbox>记住账号密码</Checkbox>
           </Form.Item>
           <Button type="primary" size="large" block htmlType="submit" loading={loading}>
             登录
           </Button>
         </Form>
-        <Typography.Text type="secondary" style={{ fontSize: 12, display: "block", marginTop: 16, textAlign: "center" }}>
-          默认账号 admin@example.com / admin12345（首次登录后请修改）
-        </Typography.Text>
       </Card>
     </div>
   );
