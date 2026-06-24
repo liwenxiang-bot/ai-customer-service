@@ -182,7 +182,7 @@ export function buildStyles(themeColor: string): string {
 .acs-att-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
 /* ----------------------------------------------------------------- quick actions (transfer / end) */
-.acs-quick { display:flex; gap:8px; padding:8px 12px 0; background:var(--acs-composer-bg); }
+.acs-quick { display:flex; gap:8px; padding:8px 12px 8px; background:var(--acs-composer-bg); }
 .acs-quick-btn { background:transparent; border:1px solid var(--acs-border); color:var(--acs-sub); border-radius:99px;
   padding:5px 11px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:5px;
   transition:background .15s, color .15s, border-color .15s; }
@@ -197,7 +197,7 @@ export function buildStyles(themeColor: string): string {
 .acs-attach:hover { background:var(--acs-bot-bubble); color:var(--acs-primary); }
 .acs-attach svg { width:20px; height:20px; }
 .acs-attach:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
-.acs-pending { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px 0; background:var(--acs-composer-bg); }
+.acs-pending { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px 8px; background:var(--acs-composer-bg); }
 .acs-pend { position:relative; display:flex; align-items:center; gap:7px; background:var(--acs-bot-bubble); border:1px solid var(--acs-border);
   border-radius:10px; padding:5px 8px; font-size:12px; color:var(--acs-text); max-width:180px; }
 .acs-pend img { width:30px; height:30px; border-radius:6px; object-fit:cover; flex-shrink:0; }
