@@ -48,6 +48,7 @@ interface Msg {
   toolLabel?: string;
   escalated?: boolean;
   fromHuman?: boolean;
+  system?: boolean; // status notices (takeover joined / AI resumed / ended) — rendered centered
   ts?: number; // epoch ms; absent for the greeting
 }
 
@@ -264,7 +265,7 @@ export function App({ config }: { config: WidgetConfig }) {
     );
   }
   function appendSystem(text: string) {
-    setMessages((prev) => [...prev, { id: "sys-" + Date.now(), role: "assistant", content: text, ts: Date.now() }]);
+    setMessages((prev) => [...prev, { id: "sys-" + Date.now(), role: "assistant", content: text, system: true, ts: Date.now() }]);
   }
 
   // ---- attachments ----
@@ -433,6 +434,9 @@ export function App({ config }: { config: WidgetConfig }) {
               return (
               <Fragment key={m.id}>
                 {sep && <div class="acs-date-sep"><span>{dayLabel(m.ts!)}</span></div>}
+                {m.system ? (
+                  <div class="acs-system"><span>{m.content}</span></div>
+                ) : (
                 <div class={`acs-msg ${m.role}`}>
                 {m.escalated && <div class="acs-escalation">🔔 已为你转接人工，稍后会有同事跟进。</div>}
                 {m.fromHuman && (
@@ -503,6 +507,7 @@ export function App({ config }: { config: WidgetConfig }) {
                 )}
                 {m.ts && !m.streaming && <div class="acs-time">{fmtTime(m.ts)}</div>}
                 </div>
+                )}
               </Fragment>
               );
             })}

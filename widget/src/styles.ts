@@ -154,6 +154,11 @@ export function buildStyles(themeColor: string): string {
 .acs-date-sep span { font-size:11px; color:var(--acs-sub); background:var(--acs-bot-bubble);
   padding:3px 11px; border-radius:99px; letter-spacing:.3px; }
 
+/* centered system status line:  ——— 人工客服已接入 ——— */
+.acs-system { align-self:stretch; display:flex; align-items:center; gap:10px; margin:8px 6px; }
+.acs-system::before, .acs-system::after { content:""; flex:1; height:1px; background:var(--acs-border); }
+.acs-system span { font-size:11.5px; color:var(--acs-text); opacity:.55; white-space:nowrap; letter-spacing:.2px; }
+
 /* ----------------------------------------------------------------- composer */
 .acs-input { border-top:1px solid var(--acs-border); padding:11px 12px; background:var(--acs-composer-bg);
   display:flex; gap:9px; align-items:flex-end; }
