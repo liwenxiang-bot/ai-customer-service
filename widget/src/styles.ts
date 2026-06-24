@@ -181,14 +181,19 @@ export function buildStyles(themeColor: string): string {
 .acs-att-file svg { width:18px; height:18px; flex-shrink:0; color:var(--acs-primary); }
 .acs-att-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* ----------------------------------------------------------------- quick actions (transfer / end) */
-.acs-quick { display:flex; gap:8px; padding:8px 12px 0; background:var(--acs-composer-bg); }
-.acs-quick-btn { background:transparent; border:1px solid var(--acs-border); color:var(--acs-sub); border-radius:99px;
-  padding:5px 11px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:5px; transition:background .15s, color .15s, border-color .15s; }
-.acs-quick-btn svg { width:13px; height:13px; }
-.acs-quick-btn:hover { color:var(--acs-text); background:var(--acs-bot-bubble); }
-.acs-quick-btn.danger:hover { color:#dc2626; border-color:color-mix(in srgb,#dc2626 40%, var(--acs-border)); }
-.acs-quick-btn:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
+/* ----------------------------------------------------------------- header "more" menu (transfer / end) */
+.acs-menu-backdrop { position:absolute; inset:0; z-index:6; }
+.acs-menu { position:absolute; top:54px; right:12px; z-index:7; min-width:138px; padding:6px;
+  background:var(--acs-bg); border:1px solid var(--acs-border); border-radius:12px;
+  box-shadow:0 12px 32px -10px rgba(17,24,39,.32); display:flex; flex-direction:column; gap:2px;
+  animation:acs-fade .14s ease both; }
+.acs-menu button { display:flex; align-items:center; gap:9px; width:100%; text-align:left; cursor:pointer;
+  background:transparent; border:none; color:var(--acs-text); font-size:13px; padding:9px 10px; border-radius:8px;
+  transition:background .14s, color .14s; }
+.acs-menu button svg { width:15px; height:15px; color:var(--acs-sub); }
+.acs-menu button:hover { background:var(--acs-bot-bubble); }
+.acs-menu button.danger:hover { color:#dc2626; }
+.acs-menu button.danger:hover svg { color:#dc2626; }
 
 /* ----------------------------------------------------------------- composer attach + pending */
 .acs-attach { background:transparent; border:none; color:var(--acs-sub); width:40px; height:40px; border-radius:50%; cursor:pointer;
@@ -199,7 +204,8 @@ export function buildStyles(themeColor: string): string {
 .acs-pending { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px 0; background:var(--acs-composer-bg); }
 .acs-pend { position:relative; display:flex; align-items:center; gap:7px; background:var(--acs-bot-bubble); border:1px solid var(--acs-border);
   border-radius:10px; padding:5px 8px; font-size:12px; color:var(--acs-text); max-width:180px; }
-.acs-pend img { width:30px; height:30px; border-radius:6px; object-fit:cover; }
+.acs-pend img { width:30px; height:30px; border-radius:6px; object-fit:cover; flex-shrink:0; }
+.acs-pend > svg { width:22px; height:22px; flex-shrink:0; color:var(--acs-sub); }  /* file placeholder icon */
 .acs-pend-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .acs-pend-x { cursor:pointer; color:var(--acs-sub); display:flex; }
 .acs-pend-x:hover { color:#dc2626; }

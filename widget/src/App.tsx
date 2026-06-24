@@ -79,6 +79,7 @@ export function App({ config }: { config: WidgetConfig }) {
   const [rating, setRating] = useState(0);
   const [rateNote, setRateNote] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const clientRef = useRef<ChatClient | null>(null);
   const channelKey = config.channelKey;
@@ -385,6 +386,11 @@ export function App({ config }: { config: WidgetConfig }) {
                 {status === "online" ? "在线" : status === "connecting" ? "连接中…" : "离线"}
               </div>
             </div>
+            {started && !ended && (
+              <button onClick={() => setMenuOpen((v) => !v)} aria-label="更多操作" title="更多">
+                <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+              </button>
+            )}
             <button onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="切换主题" title="切换主题">
               {theme === "light" ? (
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg>
@@ -398,6 +404,24 @@ export function App({ config }: { config: WidgetConfig }) {
               </button>
             )}
           </div>
+
+          {menuOpen && (
+            <>
+              <div class="acs-menu-backdrop" onClick={() => setMenuOpen(false)} />
+              <div class="acs-menu" role="menu">
+                {!escalated && (
+                  <button onClick={() => { requestHuman(); setMenuOpen(false); }}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                    转人工
+                  </button>
+                )}
+                <button class="danger" onClick={() => { setShowRate(true); setMenuOpen(false); }}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></svg>
+                  结束会话
+                </button>
+              </div>
+            </>
+          )}
 
           <div class="acs-messages" ref={listRef} role="log" aria-live="polite" aria-label="对话消息">
             {messages.map((m) => (
@@ -487,21 +511,6 @@ export function App({ config }: { config: WidgetConfig }) {
             </div>
           ) : (
             <>
-              {started && (
-                <div class="acs-quick">
-                  {!escalated && (
-                    <button class="acs-quick-btn" onClick={requestHuman} title="转接人工客服">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
-                      转人工
-                    </button>
-                  )}
-                  <button class="acs-quick-btn danger" onClick={() => setShowRate(true)} title="结束会话">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></svg>
-                    结束会话
-                  </button>
-                </div>
-              )}
-
               {pending.length > 0 && (
                 <div class="acs-pending">
                   {pending.map((p) => (
