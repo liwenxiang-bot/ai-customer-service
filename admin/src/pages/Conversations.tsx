@@ -41,6 +41,7 @@ export function Conversations() {
   return (
     <div>
       <div className="acs-page-title">对话记录</div>
+      <div className="acs-page-sub">查看全部历史会话与详情（工具调用、引用来源、调用链路），可一键加入知识库。实时接待请用「坐席工作台」。</div>
       <Card>
         <Space style={{ marginBottom: 16 }} wrap>
           <Input allowClear placeholder="搜索标题" style={{ width: 200 }} onChange={(e) => setParams((p: any) => ({ ...p, q: e.target.value, page: 1 }))} />

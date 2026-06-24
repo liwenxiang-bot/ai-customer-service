@@ -46,6 +46,7 @@ export function Handoff() {
       <div className="acs-page-title">
         转人工工单 <Badge count={data.open_count} style={{ marginLeft: 8 }} />
       </div>
+      <div className="acs-page-sub">AI 转人工产生的工单与通知送达记录；需要实时与客户对话请到「坐席工作台」。</div>
       <Card>
         <Space style={{ marginBottom: 16 }}>
           <Select allowClear placeholder="状态" style={{ width: 140 }}

@@ -61,6 +61,7 @@ export function AIConfig() {
   return (
     <div>
       <div className="acs-page-title">AI 配置</div>
+      <div className="acs-page-sub">切换对话 / 向量 / 重排模型与参数，设置客服人设与检索策略；更换向量模型会触发全量重建。</div>
 
       {rebuilding && (
         <Alert

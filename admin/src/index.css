@@ -17,11 +17,14 @@ body {
 }
 
 .acs-page-title {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 650;
   letter-spacing: -0.01em;
   color: #18222e;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
 }
-.acs-content { padding: 24px; }
+/* Tighten the gap to a description line when one follows the title. */
+.acs-page-title:has(+ .acs-page-sub) { margin-bottom: 4px; }
+.acs-page-sub { color: #5b6573; font-size: 13px; line-height: 1.5; margin-bottom: 18px; }
+.acs-content { padding: 20px; }
 .acs-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }

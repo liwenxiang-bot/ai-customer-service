@@ -28,6 +28,7 @@ export function Knowledge() {
   return (
     <div>
       <div className="acs-page-title">知识库管理</div>
+      <div className="acs-page-sub">维护 AI 回答所依据的资料；保存后自动向量化，支持版本回滚、批量导入与对话自动沉淀审核。</div>
       <Tabs
         activeKey={tab}
         onChange={setTab}

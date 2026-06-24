@@ -11,6 +11,7 @@ export function Accounts() {
   return (
     <div>
       <div className="acs-page-title">账号与权限</div>
+      <div className="acs-page-sub">管理后台账号与角色（管理员 / 运营 / 只读），查看敏感操作的审计日志。</div>
       <Tabs items={[
         { key: "users", label: "账号管理", children: <UsersTab /> },
         { key: "audit", label: "操作日志", children: <AuditTab /> },

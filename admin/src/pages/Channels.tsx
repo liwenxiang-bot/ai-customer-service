@@ -8,6 +8,7 @@ export function Channels() {
   return (
     <div>
       <div className="acs-page-title">渠道配置</div>
+      <div className="acs-page-sub">配置 Web 对话窗口的品牌与防滥用、转人工通知方式，以及企业微信接入。</div>
       <Tabs
         items={[
           { key: "web", label: "Web 对话窗口", children: <WebTab /> },

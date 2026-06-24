@@ -7,7 +7,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_operator
@@ -26,6 +26,8 @@ async def list_conversations(
     channel_type: str = "",
     escalated: bool | None = None,
     pending_human: bool = False,
+    attention: bool = False,
+    status: str = "",
     q: str = "",
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -39,6 +41,13 @@ async def list_conversations(
         stmt = stmt.where(Session.escalated.is_(escalated))
     if pending_human:
         stmt = stmt.where(Session.status == SessionStatus.ESCALATED)
+    if status:
+        stmt = stmt.where(Session.status == status)
+    # "Needs a human now": awaiting handoff OR currently taken over (workbench queue).
+    if attention:
+        stmt = stmt.where(
+            or_(Session.escalated.is_(True), Session.status == SessionStatus.HUMAN_TAKEOVER)
+        )
     if q:
         stmt = stmt.where(Session.title.ilike(f"%{q}%"))
 

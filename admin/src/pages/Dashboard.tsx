@@ -35,6 +35,7 @@ export function Dashboard() {
   return (
     <div>
       <div className="acs-page-title">概览</div>
+      <div className="acs-page-sub">今日核心指标与近 14 天趋势一览。</div>
       <Row gutter={[16, 16]}>
         {cards.map((c) => (
           <Col xs={12} sm={8} lg={4} key={c.title}>

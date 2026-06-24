@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Layout, Menu, Spin, Dropdown, Avatar, Tag } from "antd";
 import {
@@ -10,10 +11,12 @@ import {
   TeamOutlined,
   LogoutOutlined,
   UserOutlined,
+  BellOutlined,
 } from "@ant-design/icons";
 import { useAuth, isAdmin } from "./auth";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
+import { Workbench } from "./pages/Workbench";
 import { Knowledge } from "./pages/Knowledge";
 import { AIConfig } from "./pages/AIConfig";
 import { Channels } from "./pages/Channels";
@@ -25,9 +28,10 @@ const { Header, Sider, Content } = Layout;
 
 const MENU = [
   { key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
-  { key: "/knowledge", icon: <BookOutlined />, label: "知识库" },
+  { key: "/workbench", icon: <CustomerServiceOutlined />, label: "坐席工作台" },
   { key: "/conversations", icon: <MessageOutlined />, label: "对话记录" },
-  { key: "/handoff", icon: <CustomerServiceOutlined />, label: "转人工" },
+  { key: "/knowledge", icon: <BookOutlined />, label: "知识库" },
+  { key: "/handoff", icon: <BellOutlined />, label: "转人工工单" },
   { key: "/ai-config", icon: <RobotOutlined />, label: "AI 配置" },
   { key: "/channels", icon: <ApiOutlined />, label: "渠道配置" },
   { key: "/accounts", icon: <TeamOutlined />, label: "账号权限", adminOnly: true },
@@ -37,13 +41,14 @@ function AppLayout() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  const [collapsed, setCollapsed] = useState(false);
   const items = MENU.filter((m) => !m.adminOnly || isAdmin(user?.role));
 
   return (
     <Layout style={{ height: "100vh" }}>
-      <Sider theme="light" width={208} style={{ borderRight: "1px solid #E3E7EC" }}>
-        <div style={{ height: 56, display: "flex", alignItems: "center", gap: 8, padding: "0 20px", fontWeight: 700, fontSize: 16, color: "#0F766E" }}>
-          <RobotOutlined style={{ fontSize: 18 }} />AI 客服后台
+      <Sider theme="light" width={200} collapsible collapsed={collapsed} onCollapse={setCollapsed} style={{ borderRight: "1px solid #E3E7EC" }}>
+        <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, padding: collapsed ? 0 : "0 20px", fontWeight: 700, fontSize: 16, color: "#0F766E", whiteSpace: "nowrap", overflow: "hidden" }}>
+          <RobotOutlined style={{ fontSize: 18 }} />{!collapsed && "AI 客服后台"}
         </div>
         <Menu
           mode="inline"
@@ -70,6 +75,7 @@ function AppLayout() {
           <div className="acs-content">
             <Routes>
               <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/workbench" element={<Workbench />} />
               <Route path="/knowledge" element={<Knowledge />} />
               <Route path="/conversations" element={<Conversations />} />
               <Route path="/handoff" element={<Handoff />} />
