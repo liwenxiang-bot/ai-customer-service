@@ -26,7 +26,7 @@ cp .env.example .env
 ```ini
 APP_ENV=production
 APP_DEBUG=false
-APP_BASE_URL=https://chat.yourbiz.com        # 用于转人工通知里的后台链接
+APP_BASE_URL=https://chat.yourbiz.com        # ⚠️ 公开对话域名；客户上传的图片/附件 URL 也用它拼（/api/chat/media/…），写错图片会裂
 
 # ── 强随机密钥（生产必须改！）──
 APP_SECRET_KEY=<openssl rand -hex 32 生成>    # ⚠️ 第三方密钥用它加密，首次启动前定好，之后别再改
