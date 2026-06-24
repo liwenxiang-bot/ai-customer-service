@@ -42,8 +42,8 @@ function AppLayout() {
   return (
     <Layout style={{ height: "100vh" }}>
       <Sider theme="light" width={208} style={{ borderRight: "1px solid #E3E7EC" }}>
-        <div style={{ height: 56, display: "flex", alignItems: "center", padding: "0 20px", fontWeight: 700, fontSize: 16, color: "#0F766E" }}>
-          🤖 AI 客服后台
+        <div style={{ height: 56, display: "flex", alignItems: "center", gap: 8, padding: "0 20px", fontWeight: 700, fontSize: 16, color: "#0F766E" }}>
+          <RobotOutlined style={{ fontSize: 18 }} />AI 客服后台
         </div>
         <Menu
           mode="inline"

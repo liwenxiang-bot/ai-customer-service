@@ -87,6 +87,7 @@ export function buildStyles(themeColor: string): string {
   width:30px; height:30px; border-radius:8px; font-size:15px; display:flex; align-items:center; justify-content:center; transition:background .15s, opacity .15s; }
 .acs-header button:hover { opacity:1; background:rgba(255,255,255,.16); }
 .acs-header button:focus-visible { outline:2px solid rgba(255,255,255,.7); outline-offset:1px; }
+.acs-header button svg { width:17px; height:17px; }
 
 /* ----------------------------------------------------------------- messages */
 .acs-messages { flex:1; min-height:0; overflow-y:auto; padding:18px 16px 8px; background:var(--acs-bg);
@@ -137,6 +138,7 @@ export function buildStyles(themeColor: string): string {
 
 /* human-agent handoff identity */
 .acs-human-label { font-size:11.5px; color:#0f9d6e; font-weight:600; margin-bottom:4px; display:flex; align-items:center; gap:5px; letter-spacing:.2px; }
+.acs-human-label svg { width:13px; height:13px; }
 .acs-escalation { font-size:12.5px; background:color-mix(in srgb, #f59e0b 12%, var(--acs-bg)); color:#9a6207;
   border:1px solid color-mix(in srgb, #f59e0b 28%, transparent); border-radius:12px; padding:9px 12px; line-height:1.5; }
 .acs-dark .acs-escalation { color:#fbbf24; }

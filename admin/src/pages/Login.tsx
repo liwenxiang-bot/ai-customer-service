@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Checkbox, Form, Input, Typography, App as AntApp } from "antd";
-import { LockOutlined, UserOutlined } from "@ant-design/icons";
+import { LockOutlined, UserOutlined, RobotOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
 import { apiError } from "../api/client";
@@ -53,7 +53,9 @@ export function Login() {
     <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(140deg,#0F766E 0%,#115E59 55%,#134E4A 100%)" }}>
       <Card style={{ width: 380, boxShadow: "0 12px 48px rgba(0,0,0,.2)" }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <Typography.Title level={3} style={{ marginBottom: 4 }}>🤖 AI 客服后台</Typography.Title>
+          <Typography.Title level={3} style={{ marginBottom: 4 }}>
+            <RobotOutlined style={{ color: "#0F766E", marginRight: 8 }} />AI 客服后台
+          </Typography.Title>
           <Typography.Text type="secondary">运营管理后台 · 登录</Typography.Text>
         </div>
         <Form form={form} layout="vertical" onFinish={onFinish}>

@@ -54,6 +54,14 @@ export function App({ config }: { config: WidgetConfig }) {
   const uid = useRef(uidFor(channelKey));
   const sessionKey = `acs_session_${channelKey}`;
   const listRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grow the composer with its content (up to a cap) instead of scrolling a 1-row box.
+  const autoGrow = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+  };
 
   // ---- connection lifecycle ----
   useEffect(() => {
@@ -197,6 +205,7 @@ export function App({ config }: { config: WidgetConfig }) {
     const client = clientRef.current!;
     setMessages((prev) => [...prev, { id: "u-" + Date.now(), role: "user", content: text, status: "sending" }]);
     setInput("");
+    if (taRef.current) taRef.current.style.height = "auto"; // reset composer height
     if (!client.isOpen()) {
       client.connect(() => client.sendMessage(text));
     } else {
@@ -245,11 +254,15 @@ export function App({ config }: { config: WidgetConfig }) {
               </div>
             </div>
             <button onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="切换主题" title="切换主题">
-              {theme === "light" ? "🌙" : "☀️"}
+              {theme === "light" ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" /></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" /></svg>
+              )}
             </button>
             {!fullscreen && (
               <button onClick={() => setOpen(false)} aria-label="关闭" title="收起">
-                ✕
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
               </button>
             )}
           </div>
@@ -258,7 +271,12 @@ export function App({ config }: { config: WidgetConfig }) {
             {messages.map((m) => (
               <div class={`acs-msg ${m.role}`} key={m.id}>
                 {m.escalated && <div class="acs-escalation">🔔 已为你转接人工，稍后会有同事跟进。</div>}
-                {m.fromHuman && <div class="acs-human-label">👤 人工客服</div>}
+                {m.fromHuman && (
+                  <div class="acs-human-label">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                    人工客服
+                  </div>
+                )}
                 <div
                   class="acs-bubble"
                   dangerouslySetInnerHTML={{
@@ -302,11 +320,12 @@ export function App({ config }: { config: WidgetConfig }) {
 
           <div class="acs-input">
             <textarea
+              ref={taRef}
               rows={1}
               aria-label="输入消息"
               placeholder={b.placeholder}
               value={input}
-              onInput={(e) => setInput((e.target as HTMLTextAreaElement).value)}
+              onInput={(e) => { setInput((e.target as HTMLTextAreaElement).value); autoGrow(e.target as HTMLTextAreaElement); }}
               onKeyDown={onKey}
             />
             <button class="acs-send" disabled={busy || !input.trim()} onClick={send} aria-label="发送">
