@@ -48,13 +48,13 @@ export function Handoff() {
       </div>
       <div className="acs-page-sub">AI 转人工产生的工单与通知送达记录；需要实时与客户对话请到「坐席工作台」。</div>
       <Card>
-        <Space style={{ marginBottom: 16 }}>
+        <Space style={{ marginBottom: 12 }}>
           <Select allowClear placeholder="状态" style={{ width: 140 }}
             options={[{ value: "open", label: "待处理" }, { value: "resolved", label: "已解决" }]}
             onChange={(v) => setParams((p: any) => ({ ...p, status: v || "", page: 1 }))} />
         </Space>
-        <Table rowKey="id" loading={loading} columns={columns as any} dataSource={data.items}
-          pagination={{ current: params.page, pageSize: params.page_size, total: data.total,
+        <Table rowKey="id" loading={loading} columns={columns as any} dataSource={data.items} size="small"
+          pagination={{ current: params.page, pageSize: params.page_size, total: data.total, showTotal: (t) => `共 ${t} 条`,
             onChange: (page, page_size) => setParams((p: any) => ({ ...p, page, page_size })) }}
         />
       </Card>

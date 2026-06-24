@@ -62,7 +62,7 @@ function UsersTab() {
   return (
     <Card>
       <Button type="primary" icon={<PlusOutlined />} style={{ marginBottom: 16 }} onClick={() => openModal(null)}>新增账号</Button>
-      <Table rowKey="id" columns={columns as any} dataSource={users} pagination={false} />
+      <Table rowKey="id" columns={columns as any} dataSource={users} pagination={false} size="small" />
       <Modal title={modal?.id ? "编辑账号" : "新增账号"} open={!!modal} onCancel={() => setModal(null)} onOk={save}>
         <Form form={form} layout="vertical">
           <Form.Item name="email" label="邮箱" rules={[{ required: true, type: "email" }]}><Input disabled={!!modal?.id} /></Form.Item>
@@ -93,7 +93,7 @@ function AuditTab() {
   ];
   return (
     <Card>
-      <Table rowKey="id" columns={columns as any} dataSource={data.items}
+      <Table rowKey="id" columns={columns as any} dataSource={data.items} size="small"
         pagination={{ current: params.page, pageSize: params.page_size, total: data.total,
           onChange: (page, page_size) => setParams({ page, page_size }) }}
       />
