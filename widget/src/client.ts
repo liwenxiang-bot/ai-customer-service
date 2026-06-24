@@ -17,6 +17,7 @@ export class ChatClient {
   private reconnectAttempts = 0;
   private closedByUser = false;
   private onOpenCb: (() => void) | null = null;
+  private pendingSends: Record<string, unknown>[] = []; // queued while offline, flushed once on open
 
   sessionId: string;
   uid: string;
@@ -35,8 +36,14 @@ export class ChatClient {
   }
 
   connect(onOpen?: () => void) {
-    this.onOpenCb = onOpen || null;
+    if (onOpen) this.onOpenCb = onOpen;
     this.closedByUser = false;
+    // Don't open a second socket if one is already live or in progress — otherwise a
+    // send-triggered connect() during a reconnect would spawn duplicate connections.
+    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+      if (this.ws.readyState === WebSocket.OPEN) this.flushOnOpen();
+      return;
+    }
     const full = this.sessionId ? `${this.url}&session_id=${encodeURIComponent(this.sessionId)}` : this.url;
     try {
       this.ws = new WebSocket(full);
@@ -50,7 +57,7 @@ export class ChatClient {
       this.startHeartbeat();
       // Restore transcript after a (re)connect.
       if (this.sessionId) this.send({ type: "history", limit: 50 });
-      this.onOpenCb?.();
+      this.flushOnOpen();
     };
 
     this.ws.onmessage = (e) => {
@@ -76,12 +83,24 @@ export class ChatClient {
     };
   }
 
+  /** Drain queued sends (once) and fire the one-shot open callback. */
+  private flushOnOpen() {
+    const queued = this.pendingSends;
+    this.pendingSends = [];
+    queued.forEach((p) => this.send(p));
+    const cb = this.onOpenCb;
+    this.onOpenCb = null;
+    cb?.();
+  }
+
   private scheduleReconnect() {
     this.reconnectAttempts += 1;
     const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 15000);
     this.handler({ type: "_reconnecting", attempt: this.reconnectAttempts });
     setTimeout(() => {
-      if (!this.closedByUser) this.connect(this.onOpenCb || undefined);
+      // Reconnect only restores the transcript; never replays queued sends here, or a
+      // flaky connection would post the same message multiple times.
+      if (!this.closedByUser) this.connect();
     }, delay);
   }
 
@@ -106,7 +125,9 @@ export class ChatClient {
   }
 
   sendMessage(text: string, attachments?: any[]) {
-    this.send({ type: "user_message", text, attachments: attachments || [] });
+    const payload = { type: "user_message", text, attachments: attachments || [] };
+    if (this.isOpen()) this.send(payload);
+    else this.pendingSends.push(payload); // flushed exactly once on next open
   }
 
   sendFeedback(messageId: string, kind: "up" | "down") {

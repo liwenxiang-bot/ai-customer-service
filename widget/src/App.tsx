@@ -297,8 +297,8 @@ export function App({ config }: { config: WidgetConfig }) {
       ...prev,
       { id: "u-" + Date.now(), role: "user", content: text, attachments: atts.length ? atts : undefined, status: "sending", ts: Date.now() },
     ]);
-    if (!client.isOpen()) client.connect(() => client.sendMessage(text, atts));
-    else client.sendMessage(text, atts);
+    if (!client.isOpen()) client.connect();
+    client.sendMessage(text, atts); // queues if still connecting, flushes exactly once on open
   }
 
   function send() {
