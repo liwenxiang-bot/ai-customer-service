@@ -55,6 +55,21 @@ def _is_image(att: dict) -> bool:
     return att.get("kind") == "image" or str(att.get("content_type", "")).startswith("image/")
 
 
+def messages_have_image_parts(messages: list[Message]) -> bool:
+    """Return True when the assembled prompt contains OpenAI-style image parts."""
+    return any(_content_has_image_parts(m.get("content")) for m in messages)
+
+
+def _content_has_image_parts(content: object) -> bool:
+    if not isinstance(content, list):
+        return False
+    return any(
+        isinstance(part, dict)
+        and (part.get("type") == "image_url" or bool(part.get("image_url")))
+        for part in content
+    )
+
+
 async def _image_payload_url(a: dict) -> str | None:
     """Inline the image as a base64 data URL (works regardless of whether the LLM/relay
     can fetch our media URL); fall back to the public URL if the object can't be read."""

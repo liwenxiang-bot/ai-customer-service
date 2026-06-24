@@ -137,7 +137,11 @@ async def handle_turn(
         return
 
     # ---- Semantic cache: short-circuit repeated FAQs (optional) ----
-    cached = await semantic_cache.lookup(db, ai_config, inbound.text)
+    # Attachment turns depend on uploaded content, so a text-only semantic-cache hit would
+    # be stale or outright wrong for prompts like "这个是啥".
+    cached = None
+    if inbound.text and not inbound.attachments:
+        cached = await semantic_cache.lookup(db, ai_config, inbound.text)
     if cached:
         await _persist_assistant_text(db, session, cached["answer"], cached["citations"], cache_hit=True)
         yield AgentEvent(kind="text", text=cached["answer"])

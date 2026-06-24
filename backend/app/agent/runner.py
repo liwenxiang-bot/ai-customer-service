@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.context import build_messages, needs_summarization
+from app.agent.context import build_messages, messages_have_image_parts, needs_summarization
 from app.agent.events import AgentEvent
 from app.agent.tools.base import ToolContext, ToolRegistry
 from app.config import settings
@@ -59,6 +59,9 @@ class AgentRunner:
         messages = await build_messages(
             db, session, self.ai_config, self.channel_system_prompt, self.image_understanding
         )
+        has_image_input = messages_have_image_parts(messages)
+        image_tools_disabled = False
+        vision_fallback_used = False
         tool_schemas = self.registry.schemas()
         ctx = ToolContext(db=db, session=session, ai_config=self.ai_config, trace_id=trace_id)
 
@@ -68,14 +71,20 @@ class AgentRunner:
         degraded = False
         max_loops = settings.max_tool_calls_per_turn
 
-        for loop_i in range(max_loops + 1):
+        loop_i = 0
+        while loop_i <= max_loops:
             allow_tools = loop_i < max_loops  # last pass: force a tool-free answer
+            tools_for_call = (
+                tool_schemas
+                if allow_tools and not (has_image_input and image_tools_disabled)
+                else None
+            )
             assistant_text = ""
             pending: list[ToolCall] = []
             errored = False
 
             async for ev in self.provider.stream_chat(
-                messages, tools=tool_schemas if allow_tools else None
+                messages, tools=tools_for_call
             ):
                 if ev.kind == "text":
                     assistant_text += ev.text
@@ -91,6 +100,33 @@ class AgentRunner:
                     log.warning("llm_error_in_turn", error=ev.error, loop=loop_i)
 
             if errored and not assistant_text and not tool_trace:
+                if has_image_input and tools_for_call and not image_tools_disabled:
+                    # Some OpenAI-compatible gateways reject multimodal messages when tool
+                    # schemas are present. Retry once without tools before giving up on vision.
+                    image_tools_disabled = True
+                    log.warning(
+                        "llm_image_retry_without_tools",
+                        model=self.ai_config.llm_model,
+                        loop=loop_i,
+                    )
+                    continue
+                if has_image_input and not vision_fallback_used:
+                    # If the selected model or relay does not accept image inputs at all,
+                    # rebuild the prompt with attachment names only so the turn can still
+                    # complete gracefully instead of surfacing a generic failure.
+                    messages = await build_messages(
+                        db,
+                        session,
+                        self.ai_config,
+                        self.channel_system_prompt,
+                        image_understanding=False,
+                    )
+                    has_image_input = False
+                    image_tools_disabled = False
+                    vision_fallback_used = True
+                    degraded = True
+                    log.warning("llm_image_retry_as_text", model=self.ai_config.llm_model)
+                    continue
                 # Hard provider failure on the first pass → graceful degrade.
                 degraded = True
                 final_text = (
@@ -129,6 +165,7 @@ class AgentRunner:
                 yield AgentEvent(kind="citations", citations=list(ctx.citations))
             if ctx.escalation:
                 yield AgentEvent(kind="escalation", data=ctx.escalation)
+            loop_i += 1
 
         # ---- Persist the assistant message with the full trace ----
         latency_ms = int((time.monotonic() - started) * 1000)
