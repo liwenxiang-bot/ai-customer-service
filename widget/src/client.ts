@@ -105,12 +105,39 @@ export class ChatClient {
     if (this.isOpen()) this.ws!.send(JSON.stringify(obj));
   }
 
-  sendMessage(text: string) {
-    this.send({ type: "user_message", text });
+  sendMessage(text: string, attachments?: any[]) {
+    this.send({ type: "user_message", text, attachments: attachments || [] });
   }
 
   sendFeedback(messageId: string, kind: "up" | "down") {
     this.send({ type: "feedback", message_id: messageId, kind });
+  }
+
+  requestHuman() {
+    this.send({ type: "request_human" });
+  }
+
+  endSession(rating?: number, note?: string) {
+    this.send({ type: "end_session", rating: rating || 0, note: note || "" });
+  }
+
+  /** Upload one attachment over HTTP; returns the stored descriptor. */
+  async uploadFile(file: File): Promise<any> {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("channel_key", this.channelKey);
+    fd.append("uid", this.uid);
+    const res = await fetch(`${this.origin}/api/chat/upload`, { method: "POST", body: fd });
+    if (!res.ok) {
+      let detail = "上传失败";
+      try {
+        detail = (await res.json()).detail || detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    return res.json();
   }
 
   close() {

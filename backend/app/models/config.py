@@ -55,6 +55,8 @@ class ChannelConfig(Base, TimestampMixin, TenantMixin):
             "default_theme": "light",  # light | dark
             "show_powered_by": True,
             "image_understanding_enabled": False,
+            "file_upload_enabled": True,
+            "suggested_questions": [],
         }
 
 

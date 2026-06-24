@@ -76,5 +76,7 @@ def public_branding(channel: ChannelConfig) -> dict:
         "default_theme": s.get("default_theme", "light"),
         "show_powered_by": s.get("show_powered_by", True),
         "image_understanding_enabled": s.get("image_understanding_enabled", False),
+        "file_upload_enabled": s.get("file_upload_enabled", True),
+        "suggested_questions": s.get("suggested_questions", []),
         "enabled": channel.enabled,
     }

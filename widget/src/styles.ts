@@ -164,6 +164,76 @@ export function buildStyles(themeColor: string): string {
 .acs-send:focus-visible { outline:3px solid var(--acs-primary-soft); outline-offset:2px; }
 .acs-powered { text-align:center; font-size:10.5px; color:var(--acs-sub); padding:0 0 9px; background:var(--acs-composer-bg); letter-spacing:.2px; }
 
+/* ----------------------------------------------------------------- suggested questions */
+.acs-suggest { display:flex; flex-direction:column; gap:7px; align-items:flex-start; margin-top:2px; }
+.acs-suggest-btn { text-align:left; background:var(--acs-bg); color:var(--acs-primary); cursor:pointer; line-height:1.4; max-width:100%;
+  border:1px solid color-mix(in srgb, var(--acs-primary) 32%, var(--acs-border)); border-radius:13px; padding:8px 13px; font-size:13px;
+  transition:background .15s, transform .12s; }
+.acs-suggest-btn:hover { background:var(--acs-primary-soft); }
+.acs-suggest-btn:active { transform:scale(.98); }
+
+/* ----------------------------------------------------------------- attachments in bubbles */
+.acs-atts { display:flex; flex-wrap:wrap; gap:8px; margin-top:7px; }
+.acs-msg.user .acs-atts { justify-content:flex-end; }
+.acs-att-img { width:150px; max-width:62%; border-radius:12px; border:1px solid var(--acs-border); cursor:pointer; display:block; object-fit:cover; }
+.acs-att-file { display:flex; align-items:center; gap:8px; text-decoration:none; background:var(--acs-bot-bubble); color:var(--acs-text);
+  border:1px solid var(--acs-border); border-radius:12px; padding:9px 12px; font-size:13px; max-width:240px; }
+.acs-att-file svg { width:18px; height:18px; flex-shrink:0; color:var(--acs-primary); }
+.acs-att-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* ----------------------------------------------------------------- quick actions (transfer / end) */
+.acs-quick { display:flex; gap:8px; padding:8px 12px 0; background:var(--acs-composer-bg); }
+.acs-quick-btn { background:transparent; border:1px solid var(--acs-border); color:var(--acs-sub); border-radius:99px;
+  padding:5px 11px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:5px; transition:background .15s, color .15s, border-color .15s; }
+.acs-quick-btn svg { width:13px; height:13px; }
+.acs-quick-btn:hover { color:var(--acs-text); background:var(--acs-bot-bubble); }
+.acs-quick-btn.danger:hover { color:#dc2626; border-color:color-mix(in srgb,#dc2626 40%, var(--acs-border)); }
+.acs-quick-btn:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
+
+/* ----------------------------------------------------------------- composer attach + pending */
+.acs-attach { background:transparent; border:none; color:var(--acs-sub); width:40px; height:40px; border-radius:50%; cursor:pointer;
+  flex-shrink:0; display:flex; align-items:center; justify-content:center; transition:background .15s, color .15s; }
+.acs-attach:hover { background:var(--acs-bot-bubble); color:var(--acs-primary); }
+.acs-attach svg { width:20px; height:20px; }
+.acs-attach:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
+.acs-pending { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px 0; background:var(--acs-composer-bg); }
+.acs-pend { position:relative; display:flex; align-items:center; gap:7px; background:var(--acs-bot-bubble); border:1px solid var(--acs-border);
+  border-radius:10px; padding:5px 8px; font-size:12px; color:var(--acs-text); max-width:180px; }
+.acs-pend img { width:30px; height:30px; border-radius:6px; object-fit:cover; }
+.acs-pend-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.acs-pend-x { cursor:pointer; color:var(--acs-sub); display:flex; }
+.acs-pend-x:hover { color:#dc2626; }
+.acs-pend-x svg { width:14px; height:14px; }
+.acs-pend.uploading { opacity:.55; }
+
+/* stop-generation button (replaces send while streaming) */
+.acs-send.acs-stop { background:var(--acs-bot-bubble); color:var(--acs-text); box-shadow:none; }
+.acs-send.acs-stop:hover { background:var(--acs-border); transform:none; }
+
+/* ----------------------------------------------------------------- rating / end session */
+.acs-rate-overlay { position:absolute; inset:0; background:color-mix(in srgb, #0b0e13 45%, transparent); display:flex;
+  align-items:center; justify-content:center; padding:20px; z-index:5; animation: acs-fade .2s ease both; }
+@keyframes acs-fade { from{opacity:0} to{opacity:1} }
+.acs-rate-card { background:var(--acs-bg); color:var(--acs-text); border-radius:16px; padding:20px 18px; width:100%; max-width:300px;
+  box-shadow:0 20px 50px -12px rgba(0,0,0,.4); text-align:center; }
+.acs-rate-card h4 { margin:0 0 4px; font-size:15px; font-weight:650; }
+.acs-rate-card p { margin:0 0 14px; font-size:12.5px; color:var(--acs-sub); }
+.acs-stars { display:flex; justify-content:center; gap:6px; margin-bottom:14px; }
+.acs-star { cursor:pointer; color:var(--acs-border); transition:transform .12s, color .12s; background:none; border:none; padding:0; }
+.acs-star svg { width:30px; height:30px; }
+.acs-star.on { color:#f5b301; }
+.acs-star:hover { transform:scale(1.12); }
+.acs-rate-note { width:100%; border:1.5px solid var(--acs-border); border-radius:10px; padding:8px 10px; font-size:13px; resize:none;
+  background:var(--acs-input-bg); color:var(--acs-text); outline:none; margin-bottom:12px; font-family:inherit; }
+.acs-rate-note:focus { border-color:var(--acs-primary); }
+.acs-rate-actions { display:flex; gap:8px; }
+.acs-rate-actions button { flex:1; border-radius:10px; padding:9px; font-size:13px; cursor:pointer; border:none; transition:opacity .15s; }
+.acs-rate-skip { background:var(--acs-bot-bubble); color:var(--acs-sub); }
+.acs-rate-submit { background:var(--acs-primary); color:var(--acs-on-primary); font-weight:600; }
+.acs-rate-actions button:hover { opacity:.88; }
+.acs-ended { text-align:center; font-size:12.5px; color:var(--acs-sub); padding:12px; }
+.acs-ended a { color:var(--acs-primary); cursor:pointer; font-weight:500; }
+
 /* ----------------------------------------------------------------- responsive */
 @media (max-width:480px) {
   .acs-panel { right:0; bottom:0; width:100vw; height:100dvh; max-height:none; border-radius:0; border:none; }
@@ -173,7 +243,7 @@ export function buildStyles(themeColor: string): string {
 
 /* ----------------------------------------------------------------- a11y */
 @media (prefers-reduced-motion: reduce) {
-  .acs-msg, .acs-panel { animation: none; }
+  .acs-msg, .acs-panel, .acs-rate-overlay { animation: none; }
   .acs-launcher::after, .acs-header .acs-status::before, .acs-dots span { animation: none; }
   .acs-launcher, .acs-send, .acs-fb button { transition: none; }
   .acs-messages { scroll-behavior: auto; }

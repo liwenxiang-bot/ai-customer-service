@@ -56,6 +56,8 @@ function WebTab() {
           logo_url: v.logo_url, brand_name: v.brand_name, placeholder: v.placeholder,
           default_theme: v.default_theme, show_powered_by: v.show_powered_by,
           image_understanding_enabled: v.image_understanding_enabled,
+          file_upload_enabled: v.file_upload_enabled,
+          suggested_questions: v.suggested_questions || [],
         },
       });
       message.success("已保存");
@@ -69,11 +71,15 @@ function WebTab() {
         <Divider orientation="left">品牌化</Divider>
         <Form.Item name="brand_name" label="品牌名称"><Input /></Form.Item>
         <Form.Item name="welcome_message" label="欢迎语"><Input.TextArea rows={2} /></Form.Item>
+        <Form.Item name="suggested_questions" label="快捷问题（欢迎语下方可点选，引导高频问题）">
+          <Select mode="tags" tokenSeparators={["\n"]} placeholder="输入后回车添加，如：怎么退货？" />
+        </Form.Item>
         <Space size="large" wrap>
           <Form.Item name="theme_color" label="主题色"><ColorPicker showText /></Form.Item>
           <Form.Item name="default_theme" label="默认主题"><Select style={{ width: 120 }} options={[{ value: "light", label: "亮色" }, { value: "dark", label: "暗色" }]} /></Form.Item>
           <Form.Item name="show_powered_by" label="显示 Powered By" valuePropName="checked"><Switch /></Form.Item>
-          <Form.Item name="image_understanding_enabled" label="图片理解" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item name="file_upload_enabled" label="允许上传文件" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item name="image_understanding_enabled" label="AI 读图（多模态）" valuePropName="checked" tooltip="开启后把客户上传的图片交给 AI 理解；需所用模型/中转支持图片输入，关闭时图片仅供人工查看"><Switch /></Form.Item>
         </Space>
         <Form.Item name="logo_url" label="Logo URL"><Input placeholder="https://..." /></Form.Item>
         <Form.Item name="placeholder" label="输入框提示"><Input /></Form.Item>

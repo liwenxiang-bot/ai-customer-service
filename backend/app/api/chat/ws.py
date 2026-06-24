@@ -25,15 +25,24 @@ from app.core.ratelimit import check_chat_limits
 from app.core.redis_client import get_redis
 from app.db.session import session_scope
 from app.models.conversation import Message as DBMessage
-from app.models.enums import ChannelType, MessageRole
+from app.models.conversation import Session
+from app.models.enums import ChannelType, HandoffReason, MessageRole, SessionStatus
 from app.services.channel import get_web_channel, is_origin_allowed
 from app.services.conversation import handle_turn
 from app.services.feedback import set_feedback
+from app.services.handoff import create_handoff
 from app.services.takeover import (
     is_takeover,
     persist_customer_message,
     push_channel,
 )
+
+
+def _as_uuid(value: str) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(value)
+    except (ValueError, TypeError):
+        return None
 
 router = APIRouter()
 log = get_logger("chat.ws")
@@ -109,11 +118,43 @@ async def chat_ws(
                 await websocket.send_json({"type": "feedback_ack", "ok": ok})
                 continue
 
+            if mtype == "request_human":
+                if session_id and (sid := _as_uuid(session_id)):
+                    async with session_scope() as db:
+                        s = await db.get(Session, sid)
+                        if s and not s.escalated:
+                            await create_handoff(
+                                db, s, HandoffReason.USER_REQUEST, "user_request",
+                                s.summary or s.title or "",
+                            )
+                        await db.commit()
+                await websocket.send_json(
+                    {"type": "escalated", "message": "已为你转接人工，我们会尽快安排同事跟进。"}
+                )
+                continue
+
+            if mtype == "end_session":
+                if session_id and (sid := _as_uuid(session_id)):
+                    rating = int(payload.get("rating") or 0)
+                    note = (payload.get("note") or "")[:1000]
+                    async with session_scope() as db:
+                        s = await db.get(Session, sid)
+                        if s:
+                            s.status = SessionStatus.CLOSED
+                            if 1 <= rating <= 5:
+                                s.satisfaction_rating = rating
+                            if note:
+                                s.satisfaction_note = note
+                        await db.commit()
+                await websocket.send_json({"type": "session_ended"})
+                continue
+
             if mtype != "user_message":
                 continue
 
             text = (payload.get("text") or "").strip()
-            if not text:
+            attachments = payload.get("attachments") or []
+            if not text and not attachments:
                 continue
 
             # ---- Rate limit (per user + per IP) ----
@@ -131,7 +172,7 @@ async def chat_ws(
             # ---- Human takeover: AI paused, just persist; the operator replies via push ----
             if session_id and await is_takeover(session_id):
                 async with session_scope() as db:
-                    await persist_customer_message(db, session_id, text)
+                    await persist_customer_message(db, session_id, text, attachments)
                 await websocket.send_json({"type": "received"})
                 continue
 
@@ -193,6 +234,7 @@ async def _run_turn(ws, end_user_id, ip, text, session_id, channel_key, payload)
         text=text,
         session_id=session_id or None,
         meta={"ip": ip, "ua": ws.headers.get("user-agent", "")},
+        attachments=payload.get("attachments") or [],
     )
 
     resolved_sid = session_id
@@ -237,6 +279,7 @@ async def _send_history(ws: WebSocket, session_id: str, limit: int) -> None:
                     "role": m.role,
                     "content": m.content,
                     "citations": m.citations,
+                    "attachments": m.attachments,
                     "feedback": m.feedback,
                     "from_human": m.model == "human",
                     "created_at": m.created_at.isoformat() if m.created_at else None,

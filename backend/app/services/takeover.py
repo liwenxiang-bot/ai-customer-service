@@ -97,7 +97,9 @@ async def operator_reply(db: AsyncSession, session: Session, content: str) -> DB
     return msg
 
 
-async def persist_customer_message(db: AsyncSession, session_id: str, text: str) -> DBMessage | None:
+async def persist_customer_message(
+    db: AsyncSession, session_id: str, text: str, attachments: list | None = None
+) -> DBMessage | None:
     """Persist a customer message during takeover (AI is paused, so no agent turn)."""
     try:
         sid = uuid.UUID(session_id)
@@ -114,6 +116,7 @@ async def persist_customer_message(db: AsyncSession, session_id: str, text: str)
         seq=session.message_count,
         role=MessageRole.USER,
         content=text,
+        attachments=attachments or [],
     )
     db.add(msg)
     await db.flush()

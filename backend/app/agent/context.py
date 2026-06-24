@@ -48,11 +48,38 @@ def _system_prompt(ai_config: AIConfig, channel_override: str | None) -> str:
     return base
 
 
+def _is_image(att: dict) -> bool:
+    return att.get("kind") == "image" or str(att.get("content_type", "")).startswith("image/")
+
+
+def _content_for(m: DBMessage, *, vision: bool, latest: bool) -> str | list:
+    """Render a message's content. Images are sent as multimodal parts only for the
+    current turn when vision is on; otherwise attachments degrade to a text note."""
+    atts = m.attachments or []
+    if not atts:
+        return m.content
+    names = "、".join(a.get("name") or "附件" for a in atts)
+    if vision and latest and any(_is_image(a) for a in atts):
+        parts: list = []
+        if m.content:
+            parts.append({"type": "text", "text": m.content})
+        for a in atts:
+            if _is_image(a) and a.get("url"):
+                parts.append({"type": "image_url", "image_url": {"url": a["url"]}})
+        files = [a.get("name") or "附件" for a in atts if not _is_image(a)]
+        if files:
+            parts.append({"type": "text", "text": f"（另附文件：{'、'.join(files)}）"})
+        return parts or [{"type": "text", "text": "（图片）"}]
+    note = f"（用户上传了 {len(atts)} 个附件：{names}）"
+    return f"{m.content}\n{note}".strip() if m.content else note
+
+
 async def build_messages(
     db: AsyncSession,
     session: Session,
     ai_config: AIConfig,
     channel_system_prompt: str | None = None,
+    image_understanding: bool = False,
 ) -> list[Message]:
     """Assemble the LLM message list for the current turn (history already persisted)."""
     messages: list[Message] = []
@@ -85,7 +112,7 @@ async def build_messages(
     selected: list[DBMessage] = []
     budget = _HISTORY_TOKEN_BUDGET
     for m in rows:
-        if not m.content:
+        if not m.content and not m.attachments:
             continue
         cost = _count_tokens(m.content) + 4
         if budget - cost < 0 and selected:
@@ -93,8 +120,14 @@ async def build_messages(
         budget -= cost
         selected.append(m)
 
+    latest_user_seq = max((m.seq for m in selected if m.role == MessageRole.USER), default=-1)
     for m in reversed(selected):
-        messages.append({"role": m.role, "content": m.content})
+        messages.append(
+            {
+                "role": m.role,
+                "content": _content_for(m, vision=image_understanding, latest=m.seq == latest_user_seq),
+            }
+        )
 
     return messages
 

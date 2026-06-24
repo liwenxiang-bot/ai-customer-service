@@ -53,6 +53,10 @@ class Session(Base, TimestampMixin, TenantMixin):
     escalated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, index=True)
     meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # ip, ua, locale...
 
+    # Customer-submitted satisfaction (set when the visitor ends the session)
+    satisfaction_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1–5
+    satisfaction_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
     messages: Mapped[list[Message]] = relationship(
         back_populates="session", cascade="all, delete-orphan",
         order_by="Message.seq",
@@ -75,6 +79,8 @@ class Message(Base, TimestampMixin, TenantMixin):
     tool_calls: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # Retrieval citations: list of {item_id, chunk_id, title, score, snippet}
     citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Customer-uploaded attachments: list of {url, name, content_type, size, kind}
+    attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
     # Observability
     trace_id: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)

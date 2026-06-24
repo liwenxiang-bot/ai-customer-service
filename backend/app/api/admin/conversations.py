@@ -192,6 +192,8 @@ async def conversation_detail(
             "escalated": session.escalated,
             "summary": session.summary,
             "meta": session.meta,
+            "satisfaction_rating": session.satisfaction_rating,
+            "satisfaction_note": session.satisfaction_note,
             "created_at": session.created_at.isoformat() if session.created_at else None,
         },
         "messages": [
@@ -202,6 +204,7 @@ async def conversation_detail(
                 "content": m.content,
                 "tool_calls": m.tool_calls,
                 "citations": m.citations,
+                "attachments": m.attachments,
                 "trace_id": m.trace_id,
                 "model": m.model,
                 "prompt_tokens": m.prompt_tokens,

@@ -3,7 +3,7 @@ import {
   Card, Table, Tag, Space, Select, Input, Drawer, Timeline, Descriptions, Button,
   Collapse, Empty, Tooltip, App as AntApp, Modal, Form, DatePicker, theme,
 } from "antd";
-import { RobotOutlined, UserOutlined, ToolOutlined, BookOutlined, DownloadOutlined } from "@ant-design/icons";
+import { RobotOutlined, UserOutlined, ToolOutlined, BookOutlined, DownloadOutlined, PaperClipOutlined } from "@ant-design/icons";
 import { conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
@@ -149,6 +149,11 @@ function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
           {inTakeover ? <Tag color="green">人工接管中</Tag> : s.escalated ? <Tag color="red">待人工</Tag> : s.status}
         </Descriptions.Item>
         <Descriptions.Item label="创建时间">{s.created_at?.replace("T", " ").slice(0, 19)}</Descriptions.Item>
+        {s.satisfaction_rating ? (
+          <Descriptions.Item label="满意度" span={2}>
+            {"★".repeat(s.satisfaction_rating)}{"☆".repeat(5 - s.satisfaction_rating)} {s.satisfaction_note && `· ${s.satisfaction_note}`}
+          </Descriptions.Item>
+        ) : null}
         {s.summary && <Descriptions.Item label="摘要" span={2}>{s.summary}</Descriptions.Item>}
       </Descriptions>
 
@@ -167,6 +172,21 @@ function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
                   {m.latency_ms > 0 && <span style={{ color: "#999", fontSize: 12, marginLeft: 8 }}>{m.latency_ms}ms · {m.prompt_tokens + m.completion_tokens} tokens · ${m.cost_usd?.toFixed(5)}</span>}
                 </div>
                 <div style={{ whiteSpace: "pre-wrap", marginBottom: 6 }}>{m.content}</div>
+                {m.attachments?.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+                    {m.attachments.map((a: any, i: number) =>
+                      a.kind === "image" || (a.content_type || "").startsWith("image/") ? (
+                        <a key={i} href={a.url} target="_blank" rel="noreferrer">
+                          <img src={a.url} alt={a.name} style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 6, border: `1px solid ${token.colorBorderSecondary}` }} />
+                        </a>
+                      ) : (
+                        <a key={i} href={a.url} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
+                          <PaperClipOutlined /> {a.name || "文件"}
+                        </a>
+                      )
+                    )}
+                  </div>
+                )}
                 {m.tool_calls?.length > 0 && (
                   <Collapse size="small" ghost items={[{
                     key: "t", label: <span><ToolOutlined /> 工具调用 ({m.tool_calls.length})</span>,

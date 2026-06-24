@@ -51,10 +51,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# The widget is embedded on arbitrary merchant origins, so the public chat/embed
+# API must be reachable cross-origin. Auth is Bearer-header based (no cookies), and
+# the chat API is gated per-channel by an allowed-domains whitelist at the app layer,
+# so an open CORS policy here is safe (credentials disabled).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

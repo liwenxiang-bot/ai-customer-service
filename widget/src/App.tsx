@@ -14,7 +14,25 @@ export interface WidgetConfig {
     placeholder: string;
     default_theme: "light" | "dark";
     show_powered_by: boolean;
+    file_upload_enabled?: boolean;
+    suggested_questions?: string[];
   };
+}
+
+interface Attachment {
+  url: string;
+  name: string;
+  content_type: string;
+  size: number;
+  kind: "image" | "file";
+}
+
+interface Pending extends Partial<Attachment> {
+  id: string;
+  name: string;
+  uploading: boolean;
+  error?: boolean;
+  preview?: string; // object URL for image preview while uploading
 }
 
 interface Msg {
@@ -22,6 +40,7 @@ interface Msg {
   role: "user" | "assistant";
   content: string;
   citations?: any[];
+  attachments?: Attachment[];
   feedback?: "up" | "down" | null;
   status?: "sending" | "sent" | "failed";
   streaming?: boolean;
@@ -40,14 +59,26 @@ function uidFor(channelKey: string): string {
   return v;
 }
 
+function isImage(a: { kind?: string; content_type?: string }): boolean {
+  return a.kind === "image" || (a.content_type || "").startsWith("image/");
+}
+
 export function App({ config }: { config: WidgetConfig }) {
   const fullscreen = config.mode === "fullscreen";
+  const b = config.branding;
   const [open, setOpen] = useState(fullscreen);
   const [theme, setTheme] = useState(config.branding.default_theme || "light");
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [status, setStatus] = useState<"connecting" | "online" | "offline">("connecting");
   const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<Pending[]>([]);
+  const [escalated, setEscalated] = useState(false);
+  const [ended, setEnded] = useState(false);
+  const [showRate, setShowRate] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [rateNote, setRateNote] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const clientRef = useRef<ChatClient | null>(null);
   const channelKey = config.channelKey;
@@ -55,8 +86,9 @@ export function App({ config }: { config: WidgetConfig }) {
   const sessionKey = `acs_session_${channelKey}`;
   const listRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const stoppedRef = useRef<Set<string>>(new Set());
 
-  // Grow the composer with its content (up to a cap) instead of scrolling a 1-row box.
   const autoGrow = (el: HTMLTextAreaElement | null) => {
     if (!el) return;
     el.style.height = "auto";
@@ -78,7 +110,6 @@ export function App({ config }: { config: WidgetConfig }) {
   }, [open]);
 
   useEffect(() => {
-    // Greet only when there is no restored transcript.
     if (open && messages.length === 0 && config.branding.welcome_message) {
       setMessages([{ id: "welcome", role: "assistant", content: config.branding.welcome_message }]);
     }
@@ -88,7 +119,7 @@ export function App({ config }: { config: WidgetConfig }) {
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, pending]);
 
   function handleEvent(ev: ServerEvent) {
     switch (ev.type) {
@@ -106,6 +137,7 @@ export function App({ config }: { config: WidgetConfig }) {
               role: m.role,
               content: m.content,
               citations: m.citations,
+              attachments: m.attachments,
               feedback: m.feedback,
               fromHuman: m.from_human,
               status: "sent",
@@ -117,6 +149,13 @@ export function App({ config }: { config: WidgetConfig }) {
       case "ai_resumed":
       case "human_ended":
         if (ev.message) appendSystem(ev.message);
+        break;
+      case "escalated":
+        setEscalated(true);
+        if (ev.message) appendSystem(ev.message);
+        break;
+      case "session_ended":
+        setEnded(true);
         break;
       case "human_message":
         setMessages((prev) => [
@@ -148,6 +187,7 @@ export function App({ config }: { config: WidgetConfig }) {
         break;
       case "escalation":
         updateStreaming(ev.turn_id, (m) => ({ ...m, escalated: true }));
+        setEscalated(true);
         break;
       case "message_end":
         if (ev.session_id) localStorage.setItem(sessionKey, ev.session_id);
@@ -179,11 +219,13 @@ export function App({ config }: { config: WidgetConfig }) {
   }
 
   function appendToStreaming(turnId: string, delta: string) {
+    if (stoppedRef.current.has(turnId)) return; // user stopped this turn
     setMessages((prev) =>
       prev.map((m) => (m.id === turnId ? { ...m, content: m.content + (delta || "") } : m))
     );
   }
   function updateStreaming(turnId: string, fn: (m: Msg) => Msg) {
+    if (stoppedRef.current.has(turnId)) return;
     setMessages((prev) => prev.map((m) => (m.id === turnId ? fn(m) : m)));
   }
   function finalizeStreaming(turnId: string, messageId: string, citations: any[]) {
@@ -199,18 +241,70 @@ export function App({ config }: { config: WidgetConfig }) {
     setMessages((prev) => [...prev, { id: "sys-" + Date.now(), role: "assistant", content: text }]);
   }
 
-  function send() {
-    const text = input.trim();
-    if (!text || busy) return;
-    const client = clientRef.current!;
-    setMessages((prev) => [...prev, { id: "u-" + Date.now(), role: "user", content: text, status: "sending" }]);
-    setInput("");
-    if (taRef.current) taRef.current.style.height = "auto"; // reset composer height
-    if (!client.isOpen()) {
-      client.connect(() => client.sendMessage(text));
-    } else {
-      client.sendMessage(text);
+  // ---- attachments ----
+  function onPickFiles(e: Event) {
+    const files = Array.from((e.target as HTMLInputElement).files || []);
+    if (fileRef.current) fileRef.current.value = "";
+    for (const file of files) {
+      const id = "p-" + Math.random().toString(36).slice(2);
+      const preview = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+      setPending((prev) => [...prev, { id, name: file.name, uploading: true, preview }]);
+      clientRef.current!
+        .uploadFile(file)
+        .then((d: Attachment) =>
+          setPending((prev) => prev.map((p) => (p.id === id ? { ...p, ...d, uploading: false } : p)))
+        )
+        .catch(() =>
+          setPending((prev) => prev.map((p) => (p.id === id ? { ...p, uploading: false, error: true } : p)))
+        );
     }
+  }
+  function removePending(id: string) {
+    setPending((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  // ---- sending ----
+  function doSend(text: string, atts: Attachment[]) {
+    const client = clientRef.current!;
+    setMessages((prev) => [
+      ...prev,
+      { id: "u-" + Date.now(), role: "user", content: text, attachments: atts.length ? atts : undefined, status: "sending" },
+    ]);
+    if (!client.isOpen()) client.connect(() => client.sendMessage(text, atts));
+    else client.sendMessage(text, atts);
+  }
+
+  function send() {
+    if (busy) return;
+    const text = input.trim();
+    const ready = pending.filter((p) => p.url && !p.error);
+    if (!text && ready.length === 0) return;
+    if (pending.some((p) => p.uploading)) return; // wait for uploads
+    const atts: Attachment[] = ready.map((p) => ({
+      url: p.url!, name: p.name, content_type: p.content_type!, size: p.size!, kind: p.kind!,
+    }));
+    doSend(text, atts);
+    setInput("");
+    setPending([]);
+    if (taRef.current) taRef.current.style.height = "auto";
+  }
+
+  function askSuggested(q: string) {
+    if (busy) return;
+    doSend(q, []);
+  }
+
+  function stop() {
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.streaming) {
+          stoppedRef.current.add(m.id);
+          return { ...m, streaming: false, toolLabel: undefined };
+        }
+        return m;
+      })
+    );
+    setBusy(false);
   }
 
   function retry(text: string) {
@@ -223,6 +317,41 @@ export function App({ config }: { config: WidgetConfig }) {
     setMessages((prev) => prev.map((x) => (x.id === m.id ? { ...x, feedback: kind } : x)));
   }
 
+  function copyMsg(m: Msg) {
+    navigator.clipboard?.writeText(m.content);
+    setCopiedId(m.id);
+    setTimeout(() => setCopiedId((c) => (c === m.id ? null : c)), 1500);
+  }
+
+  function requestHuman() {
+    clientRef.current?.requestHuman();
+  }
+
+  function finishEnd() {
+    setShowRate(false);
+    setEnded(true);
+    localStorage.removeItem(sessionKey);
+  }
+  function submitRate() {
+    clientRef.current?.endSession(rating, rateNote.trim());
+    finishEnd();
+  }
+  function skipRate() {
+    clientRef.current?.endSession(0, "");
+    finishEnd();
+  }
+  function restart() {
+    setEnded(false);
+    setEscalated(false);
+    setRating(0);
+    setRateNote("");
+    setPending([]);
+    if (clientRef.current) clientRef.current.sessionId = "";
+    setMessages(config.branding.welcome_message
+      ? [{ id: "welcome", role: "assistant", content: config.branding.welcome_message }]
+      : []);
+  }
+
   function onKey(e: KeyboardEvent) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -230,8 +359,11 @@ export function App({ config }: { config: WidgetConfig }) {
     }
   }
 
-  const b = config.branding;
   const rootClass = `acs-root acs-${theme}` + (fullscreen ? " acs-fullscreen" : "");
+  const started = messages.some((m) => m.role === "user");
+  const suggestions = b.suggested_questions || [];
+  const showSuggest = !ended && !started && suggestions.length > 0;
+  const canSend = (!!input.trim() || pending.some((p) => p.url && !p.error)) && !pending.some((p) => p.uploading);
 
   return (
     <div class={rootClass}>
@@ -277,12 +409,28 @@ export function App({ config }: { config: WidgetConfig }) {
                     人工客服
                   </div>
                 )}
-                <div
-                  class="acs-bubble"
-                  dangerouslySetInnerHTML={{
-                    __html: m.role === "assistant" ? renderMarkdown(m.content || "") : escapeText(m.content),
-                  }}
-                />
+                {(m.role === "assistant" || m.content) && (
+                  <div
+                    class="acs-bubble"
+                    dangerouslySetInnerHTML={{
+                      __html: m.role === "assistant" ? renderMarkdown(m.content || "") : escapeText(m.content),
+                    }}
+                  />
+                )}
+                {m.attachments && m.attachments.length > 0 && (
+                  <div class="acs-atts">
+                    {m.attachments.map((a, i) =>
+                      isImage(a) ? (
+                        <img key={i} class="acs-att-img" src={a.url} alt={a.name || ""} loading="lazy" onClick={() => window.open(a.url, "_blank")} />
+                      ) : (
+                        <a key={i} class="acs-att-file" href={a.url} target="_blank" rel="noopener noreferrer">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                          <span class="acs-att-name">{a.name || "文件"}</span>
+                        </a>
+                      )
+                    )}
+                  </div>
+                )}
                 {m.streaming && m.toolLabel && (
                   <div class="acs-tool">
                     <span class="acs-dots"><span></span><span></span><span></span></span>
@@ -301,6 +449,13 @@ export function App({ config }: { config: WidgetConfig }) {
                 )}
                 {m.role === "assistant" && !m.streaming && m.id && !m.id.startsWith("welcome") && !m.id.startsWith("sys-") && (
                   <div class="acs-fb">
+                    <button onClick={() => copyMsg(m)} title="复制" aria-label="复制">
+                      {copiedId === m.id ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                      )}
+                    </button>
                     <button class={m.feedback === "up" ? "active" : ""} onClick={() => feedback(m, "up")} title="有帮助" aria-label="有帮助">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12" /><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" /></svg>
                     </button>
@@ -316,23 +471,112 @@ export function App({ config }: { config: WidgetConfig }) {
                 )}
               </div>
             ))}
+
+            {showSuggest && (
+              <div class="acs-suggest">
+                {suggestions.map((q) => (
+                  <button class="acs-suggest-btn" onClick={() => askSuggested(q)}>{q}</button>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div class="acs-input">
-            <textarea
-              ref={taRef}
-              rows={1}
-              aria-label="输入消息"
-              placeholder={b.placeholder}
-              value={input}
-              onInput={(e) => { setInput((e.target as HTMLTextAreaElement).value); autoGrow(e.target as HTMLTextAreaElement); }}
-              onKeyDown={onKey}
-            />
-            <button class="acs-send" disabled={busy || !input.trim()} onClick={send} aria-label="发送">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z" /></svg>
-            </button>
-          </div>
-          {b.show_powered_by && <div class="acs-powered">AI 智能客服 · 由大模型驱动</div>}
+          {ended ? (
+            <div class="acs-ended">
+              本次会话已结束，感谢你的咨询。<a onClick={restart}>开始新会话</a>
+            </div>
+          ) : (
+            <>
+              {started && (
+                <div class="acs-quick">
+                  {!escalated && (
+                    <button class="acs-quick-btn" onClick={requestHuman} title="转接人工客服">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                      转人工
+                    </button>
+                  )}
+                  <button class="acs-quick-btn danger" onClick={() => setShowRate(true)} title="结束会话">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></svg>
+                    结束会话
+                  </button>
+                </div>
+              )}
+
+              {pending.length > 0 && (
+                <div class="acs-pending">
+                  {pending.map((p) => (
+                    <div class={"acs-pend" + (p.uploading ? " uploading" : "")} key={p.id}>
+                      {p.preview ? <img src={p.preview} alt="" /> : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></svg>
+                      )}
+                      <span class="acs-pend-name">{p.error ? "上传失败" : p.name}</span>
+                      <span class="acs-pend-x" onClick={() => removePending(p.id)} aria-label="移除">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div class="acs-input">
+                {b.file_upload_enabled !== false && (
+                  <>
+                    <input
+                      ref={fileRef}
+                      type="file"
+                      multiple
+                      accept="image/png,image/jpeg,image/webp,image/gif,.pdf,.csv,.txt,.doc,.docx,.xls,.xlsx"
+                      style="display:none"
+                      onChange={onPickFiles}
+                    />
+                    <button class="acs-attach" onClick={() => fileRef.current?.click()} aria-label="上传文件" title="上传图片或文件">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
+                    </button>
+                  </>
+                )}
+                <textarea
+                  ref={taRef}
+                  rows={1}
+                  aria-label="输入消息"
+                  placeholder={b.placeholder}
+                  value={input}
+                  onInput={(e) => { setInput((e.target as HTMLTextAreaElement).value); autoGrow(e.target as HTMLTextAreaElement); }}
+                  onKeyDown={onKey}
+                />
+                {busy ? (
+                  <button class="acs-send acs-stop" onClick={stop} aria-label="停止生成" title="停止生成">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2.5" /></svg>
+                  </button>
+                ) : (
+                  <button class="acs-send" disabled={!canSend} onClick={send} aria-label="发送">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z" /></svg>
+                  </button>
+                )}
+              </div>
+              {b.show_powered_by && <div class="acs-powered">AI 智能客服 · 由大模型驱动</div>}
+            </>
+          )}
+
+          {showRate && (
+            <div class="acs-rate-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowRate(false); }}>
+              <div class="acs-rate-card">
+                <h4>结束会话</h4>
+                <p>这次的服务体验如何？</p>
+                <div class="acs-stars">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button class={"acs-star" + (n <= rating ? " on" : "")} onClick={() => setRating(n)} aria-label={`${n} 星`}>
+                      <svg viewBox="0 0 24 24" fill={n <= rating ? "currentColor" : "none"} stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>
+                    </button>
+                  ))}
+                </div>
+                <textarea class="acs-rate-note" rows={2} placeholder="留下你的建议（可选）" value={rateNote} onInput={(e) => setRateNote((e.target as HTMLTextAreaElement).value)} />
+                <div class="acs-rate-actions">
+                  <button class="acs-rate-skip" onClick={skipRate}>直接结束</button>
+                  <button class="acs-rate-submit" onClick={submitRate}>提交评价</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

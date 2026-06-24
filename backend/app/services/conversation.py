@@ -53,7 +53,8 @@ async def get_or_create_session(db: AsyncSession, inbound: InboundMessage) -> tu
     return session, True
 
 
-async def _channel_system_prompt(db: AsyncSession, inbound: InboundMessage) -> str | None:
+async def _channel_runtime(db: AsyncSession, inbound: InboundMessage) -> tuple[str | None, bool]:
+    """Return (system_prompt_override, image_understanding_enabled) for this channel."""
     row = (
         await db.execute(
             select(ChannelConfig).where(
@@ -62,14 +63,18 @@ async def _channel_system_prompt(db: AsyncSession, inbound: InboundMessage) -> s
             ).limit(1)
         )
     ).scalar_one_or_none()
-    return row.system_prompt_override if row else None
+    if not row:
+        return None, False
+    return row.system_prompt_override, bool(row.settings.get("image_understanding_enabled", False))
 
 
-async def _persist_user_message(db: AsyncSession, session: Session, text: str) -> DBMessage:
+async def _persist_user_message(
+    db: AsyncSession, session: Session, text: str, attachments: list | None = None
+) -> DBMessage:
     session.message_count += 1
     session.last_activity_at = datetime.now(UTC)
     if not session.title:
-        session.title = text[:80]
+        session.title = (text or "[附件]")[:80]
     if session.status == SessionStatus.IDLE:
         session.status = SessionStatus.ACTIVE
     msg = DBMessage(
@@ -78,6 +83,7 @@ async def _persist_user_message(db: AsyncSession, session: Session, text: str) -
         seq=session.message_count,
         role=MessageRole.USER,
         content=text,
+        attachments=attachments or [],
     )
     db.add(msg)
     await db.flush()
@@ -111,7 +117,7 @@ async def handle_turn(
     ai_config = await get_active_ai_config(db)
     session, _ = await get_or_create_session(db, inbound)
 
-    await _persist_user_message(db, session, inbound.text)
+    await _persist_user_message(db, session, inbound.text, inbound.attachments)
 
     # ---- Input content safety (optional) ----
     safe, notice = await check_input(ai_config, inbound.text)
@@ -146,8 +152,8 @@ async def handle_turn(
         return
 
     provider = get_provider(to_llm_settings(ai_config))
-    channel_prompt = await _channel_system_prompt(db, inbound)
-    runner = AgentRunner(provider, default_registry, ai_config, channel_prompt)
+    channel_prompt, image_understanding = await _channel_runtime(db, inbound)
+    runner = AgentRunner(provider, default_registry, ai_config, channel_prompt, image_understanding)
 
     escalated = False
     final_text = ""

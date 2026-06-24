@@ -3,6 +3,7 @@ import { App as AntApp, Button, Empty, Input, Segmented, Tag, Tooltip, theme } f
 import {
   CheckOutlined,
   CustomerServiceOutlined,
+  PaperClipOutlined,
   ReloadOutlined,
   RobotOutlined,
   SendOutlined,
@@ -168,12 +169,29 @@ export function Workbench() {
                       <div style={{ fontSize: 11, color: muted, marginBottom: 2 }}>
                         {isUser ? <><UserOutlined /> 客户</> : isHuman ? <><CustomerServiceOutlined style={{ color: "#0f9d6e" }} /> 人工</> : <><RobotOutlined style={{ color: "#0F766E" }} /> AI</>}
                       </div>
-                      <div style={{
-                        padding: "8px 12px", borderRadius: 12, fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word",
-                        background: isUser ? "#0F766E" : panel, color: isUser ? "#fff" : token.colorText,
-                        border: isUser ? "none" : `1px solid ${line}`,
-                        borderBottomRightRadius: isUser ? 4 : 12, borderBottomLeftRadius: isUser ? 12 : 4,
-                      }}>{m.content}</div>
+                      {m.content && (
+                        <div style={{
+                          padding: "8px 12px", borderRadius: 12, fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word",
+                          background: isUser ? "#0F766E" : panel, color: isUser ? "#fff" : token.colorText,
+                          border: isUser ? "none" : `1px solid ${line}`,
+                          borderBottomRightRadius: isUser ? 4 : 12, borderBottomLeftRadius: isUser ? 12 : 4,
+                        }}>{m.content}</div>
+                      )}
+                      {m.attachments?.length > 0 && (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4, justifyContent: isUser ? "flex-end" : "flex-start" }}>
+                          {m.attachments.map((a: any, i: number) =>
+                            a.kind === "image" || (a.content_type || "").startsWith("image/") ? (
+                              <a key={i} href={a.url} target="_blank" rel="noreferrer">
+                                <img src={a.url} alt={a.name} style={{ width: 90, height: 90, objectFit: "cover", borderRadius: 8, border: `1px solid ${line}` }} />
+                              </a>
+                            ) : (
+                              <a key={i} href={a.url} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}>
+                                <PaperClipOutlined /> {a.name || "文件"}
+                              </a>
+                            )
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}

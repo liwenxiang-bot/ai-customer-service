@@ -44,18 +44,20 @@ class AgentRunner:
         registry: ToolRegistry,
         ai_config: AIConfig,
         channel_system_prompt: str | None = None,
+        image_understanding: bool = False,
     ) -> None:
         self.provider = provider
         self.registry = registry
         self.ai_config = ai_config
         self.channel_system_prompt = channel_system_prompt
+        self.image_understanding = image_understanding
 
     async def run_turn(
         self, db: AsyncSession, session: Session, trace_id: str
     ) -> AsyncGenerator[AgentEvent, None]:
         started = time.monotonic()
         messages = await build_messages(
-            db, session, self.ai_config, self.channel_system_prompt
+            db, session, self.ai_config, self.channel_system_prompt, self.image_understanding
         )
         tool_schemas = self.registry.schemas()
         ctx = ToolContext(db=db, session=session, ai_config=self.ai_config, trace_id=trace_id)
