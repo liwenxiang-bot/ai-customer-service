@@ -41,8 +41,8 @@ function AppLayout() {
 
   return (
     <Layout style={{ height: "100vh" }}>
-      <Sider theme="light" width={208} style={{ borderRight: "1px solid #f0f0f0" }}>
-        <div style={{ height: 56, display: "flex", alignItems: "center", padding: "0 20px", fontWeight: 700, fontSize: 16, color: "#4f46e5" }}>
+      <Sider theme="light" width={208} style={{ borderRight: "1px solid #E3E7EC" }}>
+        <div style={{ height: 56, display: "flex", alignItems: "center", padding: "0 20px", fontWeight: 700, fontSize: 16, color: "#0F766E" }}>
           🤖 AI 客服后台
         </div>
         <Menu
@@ -53,12 +53,12 @@ function AppLayout() {
         />
       </Sider>
       <Layout>
-        <Header style={{ background: "#fff", display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "0 24px", borderBottom: "1px solid #f0f0f0" }}>
+        <Header style={{ background: "#fff", display: "flex", justifyContent: "flex-end", alignItems: "center", padding: "0 24px", borderBottom: "1px solid #E3E7EC" }}>
           <Dropdown
             menu={{ items: [{ key: "logout", icon: <LogoutOutlined />, label: "退出登录", onClick: async () => { await logout(); nav("/login"); } }] }}
           >
             <span style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-              <Avatar size="small" icon={<UserOutlined />} style={{ background: "#4f46e5" }} />
+              <Avatar size="small" icon={<UserOutlined />} style={{ background: "#0F766E" }} />
               {user?.name || user?.email}
               <Tag color={isAdmin(user?.role) ? "purple" : user?.role === "operator" ? "blue" : "default"}>
                 {user?.role === "admin" ? "管理员" : user?.role === "operator" ? "运营" : "只读"}
@@ -66,7 +66,7 @@ function AppLayout() {
             </span>
           </Dropdown>
         </Header>
-        <Content style={{ overflow: "auto", background: "#f5f6fa" }}>
+        <Content style={{ overflow: "auto", background: "#F6F8FA" }}>
           <div className="acs-content">
             <Routes>
               <Route path="/dashboard" element={<Dashboard />} />

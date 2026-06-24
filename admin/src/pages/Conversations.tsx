@@ -135,7 +135,7 @@ function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
         items={live.messages.map((m: any) => {
           const isHuman = m.model === "human";
           return {
-            dot: m.role === "user" ? <UserOutlined /> : <RobotOutlined style={{ color: isHuman ? "#10b981" : "#4f46e5" }} />,
+            dot: m.role === "user" ? <UserOutlined /> : <RobotOutlined style={{ color: isHuman ? "#10b981" : "#0F766E" }} />,
             children: (
               <div>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>

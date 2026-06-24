@@ -24,7 +24,7 @@ export function Login() {
   };
 
   return (
-    <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(135deg,#4f46e5 0%,#7c73f0 100%)" }}>
+    <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(140deg,#0F766E 0%,#115E59 55%,#134E4A 100%)" }}>
       <Card style={{ width: 380, boxShadow: "0 12px 48px rgba(0,0,0,.2)" }}>
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <Typography.Title level={3} style={{ marginBottom: 4 }}>🤖 AI 客服后台</Typography.Title>

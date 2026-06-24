@@ -24,7 +24,7 @@ export function Dashboard() {
   const t = data.today;
 
   const cards = [
-    { title: "今日对话", value: t.conversations, icon: <MessageOutlined />, color: "#4f46e5" },
+    { title: "今日对话", value: t.conversations, icon: <MessageOutlined />, color: "#0F766E" },
     { title: "今日用户", value: t.users, icon: <UserOutlined />, color: "#0ea5e9" },
     { title: "平均响应(ms)", value: t.avg_latency_ms, icon: <ThunderboltOutlined />, color: "#f59e0b" },
     { title: "转人工率", value: (t.escalation_rate * 100).toFixed(1) + "%", icon: <CustomerServiceOutlined />, color: "#ef4444" },
@@ -59,7 +59,7 @@ export function Dashboard() {
               <XAxis dataKey="day" fontSize={12} />
               <YAxis fontSize={12} />
               <Tooltip />
-              <Line type="monotone" dataKey="conversations" name="对话数" stroke="#4f46e5" strokeWidth={2} />
+              <Line type="monotone" dataKey="conversations" name="对话数" stroke="#0F766E" strokeWidth={2} />
               <Line type="monotone" dataKey="messages" name="消息数" stroke="#0ea5e9" strokeWidth={2} />
               <Line type="monotone" dataKey="escalations" name="转人工" stroke="#ef4444" strokeWidth={2} />
             </LineChart>
