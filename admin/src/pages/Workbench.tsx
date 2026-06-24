@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { App as AntApp, Button, Empty, Input, Segmented, Tag, Tooltip } from "antd";
+import { App as AntApp, Button, Empty, Input, Segmented, Tag, Tooltip, theme } from "antd";
 import {
   CheckOutlined,
   CustomerServiceOutlined,
@@ -18,6 +18,10 @@ export function Workbench() {
   const { user } = useAuth();
   const editable = canEdit(user?.role);
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
+  const line = token.colorBorderSecondary;
+  const panel = token.colorBgContainer;
+  const muted = token.colorTextSecondary;
 
   const [filter, setFilter] = useState<string>("attention");
   const [list, setList] = useState<any[]>([]);
@@ -87,8 +91,8 @@ export function Workbench() {
 
       <div style={{ display: "flex", gap: 14, height: "calc(100vh - 150px)" }}>
         {/* ---- queue ---- */}
-        <div style={{ width: 300, display: "flex", flexDirection: "column", background: "#fff", border: "1px solid #E3E7EC", borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ padding: "10px 12px", borderBottom: "1px solid #E3E7EC", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ width: 300, display: "flex", flexDirection: "column", background: panel, border: `1px solid ${line}`, borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ padding: "10px 12px", borderBottom: `1px solid ${line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <Segmented
               size="small"
               value={filter}
@@ -106,8 +110,8 @@ export function Workbench() {
                   key={it.id}
                   onClick={() => setSelectedId(it.id)}
                   style={{
-                    padding: "11px 12px", borderBottom: "1px solid #F0F2F5", cursor: "pointer",
-                    background: selectedId === it.id ? "#E6F2F0" : "transparent",
+                    padding: "11px 12px", borderBottom: `1px solid ${line}`, cursor: "pointer",
+                    background: selectedId === it.id ? token.colorPrimaryBg : "transparent",
                   }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
@@ -116,10 +120,10 @@ export function Workbench() {
                     </span>
                     {statusTag(it)}
                   </div>
-                  <div style={{ color: "#8b93a3", fontSize: 12, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  <div style={{ color: muted, fontSize: 12, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {it.title || "（无内容）"}
                   </div>
-                  <div style={{ color: "#aab2c0", fontSize: 11, marginTop: 3 }}>
+                  <div style={{ color: token.colorTextTertiary, fontSize: 11, marginTop: 3 }}>
                     <Tag bordered={false} style={{ fontSize: 10, lineHeight: "16px", padding: "0 5px", marginRight: 4 }}>{it.channel_type}</Tag>
                     {(it.last_activity_at || "").replace("T", " ").slice(5, 16)}
                   </div>
@@ -130,7 +134,7 @@ export function Workbench() {
         </div>
 
         {/* ---- chat panel ---- */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: "#fff", border: "1px solid #E3E7EC", borderRadius: 8, overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: panel, border: `1px solid ${line}`, borderRadius: 8, overflow: "hidden" }}>
           {!s ? (
             <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="从左侧选择一个会话开始接待" />
@@ -138,7 +142,7 @@ export function Workbench() {
           ) : (
             <>
               {/* top bar */}
-              <div style={{ padding: "10px 16px", borderBottom: "1px solid #E3E7EC", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ padding: "10px 16px", borderBottom: `1px solid ${line}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <div style={{ minWidth: 0 }}>
                   <span style={{ fontWeight: 600 }}>{s.end_user_display || s.end_user_id || "匿名用户"}</span>
                   <Tag bordered={false} style={{ marginLeft: 8 }}>{s.channel_type}</Tag>
@@ -155,19 +159,19 @@ export function Workbench() {
               </div>
 
               {/* messages */}
-              <div ref={bodyRef} style={{ flex: 1, overflowY: "auto", padding: 16, background: "#F6F8FA", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div ref={bodyRef} style={{ flex: 1, overflowY: "auto", padding: 16, background: token.colorBgLayout, display: "flex", flexDirection: "column", gap: 10 }}>
                 {(detail.messages || []).filter((m: any) => m.role === "user" || m.role === "assistant").map((m: any) => {
                   const isUser = m.role === "user";
                   const isHuman = m.model === "human";
                   return (
                     <div key={m.id} style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start", maxWidth: "76%", alignSelf: isUser ? "flex-end" : "flex-start" }}>
-                      <div style={{ fontSize: 11, color: "#8b93a3", marginBottom: 2 }}>
+                      <div style={{ fontSize: 11, color: muted, marginBottom: 2 }}>
                         {isUser ? <><UserOutlined /> 客户</> : isHuman ? <><CustomerServiceOutlined style={{ color: "#0f9d6e" }} /> 人工</> : <><RobotOutlined style={{ color: "#0F766E" }} /> AI</>}
                       </div>
                       <div style={{
                         padding: "8px 12px", borderRadius: 12, fontSize: 14, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word",
-                        background: isUser ? "#0F766E" : "#fff", color: isUser ? "#fff" : "#18222e",
-                        border: isUser ? "none" : "1px solid #E3E7EC",
+                        background: isUser ? "#0F766E" : panel, color: isUser ? "#fff" : token.colorText,
+                        border: isUser ? "none" : `1px solid ${line}`,
                         borderBottomRightRadius: isUser ? 4 : 12, borderBottomLeftRadius: isUser ? 12 : 4,
                       }}>{m.content}</div>
                     </div>
@@ -176,7 +180,7 @@ export function Workbench() {
               </div>
 
               {/* composer */}
-              <div style={{ borderTop: "1px solid #E3E7EC", padding: 12 }}>
+              <div style={{ borderTop: `1px solid ${line}`, padding: 12 }}>
                 {inTakeover ? (
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                     <Input.TextArea
@@ -189,7 +193,7 @@ export function Workbench() {
                     <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={sendReply}>发送</Button>
                   </div>
                 ) : (
-                  <div style={{ textAlign: "center", color: "#8b93a3", fontSize: 13, padding: "6px 0" }}>
+                  <div style={{ textAlign: "center", color: muted, fontSize: 13, padding: "6px 0" }}>
                     点击右上角「接管对话」后即可直接回复客户
                   </div>
                 )}

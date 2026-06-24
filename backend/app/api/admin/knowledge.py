@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_operator
@@ -69,6 +69,7 @@ async def list_items(
     category: str = "",
     status: str = "",
     source: str = "",
+    tag: str = "",
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -84,6 +85,8 @@ async def list_items(
         stmt = stmt.where(KnowledgeItem.status == status)
     if source:
         stmt = stmt.where(KnowledgeItem.source == source)
+    if tag:
+        stmt = stmt.where(KnowledgeItem.tags.contains([tag]))  # JSONB @> [tag]
 
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (
@@ -111,6 +114,19 @@ async def categories(db: AsyncSession = Depends(get_db), user: AdminUser = Depen
         )
     ).all()
     return {"categories": [{"name": r[0], "count": r[1]} for r in rows]}
+
+
+@router.get("/tags")
+async def tags(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)):
+    rows = (
+        await db.execute(
+            text(
+                "SELECT DISTINCT jsonb_array_elements_text(tags) AS tag FROM knowledge_items "
+                "WHERE jsonb_array_length(tags) > 0 ORDER BY tag"
+            )
+        )
+    ).all()
+    return {"tags": [r[0] for r in rows]}
 
 
 @router.post("", status_code=201)

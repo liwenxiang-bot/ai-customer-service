@@ -1,20 +1,29 @@
 import { useEffect, useState } from "react";
 import {
   Card, Table, Tag, Space, Select, Input, Drawer, Timeline, Descriptions, Button,
-  Collapse, Empty, Tooltip, App as AntApp, Modal, Form,
+  Collapse, Empty, Tooltip, App as AntApp, Modal, Form, DatePicker, theme,
 } from "antd";
-import { RobotOutlined, UserOutlined, ToolOutlined, BookOutlined } from "@ant-design/icons";
+import { RobotOutlined, UserOutlined, ToolOutlined, BookOutlined, DownloadOutlined } from "@ant-design/icons";
 import { conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 
 export function Conversations() {
   const { user } = useAuth();
+  const { message } = AntApp.useApp();
   const editable = canEdit(user?.role);
   const [data, setData] = useState<any>({ items: [], total: 0 });
   const [loading, setLoading] = useState(false);
-  const [params, setParams] = useState<any>({ page: 1, page_size: 10, channel_type: "", pending_human: false, q: "" });
+  const [params, setParams] = useState<any>({ page: 1, page_size: 10, channel_type: "", pending_human: false, q: "", date_from: "", date_to: "", feedback: "", degraded: false });
   const [detail, setDetail] = useState<any>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const doExport = async () => {
+    setExporting(true);
+    try { await conversationApi.exportCsv({ ...params, page: undefined, page_size: undefined }); }
+    catch (e) { message.error(apiError(e)); }
+    finally { setExporting(false); }
+  };
 
   const load = () => {
     setLoading(true);
@@ -43,17 +52,27 @@ export function Conversations() {
       <div className="acs-page-title">对话记录</div>
       <div className="acs-page-sub">查看全部历史会话与详情（工具调用、引用来源、调用链路），可一键加入知识库。实时接待请用「坐席工作台」。</div>
       <Card>
-        <Space style={{ marginBottom: 16 }} wrap>
-          <Input allowClear placeholder="搜索标题" style={{ width: 200 }} onChange={(e) => setParams((p: any) => ({ ...p, q: e.target.value, page: 1 }))} />
-          <Select allowClear placeholder="渠道" style={{ width: 140 }}
+        <Space style={{ marginBottom: 12 }} wrap>
+          <Input allowClear placeholder="搜索标题" style={{ width: 180 }} onChange={(e) => setParams((p: any) => ({ ...p, q: e.target.value, page: 1 }))} />
+          <DatePicker.RangePicker
+            onChange={(d: any) => setParams((p: any) => ({ ...p, date_from: d?.[0] ? d[0].format("YYYY-MM-DD") : "", date_to: d?.[1] ? d[1].format("YYYY-MM-DD") : "", page: 1 }))}
+          />
+          <Select allowClear placeholder="渠道" style={{ width: 130 }}
             options={[{ value: "web", label: "Web" }, { value: "wechat_work", label: "企业微信" }]}
             onChange={(v) => setParams((p: any) => ({ ...p, channel_type: v || "", page: 1 }))} />
-          <Select style={{ width: 140 }} value={params.pending_human ? "pending" : "all"}
-            options={[{ value: "all", label: "全部" }, { value: "pending", label: "待人工" }]}
+          <Select style={{ width: 120 }} value={params.pending_human ? "pending" : "all"}
+            options={[{ value: "all", label: "全部状态" }, { value: "pending", label: "待人工" }]}
             onChange={(v) => setParams((p: any) => ({ ...p, pending_human: v === "pending", page: 1 }))} />
+          <Select allowClear placeholder="满意度" style={{ width: 120 }}
+            options={[{ value: "up", label: "👍 好评" }, { value: "down", label: "👎 差评" }]}
+            onChange={(v) => setParams((p: any) => ({ ...p, feedback: v || "", page: 1 }))} />
+          <Select allowClear placeholder="降级" style={{ width: 110 }}
+            options={[{ value: "1", label: "仅降级" }]}
+            onChange={(v) => setParams((p: any) => ({ ...p, degraded: !!v, page: 1 }))} />
+          <Button icon={<DownloadOutlined />} loading={exporting} onClick={doExport}>导出 CSV</Button>
         </Space>
         <Table
-          rowKey="id" loading={loading} columns={columns as any} dataSource={data.items}
+          rowKey="id" loading={loading} columns={columns as any} dataSource={data.items} size="small"
           pagination={{ current: params.page, pageSize: params.page_size, total: data.total, showTotal: (t) => `共 ${t} 条`,
             onChange: (page, page_size) => setParams((p: any) => ({ ...p, page, page_size })) }}
         />
@@ -65,6 +84,7 @@ export function Conversations() {
 
 function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   const [kModal, setKModal] = useState<any>(null);
   const [form] = Form.useForm();
   const [live, setLive] = useState<any>(detail);
@@ -151,7 +171,7 @@ function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
                   <Collapse size="small" ghost items={[{
                     key: "t", label: <span><ToolOutlined /> 工具调用 ({m.tool_calls.length})</span>,
                     children: m.tool_calls.map((tc: any, i: number) => (
-                      <div key={i} style={{ fontSize: 12, marginBottom: 8, background: "#fafafa", padding: 8, borderRadius: 6 }}>
+                      <div key={i} style={{ fontSize: 12, marginBottom: 8, background: token.colorFillTertiary, padding: 8, borderRadius: 6 }}>
                         <b>{tc.name}</b> <Tag color={tc.status === "ok" ? "green" : "red"}>{tc.status}</Tag> {tc.duration_ms}ms
                         <div style={{ color: "#666" }}>参数：{JSON.stringify(tc.arguments)}</div>
                         <div style={{ color: "#666" }}>结果：{String(tc.result).slice(0, 200)}</div>
@@ -176,7 +196,7 @@ function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
 
       {/* Live reply box — only while actively taken over. */}
       {editable && inTakeover && (
-        <div style={{ position: "sticky", bottom: 0, background: "#fff", paddingTop: 12, borderTop: "1px solid #f0f0f0" }}>
+        <div style={{ position: "sticky", bottom: 0, background: token.colorBgElevated, paddingTop: 12, borderTop: `1px solid ${token.colorBorderSecondary}` }}>
           <Space.Compact style={{ width: "100%" }}>
             <Input.TextArea
               value={replyText}

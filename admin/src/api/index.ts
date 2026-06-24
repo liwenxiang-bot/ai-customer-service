@@ -29,6 +29,7 @@ export const dashboardApi = {
 export const knowledgeApi = {
   list: (params: any) => api.get("/knowledge", { params }).then((r) => r.data),
   categories: () => api.get("/knowledge/categories").then((r) => r.data),
+  tags: () => api.get("/knowledge/tags").then((r) => r.data),
   get: (id: string) => api.get(`/knowledge/${id}`).then((r) => r.data),
   create: (body: any) => api.post("/knowledge", body).then((r) => r.data),
   update: (id: string, body: any) => api.put(`/knowledge/${id}`, body).then((r) => r.data),
@@ -68,6 +69,15 @@ export const channelApi = {
 // ---- Conversations ----
 export const conversationApi = {
   list: (params: any) => api.get("/conversations", { params }).then((r) => r.data),
+  exportCsv: async (params: any) => {
+    const r = await api.get("/conversations/export", { params, responseType: "blob" });
+    const url = URL.createObjectURL(r.data as Blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "conversations.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   detail: (id: string) => api.get(`/conversations/${id}`).then((r) => r.data),
   markHandled: (id: string) => api.post(`/conversations/${id}/mark-handled`).then((r) => r.data),
   toKnowledge: (id: string, body: any) => api.post(`/conversations/${id}/to-knowledge`, body).then((r) => r.data),

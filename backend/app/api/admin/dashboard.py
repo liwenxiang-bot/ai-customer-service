@@ -12,7 +12,8 @@ from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.conversation import Message, Session
-from app.models.enums import FeedbackKind, MessageRole
+from app.models.enums import FeedbackKind, MessageRole, SessionStatus
+from app.models.knowledge import KnowledgeChunk, KnowledgeItem
 from app.models.usage import UsageDaily
 from app.services.usage import get_today_cost
 
@@ -68,6 +69,23 @@ async def overview(db: AsyncSession = Depends(get_db), user: AdminUser = Depends
 
     today_cost = await get_today_cost()
 
+    # Operational backlog + knowledge health (for the dashboard panels / quick links).
+    pending_human = (
+        await db.execute(
+            select(func.count(Session.id)).where(Session.status == SessionStatus.ESCALATED)
+        )
+    ).scalar_one()
+    in_takeover = (
+        await db.execute(
+            select(func.count(Session.id)).where(Session.status == SessionStatus.HUMAN_TAKEOVER)
+        )
+    ).scalar_one()
+    knowledge_items = (await db.execute(select(func.count(KnowledgeItem.id)))).scalar_one()
+    chunks_total = (await db.execute(select(func.count(KnowledgeChunk.id)))).scalar_one()
+    chunks_ready = (
+        await db.execute(select(func.count(KnowledgeChunk.id)).where(KnowledgeChunk.status == "ready"))
+    ).scalar_one()
+
     return {
         "today": {
             "conversations": today_convs,
@@ -79,6 +97,12 @@ async def overview(db: AsyncSession = Depends(get_db), user: AdminUser = Depends
         },
         "satisfaction": satisfaction,
         "feedback": {"up": up, "down": down},
+        "backlog": {"pending_human": pending_human, "in_takeover": in_takeover},
+        "knowledge": {
+            "items": knowledge_items,
+            "chunks_total": chunks_total,
+            "chunks_ready": chunks_ready,
+        },
     }
 
 

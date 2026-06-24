@@ -3,9 +3,13 @@ mark handled, and one-click 'add to knowledge'."""
 
 from __future__ import annotations
 
+import csv
+import io
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,19 +25,18 @@ from app.services import takeover as tk
 router = APIRouter(prefix="/conversations", tags=["admin-conversations"])
 
 
-@router.get("")
-async def list_conversations(
-    channel_type: str = "",
-    escalated: bool | None = None,
-    pending_human: bool = False,
-    attention: bool = False,
-    status: str = "",
-    q: str = "",
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    db: AsyncSession = Depends(get_db),
-    user: AdminUser = Depends(get_current_user),
+def _parse_day(s: str) -> datetime | None:
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=UTC)
+    except (ValueError, TypeError):
+        return None
+
+
+def _filtered_sessions(
+    *, channel_type, escalated, pending_human, attention, status, q,
+    date_from, date_to, feedback, degraded,
 ):
+    """Build a select(Session) with all conversation filters applied (shared by list + export)."""
     stmt = select(Session)
     if channel_type:
         stmt = stmt.where(Session.channel_type == channel_type)
@@ -50,7 +53,47 @@ async def list_conversations(
         )
     if q:
         stmt = stmt.where(Session.title.ilike(f"%{q}%"))
+    if (df := _parse_day(date_from)) is not None:
+        stmt = stmt.where(Session.created_at >= df)
+    if (dt := _parse_day(date_to)) is not None:
+        stmt = stmt.where(Session.created_at < dt + timedelta(days=1))  # inclusive end day
+    if feedback in ("up", "down"):
+        stmt = stmt.where(
+            select(Message.id).where(
+                Message.session_id == Session.id, Message.feedback == feedback
+            ).exists()
+        )
+    if degraded:
+        stmt = stmt.where(
+            select(Message.id).where(
+                Message.session_id == Session.id, Message.degraded.is_(True)
+            ).exists()
+        )
+    return stmt
 
+
+@router.get("")
+async def list_conversations(
+    channel_type: str = "",
+    escalated: bool | None = None,
+    pending_human: bool = False,
+    attention: bool = False,
+    status: str = "",
+    q: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    feedback: str = "",
+    degraded: bool = False,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(get_current_user),
+):
+    stmt = _filtered_sessions(
+        channel_type=channel_type, escalated=escalated, pending_human=pending_human,
+        attention=attention, status=status, q=q, date_from=date_from, date_to=date_to,
+        feedback=feedback, degraded=degraded,
+    )
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (
         await db.execute(
@@ -79,6 +122,50 @@ async def list_conversations(
             for s in rows
         ],
     }
+
+
+@router.get("/export")
+async def export_conversations(
+    channel_type: str = "",
+    escalated: bool | None = None,
+    pending_human: bool = False,
+    attention: bool = False,
+    status: str = "",
+    q: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    feedback: str = "",
+    degraded: bool = False,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(get_current_user),
+):
+    """Export matching conversations as CSV (capped at 5000 rows)."""
+    stmt = _filtered_sessions(
+        channel_type=channel_type, escalated=escalated, pending_human=pending_human,
+        attention=attention, status=status, q=q, date_from=date_from, date_to=date_to,
+        feedback=feedback, degraded=degraded,
+    )
+    rows = (
+        await db.execute(stmt.order_by(Session.last_activity_at.desc()).limit(5000))
+    ).scalars().all()
+
+    buf = io.StringIO()
+    buf.write("﻿")  # BOM so Excel reads UTF-8 correctly
+    w = csv.writer(buf)
+    w.writerow(["会话ID", "渠道", "用户", "标题", "状态", "是否转人工", "轮数", "创建时间", "最近活动"])
+    for s in rows:
+        w.writerow([
+            str(s.id), s.channel_type, s.end_user_display or s.end_user_id, s.title, s.status,
+            "是" if s.escalated else "否", s.message_count,
+            s.created_at.strftime("%Y-%m-%d %H:%M") if s.created_at else "",
+            s.last_activity_at.strftime("%Y-%m-%d %H:%M") if s.last_activity_at else "",
+        ])
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=conversations.csv"},
+    )
 
 
 @router.get("/{session_id}")

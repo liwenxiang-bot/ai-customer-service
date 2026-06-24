@@ -28,3 +28,8 @@ body {
 .acs-page-sub { color: #5b6573; font-size: 13px; line-height: 1.5; margin-bottom: 18px; }
 .acs-content { padding: 20px; }
 .acs-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+
+/* Dark mode: the few hand-set text colors above need readable values on dark. */
+[data-theme="dark"] body { color: rgba(255, 255, 255, 0.85); }
+[data-theme="dark"] .acs-page-title { color: rgba(255, 255, 255, 0.92); }
+[data-theme="dark"] .acs-page-sub { color: rgba(255, 255, 255, 0.5); }

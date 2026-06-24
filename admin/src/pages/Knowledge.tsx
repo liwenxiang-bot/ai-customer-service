@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   Button, Card, Drawer, Form, Input, Select, Space, Table, Tag, Tabs, Modal,
-  Upload, Tooltip, List, Popconfirm, App as AntApp, Badge, Alert,
+  Upload, Tooltip, List, Popconfirm, App as AntApp, Badge, Alert, Progress, theme,
 } from "antd";
 import {
   PlusOutlined, SearchOutlined, UploadOutlined, ExperimentOutlined,
@@ -47,20 +47,44 @@ export function Knowledge() {
 
 function ItemsTab({ editable }: { editable: boolean }) {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   const [data, setData] = useState<any>({ items: [], total: 0 });
   const [loading, setLoading] = useState(false);
-  const [params, setParams] = useState<any>({ q: "", status: "", page: 1, page_size: 10 });
+  const [params, setParams] = useState<any>({ q: "", status: "", category: "", tag: "", page: 1, page_size: 10 });
   const [drawer, setDrawer] = useState<any>(null); // editing item or {} for new
   const [form] = Form.useForm();
   const [testOpen, setTestOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [versionsItem, setVersionsItem] = useState<any>(null);
+  const [cats, setCats] = useState<any[]>([]);
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [selected, setSelected] = useState<any[]>([]);
+  const [vec, setVec] = useState<any>(null);
 
+  const loadMeta = () => {
+    knowledgeApi.categories().then((d) => setCats(d.categories)).catch(() => {});
+    knowledgeApi.tags().then((d) => setAllTags(d.tags)).catch(() => {});
+    knowledgeApi.embeddingStatus().then(setVec).catch(() => {});
+  };
   const load = () => {
     setLoading(true);
     knowledgeApi.list(params).then(setData).finally(() => setLoading(false));
+    loadMeta();
   };
   useEffect(load, [JSON.stringify(params)]);
+
+  const bulkDelete = async () => {
+    await Promise.all(selected.map((id) => knowledgeApi.remove(String(id))));
+    message.success(`已删除 ${selected.length} 条`);
+    setSelected([]);
+    load();
+  };
+  const bulkStatus = async (status: string) => {
+    await Promise.all(selected.map((id) => knowledgeApi.update(String(id), { status })));
+    message.success(`已更新 ${selected.length} 条`);
+    setSelected([]);
+    load();
+  };
 
   const openEdit = async (item: any) => {
     if (item?.id) {
@@ -111,13 +135,35 @@ function ItemsTab({ editable }: { editable: boolean }) {
 
   return (
     <Card>
-      <Space style={{ marginBottom: 16 }} wrap>
+      {vec && (
+        <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: "#5b6573" }}>向量化 {vec.ready_chunks}/{vec.total_chunks} 分块</span>
+          <Progress
+            percent={vec.total_chunks ? Math.round((vec.ready_chunks / vec.total_chunks) * 100) : 100}
+            size="small" style={{ width: 180 }}
+            status={vec.rebuild?.status === "running" ? "active" : "success"}
+          />
+          {vec.rebuild?.status === "running" && <Tag color="processing">重建中 {Math.round((vec.rebuild.progress || 0) * 100)}%</Tag>}
+        </div>
+      )}
+
+      <Space style={{ marginBottom: 12 }} wrap>
         <Input
-          allowClear placeholder="搜索标题/内容" prefix={<SearchOutlined />} style={{ width: 240 }}
+          allowClear placeholder="搜索标题/内容" prefix={<SearchOutlined />} style={{ width: 220 }}
           onChange={(e) => setParams((p: any) => ({ ...p, q: e.target.value, page: 1 }))}
         />
         <Select
-          allowClear placeholder="状态" style={{ width: 120 }}
+          allowClear placeholder="分类" style={{ width: 130 }}
+          options={cats.map((c: any) => ({ value: c.name, label: `${c.name} (${c.count})` }))}
+          onChange={(v) => setParams((p: any) => ({ ...p, category: v || "", page: 1 }))}
+        />
+        <Select
+          allowClear showSearch placeholder="标签" style={{ width: 130 }}
+          options={allTags.map((t) => ({ value: t, label: t }))}
+          onChange={(v) => setParams((p: any) => ({ ...p, tag: v || "", page: 1 }))}
+        />
+        <Select
+          allowClear placeholder="状态" style={{ width: 110 }}
           options={[{ value: "published", label: "已发布" }, { value: "draft", label: "草稿" }, { value: "archived", label: "已归档" }]}
           onChange={(v) => setParams((p: any) => ({ ...p, status: v || "", page: 1 }))}
         />
@@ -126,8 +172,21 @@ function ItemsTab({ editable }: { editable: boolean }) {
         {editable && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>新增条目</Button>}
       </Space>
 
+      {editable && selected.length > 0 && (
+        <div style={{ marginBottom: 12, padding: "7px 12px", background: token.colorPrimaryBg, borderRadius: 6, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 13 }}>已选 {selected.length} 项</span>
+          <Button size="small" onClick={() => bulkStatus("published")}>发布</Button>
+          <Button size="small" onClick={() => bulkStatus("archived")}>归档</Button>
+          <Popconfirm title={`删除选中的 ${selected.length} 条？`} onConfirm={bulkDelete}>
+            <Button size="small" danger>删除</Button>
+          </Popconfirm>
+          <a onClick={() => setSelected([])} style={{ fontSize: 12 }}>取消选择</a>
+        </div>
+      )}
+
       <Table
-        rowKey="id" loading={loading} columns={columns as any} dataSource={data.items}
+        rowKey="id" loading={loading} columns={columns as any} dataSource={data.items} size="small"
+        rowSelection={editable ? { selectedRowKeys: selected, onChange: setSelected } : undefined}
         pagination={{
           current: params.page, pageSize: params.page_size, total: data.total,
           onChange: (page, page_size) => setParams((p: any) => ({ ...p, page, page_size })),
