@@ -240,7 +240,7 @@ export function App({ config }: { config: WidgetConfig }) {
             {b.logo_url ? <img src={b.logo_url} alt="" /> : null}
             <div class="acs-title">
               {b.brand_name}
-              <div class="acs-status">
+              <div class={"acs-status" + (status === "online" ? "" : " offline")}>
                 {status === "online" ? "在线" : status === "connecting" ? "连接中…" : "离线"}
               </div>
             </div>
@@ -254,7 +254,7 @@ export function App({ config }: { config: WidgetConfig }) {
             )}
           </div>
 
-          <div class="acs-messages" ref={listRef}>
+          <div class="acs-messages" ref={listRef} role="log" aria-live="polite" aria-label="对话消息">
             {messages.map((m) => (
               <div class={`acs-msg ${m.role}`} key={m.id}>
                 {m.escalated && <div class="acs-escalation">🔔 已为你转接人工，稍后会有同事跟进。</div>}
@@ -283,8 +283,12 @@ export function App({ config }: { config: WidgetConfig }) {
                 )}
                 {m.role === "assistant" && !m.streaming && m.id && !m.id.startsWith("welcome") && !m.id.startsWith("sys-") && (
                   <div class="acs-fb">
-                    <button class={m.feedback === "up" ? "active" : ""} onClick={() => feedback(m, "up")} title="有帮助">👍</button>
-                    <button class={m.feedback === "down" ? "active" : ""} onClick={() => feedback(m, "down")} title="没帮助">👎</button>
+                    <button class={m.feedback === "up" ? "active" : ""} onClick={() => feedback(m, "up")} title="有帮助" aria-label="有帮助">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12" /><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" /></svg>
+                    </button>
+                    <button class={m.feedback === "down" ? "active" : ""} onClick={() => feedback(m, "down")} title="没帮助" aria-label="没帮助">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2" /><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z" /></svg>
+                    </button>
                   </div>
                 )}
                 {m.role === "user" && m.status === "failed" && (
@@ -299,6 +303,7 @@ export function App({ config }: { config: WidgetConfig }) {
           <div class="acs-input">
             <textarea
               rows={1}
+              aria-label="输入消息"
               placeholder={b.placeholder}
               value={input}
               onInput={(e) => setInput((e.target as HTMLTextAreaElement).value)}
