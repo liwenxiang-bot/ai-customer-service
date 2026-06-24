@@ -1,3 +1,4 @@
+import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatClient, ServerEvent } from "./client";
 import { renderMarkdown } from "./markdown";
@@ -47,6 +48,7 @@ interface Msg {
   toolLabel?: string;
   escalated?: boolean;
   fromHuman?: boolean;
+  ts?: number; // epoch ms; absent for the greeting
 }
 
 function uidFor(channelKey: string): string {
@@ -61,6 +63,29 @@ function uidFor(channelKey: string): string {
 
 function isImage(a: { kind?: string; content_type?: string }): boolean {
   return a.kind === "image" || (a.content_type || "").startsWith("image/");
+}
+
+const pad2 = (n: number) => (n < 10 ? "0" + n : "" + n);
+function fmtTime(ts?: number): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function dayKey(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+function dayLabel(ts: number): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const days = Math.round(
+    (new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() -
+      new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86400000
+  );
+  if (days === 0) return "今天";
+  if (days === 1) return "昨天";
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`;
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 export function App({ config }: { config: WidgetConfig }) {
@@ -140,6 +165,7 @@ export function App({ config }: { config: WidgetConfig }) {
               attachments: m.attachments,
               feedback: m.feedback,
               fromHuman: m.from_human,
+              ts: m.created_at ? Date.parse(m.created_at) : undefined,
               status: "sent",
             }))
           );
@@ -160,7 +186,7 @@ export function App({ config }: { config: WidgetConfig }) {
       case "human_message":
         setMessages((prev) => [
           ...prev,
-          { id: ev.message_id || "h-" + Date.now(), role: "assistant", content: ev.content, fromHuman: true },
+          { id: ev.message_id || "h-" + Date.now(), role: "assistant", content: ev.content, fromHuman: true, ts: Date.now() },
         ]);
         break;
       case "received":
@@ -171,7 +197,7 @@ export function App({ config }: { config: WidgetConfig }) {
         markLastUserSent();
         setMessages((prev) => [
           ...prev,
-          { id: ev.turn_id, role: "assistant", content: "", streaming: true },
+          { id: ev.turn_id, role: "assistant", content: "", streaming: true, ts: Date.now() },
         ]);
         break;
       case "stream_chunk":
@@ -238,7 +264,7 @@ export function App({ config }: { config: WidgetConfig }) {
     );
   }
   function appendSystem(text: string) {
-    setMessages((prev) => [...prev, { id: "sys-" + Date.now(), role: "assistant", content: text }]);
+    setMessages((prev) => [...prev, { id: "sys-" + Date.now(), role: "assistant", content: text, ts: Date.now() }]);
   }
 
   // ---- attachments ----
@@ -268,7 +294,7 @@ export function App({ config }: { config: WidgetConfig }) {
     const client = clientRef.current!;
     setMessages((prev) => [
       ...prev,
-      { id: "u-" + Date.now(), role: "user", content: text, attachments: atts.length ? atts : undefined, status: "sending" },
+      { id: "u-" + Date.now(), role: "user", content: text, attachments: atts.length ? atts : undefined, status: "sending", ts: Date.now() },
     ]);
     if (!client.isOpen()) client.connect(() => client.sendMessage(text, atts));
     else client.sendMessage(text, atts);
@@ -400,8 +426,14 @@ export function App({ config }: { config: WidgetConfig }) {
           </div>
 
           <div class="acs-messages" ref={listRef} role="log" aria-live="polite" aria-label="对话消息">
-            {messages.map((m) => (
-              <div class={`acs-msg ${m.role}`} key={m.id}>
+            {messages.map((m, i) => {
+              const prev = messages[i - 1];
+              const sep =
+                m.ts && (i === 0 ? dayKey(m.ts) !== dayKey(Date.now()) : prev?.ts && dayKey(m.ts) !== dayKey(prev.ts));
+              return (
+              <Fragment key={m.id}>
+                {sep && <div class="acs-date-sep"><span>{dayLabel(m.ts!)}</span></div>}
+                <div class={`acs-msg ${m.role}`}>
                 {m.escalated && <div class="acs-escalation">🔔 已为你转接人工，稍后会有同事跟进。</div>}
                 {m.fromHuman && (
                   <div class="acs-human-label">
@@ -469,8 +501,11 @@ export function App({ config }: { config: WidgetConfig }) {
                     发送失败 · <span class="acs-retry" onClick={() => retry(m.content)}>重试</span>
                   </div>
                 )}
-              </div>
-            ))}
+                {m.ts && !m.streaming && <div class="acs-time">{fmtTime(m.ts)}</div>}
+                </div>
+              </Fragment>
+              );
+            })}
 
             {showSuggest && (
               <div class="acs-suggest">

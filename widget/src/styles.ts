@@ -147,6 +147,13 @@ export function buildStyles(themeColor: string): string {
 .acs-msg-meta { font-size:10.5px; color:var(--acs-sub); margin-top:4px; }
 .acs-retry { color:#dc2626; cursor:pointer; font-weight:500; }
 
+/* per-message time (mono, tabular) + day separator */
+.acs-time { margin-top:3px; padding:0 3px; font-size:10.5px; color:var(--acs-sub); opacity:.8; letter-spacing:.2px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+.acs-date-sep { align-self:center; margin:6px 0 2px; }
+.acs-date-sep span { font-size:11px; color:var(--acs-sub); background:var(--acs-bot-bubble);
+  padding:3px 11px; border-radius:99px; letter-spacing:.3px; }
+
 /* ----------------------------------------------------------------- composer */
 .acs-input { border-top:1px solid var(--acs-border); padding:11px 12px; background:var(--acs-composer-bg);
   display:flex; gap:9px; align-items:flex-end; }
