@@ -167,14 +167,27 @@ class AgentRunner:
                 yield AgentEvent(kind="escalation", data=ctx.escalation)
             loop_i += 1
 
-        # No visible answer produced (e.g. the model only called a tool then returned empty
-        # on its final pass) — never leave the user with a blank bubble; stream a fallback.
+        # No visible answer produced (e.g. the model only called tools then returned empty on
+        # its final pass — common when the knowledge base has no match). Don't fob the user off
+        # with a canned greeting: force one tool-free pass so the model actually answers, using
+        # whatever context (incl. tool results) it already has. Only if that is *also* empty do
+        # we fall back gracefully.
         if not (final_text or "").strip() and not degraded:
-            final_text = (
-                "我已为你转接人工，请稍候有同事跟进。" if ctx.escalation
-                else "你好，请问有什么可以帮你的吗？"
-            )
-            yield AgentEvent(kind="text", text=final_text)
+            if ctx.escalation:
+                final_text = "我已为你转接人工，请稍候有同事跟进。"
+                yield AgentEvent(kind="text", text=final_text)
+            else:
+                async for ev in self.provider.stream_chat(messages, tools=None):
+                    if ev.kind == "text" and ev.text:
+                        final_text += ev.text
+                        yield AgentEvent(kind="text", text=ev.text)
+                    elif ev.kind == "done" and ev.usage:
+                        usage.prompt_tokens += ev.usage.prompt_tokens
+                        usage.completion_tokens += ev.usage.completion_tokens
+                final_text = final_text.strip()
+                if not final_text:
+                    final_text = "抱歉，我这边没能正常生成回复，可以再描述一下你的问题吗？"
+                    yield AgentEvent(kind="text", text=final_text)
 
         # ---- Persist the assistant message with the full trace ----
         latency_ms = int((time.monotonic() - started) * 1000)
