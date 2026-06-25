@@ -48,8 +48,10 @@ def _filtered_sessions(
         stmt = stmt.where(Session.status == status)
     # "Needs a human now": awaiting handoff OR currently taken over (workbench queue).
     if attention:
+        # Workbench queue = waiting (escalated) or being handled (takeover). Status-based so
+        # resolved / AI-resumed sessions (where the `escalated` flag lingers True) don't leak in.
         stmt = stmt.where(
-            or_(Session.escalated.is_(True), Session.status == SessionStatus.HUMAN_TAKEOVER)
+            Session.status.in_([SessionStatus.ESCALATED, SessionStatus.HUMAN_TAKEOVER])
         )
     if q:
         like = f"%{q}%"
@@ -131,6 +133,24 @@ async def list_conversations(
             for s in rows
         ],
     }
+
+
+@router.get("/queue-counts")
+async def queue_counts(
+    db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)
+):
+    """Counts for the workbench tabs: waiting (escalated) and in-takeover."""
+    waiting = (
+        await db.execute(
+            select(func.count(Session.id)).where(Session.status == SessionStatus.ESCALATED)
+        )
+    ).scalar_one()
+    takeover = (
+        await db.execute(
+            select(func.count(Session.id)).where(Session.status == SessionStatus.HUMAN_TAKEOVER)
+        )
+    ).scalar_one()
+    return {"waiting": waiting, "takeover": takeover, "all": waiting + takeover}
 
 
 @router.get("/export")

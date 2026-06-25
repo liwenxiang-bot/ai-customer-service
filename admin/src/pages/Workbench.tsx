@@ -27,8 +27,9 @@ export function Workbench() {
   const panel = token.colorBgContainer;
   const muted = token.colorTextSecondary;
 
-  const [filter, setFilter] = useState<string>("attention");
+  const [filter, setFilter] = useState<string>("pending");
   const [list, setList] = useState<any[]>([]);
+  const [counts, setCounts] = useState<any>({ waiting: 0, takeover: 0, all: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
   const [replyText, setReplyText] = useState("");
@@ -48,10 +49,11 @@ export function Workbench() {
   // ---- poll the queue ----
   const loadList = () => {
     const params =
-      filter === "pending" ? { pending_human: true } :
       filter === "takeover" ? { status: "human_takeover" } :
-      { attention: true };
+      filter === "all" ? { attention: true } :
+      { pending_human: true };  // 待接待 = waiting (status=escalated)
     conversationApi.list({ ...params, page_size: 50 }).then((d) => setList(d.items)).catch(() => {});
+    conversationApi.queueCounts().then(setCounts).catch(() => {});
   };
   useEffect(() => {
     loadList();
@@ -100,7 +102,7 @@ export function Workbench() {
 
   const statusTag = (it: any) =>
     it.status === "human_takeover" ? <Tag color="green">接管中</Tag>
-    : it.escalated ? <Tag color="red">待人工</Tag>
+    : it.status === "escalated" ? <Tag color="orange">待接待</Tag>
     : <Tag>{it.status}</Tag>;
 
   return (
@@ -116,7 +118,11 @@ export function Workbench() {
               size="small"
               value={filter}
               onChange={(v) => setFilter(v as string)}
-              options={[{ label: "待接待", value: "attention" }, { label: "待人工", value: "pending" }, { label: "接管中", value: "takeover" }]}
+              options={[
+                { label: `待接待 ${counts.waiting}`, value: "pending" },
+                { label: `接管中 ${counts.takeover}`, value: "takeover" },
+                { label: `全部 ${counts.all}`, value: "all" },
+              ]}
             />
             <Tooltip title="刷新"><Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadList} /></Tooltip>
           </div>

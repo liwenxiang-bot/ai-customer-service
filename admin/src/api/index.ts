@@ -71,6 +71,7 @@ export const channelApi = {
 // ---- Conversations ----
 export const conversationApi = {
   list: (params: any) => api.get("/conversations", { params }).then((r) => r.data),
+  queueCounts: () => api.get("/conversations/queue-counts").then((r) => r.data),
   exportCsv: async (params: any) => {
     const r = await api.get("/conversations/export", { params, responseType: "blob" });
     const url = URL.createObjectURL(r.data as Blob);
