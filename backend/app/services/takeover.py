@@ -135,6 +135,11 @@ async def persist_customer_message(
     await db.flush()
     await publish(
         session_id,
-        {"type": "customer_message", "content": text, "message_id": str(msg.id)},
+        {
+            "type": "customer_message",
+            "content": text,
+            "message_id": str(msg.id),
+            "attachments": attachments or [],
+        },
     )
     return msg
