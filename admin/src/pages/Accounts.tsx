@@ -3,6 +3,7 @@ import { Button, Card, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Popc
 import { PlusOutlined } from "@ant-design/icons";
 import { accountApi } from "../api";
 import { apiError } from "../api/client";
+import { fmtTime } from "../utils/time";
 
 const ROLE_LABELS: any = { admin: "管理员", operator: "运营", readonly: "只读" };
 const ROLE_COLORS: any = { admin: "purple", operator: "blue", readonly: "default" };
@@ -46,7 +47,7 @@ function UsersTab() {
     { title: "姓名", dataIndex: "name", render: (n: string) => n || "—" },
     { title: "角色", dataIndex: "role", render: (r: string) => <Tag color={ROLE_COLORS[r]}>{ROLE_LABELS[r]}</Tag> },
     { title: "状态", dataIndex: "is_active", render: (a: boolean) => a ? <Tag color="green">启用</Tag> : <Tag>停用</Tag> },
-    { title: "最近登录", dataIndex: "last_login_at", render: (t: string) => t ? t.replace("T", " ").slice(0, 19) : "—" },
+    { title: "最近登录", dataIndex: "last_login_at", render: (t: string) => fmtTime(t) },
     {
       title: "操作", render: (_: any, r: any) => (
         <Space>
@@ -85,7 +86,7 @@ function AuditTab() {
   const [params, setParams] = useState<any>({ page: 1, page_size: 20 });
   useEffect(() => { accountApi.auditLogs(params).then(setData); }, [JSON.stringify(params)]);
   const columns = [
-    { title: "时间", dataIndex: "created_at", width: 170, render: (t: string) => t?.replace("T", " ").slice(0, 19) },
+    { title: "时间", dataIndex: "created_at", width: 170, render: (t: string) => fmtTime(t) },
     { title: "操作人", dataIndex: "actor_email", width: 200 },
     { title: "动作", dataIndex: "action", width: 160, render: (a: string) => <Tag>{a}</Tag> },
     { title: "对象", render: (_: any, r: any) => `${r.target_type} ${r.target_id}` },

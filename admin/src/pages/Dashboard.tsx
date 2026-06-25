@@ -15,6 +15,7 @@ import {
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { dashboardApi, conversationApi } from "../api";
+import { fmtShort } from "../utils/time";
 
 export function Dashboard() {
   const nav = useNavigate();
@@ -132,7 +133,7 @@ export function Dashboard() {
                 >
                   <List.Item.Meta
                     title={<span style={{ fontSize: 13 }}>{it.title || it.end_user_display || it.end_user_id || "匿名"}</span>}
-                    description={<span style={{ fontSize: 12 }}>{(it.last_activity_at || "").replace("T", " ").slice(5, 16)} · {it.channel_type}</span>}
+                    description={<span style={{ fontSize: 12 }}>{fmtShort(it.last_activity_at)} · {it.channel_type}</span>}
                   />
                   {it.escalated ? <Tag color="red">待人工</Tag> : it.status === "human_takeover" ? <Tag color="green">接管中</Tag> : null}
                 </List.Item>

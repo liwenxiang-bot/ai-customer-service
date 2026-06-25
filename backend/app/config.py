@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     app_debug: bool = True
     app_secret_key: str = "change-me"
     app_base_url: str = "http://localhost:8000"
+    # Business timezone for stats day boundaries / daily rollups (storage stays UTC).
+    app_timezone: str = "Asia/Shanghai"
     # Admin frontend base URL — used in handoff notification deep-links.
     # If empty, falls back to app_base_url.
     admin_base_url: str = ""

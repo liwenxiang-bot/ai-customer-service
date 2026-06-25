@@ -8,6 +8,7 @@ import { conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 import { useDebounce } from "../hooks/useDebounce";
+import { fmtTime } from "../utils/time";
 
 export function Conversations() {
   const { user } = useAuth();
@@ -47,7 +48,7 @@ export function Conversations() {
     { title: "用户", dataIndex: "end_user_id", width: 160, ellipsis: true, render: (u: string, r: any) => r.end_user_display || u },
     { title: "轮数", dataIndex: "message_count", width: 70 },
     { title: "状态", dataIndex: "status", width: 110, render: (s: string, r: any) => r.escalated ? <Tag color="red">待人工</Tag> : <Tag color="blue">{s}</Tag> },
-    { title: "最近活动", dataIndex: "last_activity_at", width: 170, render: (t: string) => t?.replace("T", " ").slice(0, 19) },
+    { title: "最近活动", dataIndex: "last_activity_at", width: 170, render: (t: string) => fmtTime(t) },
     { title: "", width: 70, render: (_: any, r: any) => <a onClick={() => conversationApi.detail(r.id).then(setDetail)}>详情</a> },
   ];
 
@@ -152,7 +153,7 @@ function ConversationDetail({ detail, onClose, editable, onChanged }: any) {
         <Descriptions.Item label="状态">
           {inTakeover ? <Tag color="green">人工接管中</Tag> : s.escalated ? <Tag color="red">待人工</Tag> : s.status}
         </Descriptions.Item>
-        <Descriptions.Item label="创建时间">{s.created_at?.replace("T", " ").slice(0, 19)}</Descriptions.Item>
+        <Descriptions.Item label="创建时间">{fmtTime(s.created_at)}</Descriptions.Item>
         {s.satisfaction_rating ? (
           <Descriptions.Item label="满意度" span={2}>
             {"★".repeat(s.satisfaction_rating)}{"☆".repeat(5 - s.satisfaction_rating)} {s.satisfaction_note && `· ${s.satisfaction_note}`}

@@ -8,12 +8,11 @@ configured cap, the public chat entry degrades with a friendly notice and alerts
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
-
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.clock import app_today
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis
 from app.llm.types import Usage
@@ -24,7 +23,7 @@ log = get_logger("usage")
 
 
 def _today_key() -> str:
-    return f"cost:daily:{datetime.now(UTC):%Y-%m-%d}"
+    return f"cost:daily:{app_today():%Y-%m-%d}"
 
 
 async def get_today_cost() -> float:
@@ -59,7 +58,7 @@ async def record_turn_cost(
     db: AsyncSession, session: Session, usage: Usage, cost: float
 ) -> None:
     await add_cost(cost)
-    today = date.today()
+    today = app_today()
     stmt = (
         pg_insert(UsageDaily)
         .values(
@@ -87,7 +86,7 @@ async def record_turn_cost(
 
 
 async def mark_new_conversation(db: AsyncSession, session: Session) -> None:
-    today = date.today()
+    today = app_today()
     stmt = (
         pg_insert(UsageDaily)
         .values(
@@ -105,7 +104,7 @@ async def mark_new_conversation(db: AsyncSession, session: Session) -> None:
 
 
 async def mark_escalation(db: AsyncSession, session: Session) -> None:
-    today = date.today()
+    today = app_today()
     stmt = (
         pg_insert(UsageDaily)
         .values(
