@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { App as AntApp, Button, Empty, Input, Segmented, Tag, Tooltip, theme } from "antd";
+import { App as AntApp, Button, Dropdown, Empty, Input, Segmented, Tag, Tooltip, theme } from "antd";
 import {
   CheckOutlined,
   CustomerServiceOutlined,
@@ -7,9 +7,10 @@ import {
   ReloadOutlined,
   RobotOutlined,
   SendOutlined,
+  ThunderboltOutlined,
   UserOutlined,
 } from "@ant-design/icons";
-import { conversationApi } from "../api";
+import { cannedApi, conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 
@@ -37,6 +38,10 @@ export function Workbench() {
     const sid = new URLSearchParams(window.location.search).get("session");
     if (sid) setSelectedId(sid);
   }, []);
+
+  // Quick-reply templates (inserted into the composer during takeover).
+  const [canned, setCanned] = useState<any[]>([]);
+  useEffect(() => { cannedApi.list().then((d) => setCanned(d.items)).catch(() => {}); }, []);
 
   // ---- poll the queue ----
   const loadList = () => {
@@ -214,6 +219,20 @@ export function Workbench() {
                       placeholder="输入回复，回车发送给客户（Shift+Enter 换行）"
                       onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); sendReply(); } }}
                     />
+                    <Dropdown
+                      trigger={["click"]}
+                      menu={{
+                        items: canned.length
+                          ? canned.map((c) => ({ key: c.id, label: c.title || c.content.slice(0, 24) }))
+                          : [{ key: "none", label: "暂无模板", disabled: true }],
+                        onClick: ({ key }) => {
+                          const c = canned.find((x) => x.id === key);
+                          if (c) setReplyText((t) => (t ? t + "\n" + c.content : c.content));
+                        },
+                      }}
+                    >
+                      <Button icon={<ThunderboltOutlined />}>快捷回复</Button>
+                    </Dropdown>
                     <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={sendReply}>发送</Button>
                   </div>
                 ) : (
