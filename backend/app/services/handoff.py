@@ -17,6 +17,7 @@ from app.core.metrics import escalations as escalations_metric
 from app.models.conversation import HandoffTicket, Session
 from app.models.enums import HandoffStatus, SessionStatus
 from app.services.notify import notify_operator
+from app.services.takeover import publish_admin_event
 
 log = get_logger("handoff")
 
@@ -61,6 +62,7 @@ async def create_handoff(
     ticket.notify_error = err
     await db.flush()
     escalations_metric.labels(reason).inc()
+    await publish_admin_event({"type": "queue", "event": "handoff", "session_id": str(session.id)})
 
     log.info(
         "handoff_created",

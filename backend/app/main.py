@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.api.admin import admin_router
+from app.api.admin.ws import router as admin_ws_router
 from app.api.chat import chat_router
 from app.config import settings
 from app.core.health import full_health
@@ -86,6 +87,7 @@ async def observability_mw(request: Request, call_next):
 # ---- Routers ----
 app.include_router(chat_router)
 app.include_router(admin_router)
+app.include_router(admin_ws_router)
 
 
 # ---- Ops endpoints ----
