@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.admin.accounts import router as accounts_router
 from app.api.admin.ai_config import router as ai_config_router
 from app.api.admin.auth import router as auth_router
+from app.api.admin.canned import router as canned_router
 from app.api.admin.channels import router as channels_router
 from app.api.admin.conversations import router as conversations_router
 from app.api.admin.dashboard import router as dashboard_router
@@ -20,5 +21,6 @@ admin_router.include_router(channels_router)
 admin_router.include_router(conversations_router)
 admin_router.include_router(handoff_router)
 admin_router.include_router(accounts_router)
+admin_router.include_router(canned_router)
 
 __all__ = ["admin_router"]

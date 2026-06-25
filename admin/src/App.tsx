@@ -13,6 +13,7 @@ import {
   UserOutlined,
   BellOutlined,
   BulbOutlined,
+  ThunderboltOutlined,
 } from "@ant-design/icons";
 import { useAuth, isAdmin } from "./auth";
 import { useThemeMode } from "./theme";
@@ -24,6 +25,7 @@ import { AIConfig } from "./pages/AIConfig";
 import { Channels } from "./pages/Channels";
 import { Conversations } from "./pages/Conversations";
 import { Handoff } from "./pages/Handoff";
+import { CannedResponses } from "./pages/CannedResponses";
 import { Accounts } from "./pages/Accounts";
 
 const { Header, Sider, Content } = Layout;
@@ -34,6 +36,7 @@ const MENU = [
   { key: "/conversations", icon: <MessageOutlined />, label: "对话记录" },
   { key: "/knowledge", icon: <BookOutlined />, label: "知识库" },
   { key: "/handoff", icon: <BellOutlined />, label: "转人工工单" },
+  { key: "/canned", icon: <ThunderboltOutlined />, label: "快捷回复" },
   { key: "/ai-config", icon: <RobotOutlined />, label: "AI 配置" },
   { key: "/channels", icon: <ApiOutlined />, label: "渠道配置" },
   { key: "/accounts", icon: <TeamOutlined />, label: "账号权限", adminOnly: true },
@@ -86,6 +89,7 @@ function AppLayout() {
               <Route path="/knowledge" element={<Knowledge />} />
               <Route path="/conversations" element={<Conversations />} />
               <Route path="/handoff" element={<Handoff />} />
+              <Route path="/canned" element={<CannedResponses />} />
               <Route path="/ai-config" element={<AIConfig />} />
               <Route path="/channels" element={<Channels />} />
               <Route path="/accounts" element={isAdmin(user?.role) ? <Accounts /> : <Navigate to="/dashboard" />} />

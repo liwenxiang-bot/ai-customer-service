@@ -2,7 +2,7 @@
 
 from app.models.admin import AdminUser, AuditLog, RefreshToken
 from app.models.config import AIConfig, ChannelConfig
-from app.models.conversation import HandoffTicket, Message, Session
+from app.models.conversation import CannedResponse, HandoffTicket, Message, Session
 from app.models.knowledge import (
     EmbeddingRebuildJob,
     KnowledgeChunk,
@@ -22,6 +22,7 @@ __all__ = [
     "Session",
     "Message",
     "HandoffTicket",
+    "CannedResponse",
     "KnowledgeItem",
     "KnowledgeChunk",
     "KnowledgeVersion",

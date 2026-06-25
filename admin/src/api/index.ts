@@ -104,3 +104,11 @@ export const accountApi = {
   remove: (id: string) => api.delete(`/accounts/users/${id}`).then((r) => r.data),
   auditLogs: (params: any) => api.get("/accounts/audit-logs", { params }).then((r) => r.data),
 };
+
+// ---- Canned responses ----
+export const cannedApi = {
+  list: (q = "") => api.get("/canned", { params: { q } }).then((r) => r.data),
+  create: (body: any) => api.post("/canned", body).then((r) => r.data),
+  update: (id: string, body: any) => api.put(`/canned/${id}`, body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/canned/${id}`).then((r) => r.data),
+};

@@ -124,3 +124,15 @@ class HandoffTicket(Base, TimestampMixin, TenantMixin):
     assignee_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolution_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
+class CannedResponse(Base, TimestampMixin, TenantMixin):
+    """Reusable quick-reply templates operators can insert in the workbench."""
+
+    __tablename__ = "canned_responses"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    category: Mapped[str] = mapped_column(String(120), nullable=False, default="", index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
