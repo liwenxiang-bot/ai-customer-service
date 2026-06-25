@@ -121,8 +121,13 @@ export function AIConfig() {
                 <Col span={8}><Form.Item name={["retrieval", "chunk_size"]} label="分块大小"><InputNumber min={100} max={2000} style={{ width: "100%" }} /></Form.Item></Col>
                 <Col span={8}><Form.Item name={["retrieval", "chunk_overlap"]} label="重叠"><InputNumber min={0} max={500} style={{ width: "100%" }} /></Form.Item></Col>
                 <Col span={8}><Form.Item name={["retrieval", "rerank_top_n"]} label="重排 Top-N"><InputNumber min={1} max={20} style={{ width: "100%" }} /></Form.Item></Col>
+                <Col span={8}><Form.Item name={["retrieval", "vector_min_sim"]} label="向量相似度下限" tooltip="低于此余弦相似度的向量结果直接丢弃，避免“总能命中最近但不相关的内容”。按 embedding 模型校准：OpenAI 系约 0.2–0.35，BGE/Jina 系约 0.4–0.5。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
+                <Col span={8}><Form.Item name={["retrieval", "min_score"]} label="重排分下限" tooltip="仅在启用重排时生效：重排得分低于此值的结果丢弃（0 表示不过滤）。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
+                <Col span={8}><Form.Item name={["retrieval", "trgm_threshold"]} label="Trigram 阈值" tooltip="关键词/子串匹配的相似度下限，过滤弱噪声命中。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
+                <Col span={8}><Form.Item name={["retrieval", "candidate_multiplier"]} label="候选倍数" tooltip="融合/重排前的候选集大小 = Top-K × 此值，越大重排召回越好、开销略增。"><InputNumber min={1} max={50} style={{ width: "100%" }} /></Form.Item></Col>
               </Row>
               <Space size="large">
+                <Form.Item name={["retrieval", "expand_context"]} label="上下文扩展" valuePropName="checked" tooltip="命中分块时附带其相邻分块，给模型更完整的上下文（small-to-big）。"><Switch /></Form.Item>
                 <Form.Item name="content_safety_enabled" label="内容安全过滤" valuePropName="checked"><Switch /></Form.Item>
                 <Form.Item name="semantic_cache_enabled" label="语义缓存" valuePropName="checked"><Switch /></Form.Item>
               </Space>

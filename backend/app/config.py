@@ -9,14 +9,23 @@ Env values act as the fallback / bootstrap for that DB-backed config.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The canonical .env lives at the repo root. Resolve it absolutely so settings load
+# correctly regardless of working directory: Makefile dev targets and `python -m
+# scripts.*` run from backend/, where a bare ".env" is not found and settings would
+# silently fall back to code defaults — e.g. EMBEDDING_DIM reverting to 1536 and
+# breaking embedding writes when the active model is 1024-dim.
+_ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Later files win; the absolute root .env overrides a CWD-relative one.
+        env_file=(".env", str(_ROOT_ENV)),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -87,7 +96,17 @@ class Settings(BaseSettings):
     rag_top_k: int = 5
     rag_vector_weight: float = 0.6
     rag_keyword_weight: float = 0.4
+    # Semantic floor for the vector path: chunks whose cosine similarity to the query
+    # is below this are dropped before fusion — this stops "always hit on the
+    # nearest-but-irrelevant chunk". Calibrate per embedding model
+    # (OpenAI ~0.2-0.35, BGE/Jina ~0.4-0.5).
+    rag_vector_min_sim: float = 0.25
+    # Final relevance floor applied to rerank scores when rerank is enabled (0 = off).
     rag_min_score: float = 0.0
+    # Trigram similarity floor for the keyword path (exact-substring matches).
+    rag_trgm_threshold: float = 0.1
+    # Candidate pool before fusion/rerank = top_k * this (bigger → better rerank recall).
+    rag_candidate_multiplier: int = 8
 
     # ---- Anti-abuse / cost ----
     rate_limit_user_per_min: int = 20

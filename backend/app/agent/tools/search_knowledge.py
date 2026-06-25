@@ -23,7 +23,12 @@ class SearchKnowledgeTool(Tool):
         "properties": {
             "query": {
                 "type": "string",
-                "description": "要检索的问题或关键词，使用用户的原始措辞效果最好。",
+                "description": (
+                    "要检索的查询语句，必须【自包含、可独立理解】。结合上文把指代词"
+                    "（这个/那款/它/上面说的）替换为具体名称、补全省略的主体；保留用户"
+                    "原话中的关键术语、产品型号、错误码。例如上文在说“X1 手机”、用户接着"
+                    "问“它防水吗”，应检索“X1 手机 是否防水”，而不是“它防水吗”。"
+                ),
             }
         },
         "required": ["query"],
@@ -55,7 +60,7 @@ class SearchKnowledgeTool(Tool):
                 }
             )
             title = r.title or "（无标题）"
-            blocks.append(f"[来源{i}] {title}\n{r.content}")
+            blocks.append(f"[来源{i}] {title}\n{r.context or r.content}")
 
         log.info("knowledge_retrieved", query=query, hits=len(results))
         return (
