@@ -270,9 +270,11 @@ async def _send_history(ws: WebSocket, session_id: str, limit: int) -> None:
                 .limit(limit)
             )
         ).scalars().all()
+        session = await db.get(Session, sid)
     await ws.send_json(
         {
             "type": "history",
+            "status": session.status if session else "",
             "messages": [
                 {
                     "id": str(m.id),

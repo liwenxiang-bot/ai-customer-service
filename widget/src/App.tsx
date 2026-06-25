@@ -171,6 +171,9 @@ export function App({ config }: { config: WidgetConfig }) {
             }))
           );
         }
+        // After a refresh/reconnect, re-show the takeover banner from session status
+        // (the human_takeover event itself isn't persisted, so history alone would lose it).
+        if (ev.status === "human_takeover") appendSystem("人工客服已接入，正在为你服务~");
         break;
       case "human_takeover":
       case "ai_resumed":
