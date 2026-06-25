@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -134,4 +134,106 @@ async def trend(days: int = 14, db: AsyncSession = Depends(get_db), user: AdminU
             }
             for r in rows
         ]
+    }
+
+
+@router.get("/analytics")
+async def analytics(days: int = 14, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)):
+    """Operational analytics over a window: CSAT (1–5), knowledge grounding + most-cited
+    items (from message citations), and cost broken down by model and channel."""
+    days = max(1, min(days, 90))
+    start = datetime.combine(date.today() - timedelta(days=days - 1), datetime.min.time(), tzinfo=UTC)
+
+    # ---- CSAT: visitor's 1–5 star rating ----
+    rating_rows = (
+        await db.execute(
+            select(Session.satisfaction_rating, func.count(Session.id))
+            .where(Session.satisfaction_rating.is_not(None), Session.created_at >= start)
+            .group_by(Session.satisfaction_rating)
+        )
+    ).all()
+    dist = {int(r[0]): int(r[1]) for r in rating_rows}
+    csat_distribution = [{"rating": s, "count": dist.get(s, 0)} for s in (1, 2, 3, 4, 5)]
+    rated = sum(d["count"] for d in csat_distribution)
+    csat_avg = (
+        round(sum(d["rating"] * d["count"] for d in csat_distribution) / rated, 2) if rated else None
+    )
+
+    # ---- Knowledge grounding rate: assistant answers that cited the KB ----
+    grounded, total_answers = (
+        await db.execute(
+            select(
+                func.count(Message.id).filter(func.jsonb_array_length(Message.citations) > 0),
+                func.count(Message.id),
+            ).where(Message.role == MessageRole.ASSISTANT, Message.created_at >= start)
+        )
+    ).one()
+    grounded, total_answers = int(grounded or 0), int(total_answers or 0)
+    grounding_rate = round(grounded / total_answers, 3) if total_answers else None
+
+    # ---- Most-cited knowledge items (unnest the citations JSONB array) ----
+    top_rows = (
+        await db.execute(
+            text(
+                """
+                SELECT c->>'item_id' AS item_id,
+                       max(c->>'title') AS title,
+                       count(*) AS hits,
+                       avg((c->>'score')::float) AS avg_score
+                FROM messages m, jsonb_array_elements(m.citations) c
+                WHERE m.created_at >= :start AND jsonb_array_length(m.citations) > 0
+                GROUP BY c->>'item_id'
+                ORDER BY hits DESC
+                LIMIT 10
+                """
+            ),
+            {"start": start},
+        )
+    ).all()
+    top_items = [
+        {
+            "item_id": r[0],
+            "title": r[1] or "(无标题)",
+            "hits": int(r[2]),
+            "avg_score": round(float(r[3] or 0), 3),
+        }
+        for r in top_rows
+    ]
+
+    # ---- Cost breakdown ----
+    by_model = (
+        await db.execute(
+            select(Message.model, func.sum(Message.cost_usd), func.count(Message.id))
+            .where(Message.created_at >= start, Message.cost_usd > 0)
+            .group_by(Message.model)
+            .order_by(func.sum(Message.cost_usd).desc())
+        )
+    ).all()
+    cost_by_model = [
+        {"model": r[0] or "(unknown)", "cost_usd": round(float(r[1] or 0), 4), "messages": int(r[2])}
+        for r in by_model
+    ]
+    by_channel = (
+        await db.execute(
+            select(Session.channel_type, func.sum(Message.cost_usd))
+            .join(Message, Message.session_id == Session.id)
+            .where(Message.created_at >= start, Message.cost_usd > 0)
+            .group_by(Session.channel_type)
+            .order_by(func.sum(Message.cost_usd).desc())
+        )
+    ).all()
+    cost_by_channel = [
+        {"channel": r[0] or "(unknown)", "cost_usd": round(float(r[1] or 0), 4)} for r in by_channel
+    ]
+
+    return {
+        "days": days,
+        "csat": {"distribution": csat_distribution, "average": csat_avg, "rated": rated},
+        "knowledge": {
+            "grounding_rate": grounding_rate,
+            "grounded": grounded,
+            "total_answers": total_answers,
+            "top_items": top_items,
+        },
+        "cost": {"by_model": cost_by_model, "by_channel": cost_by_channel},
     }

@@ -23,6 +23,7 @@ export const authApi = {
 export const dashboardApi = {
   overview: () => api.get("/dashboard/overview").then((r) => r.data),
   trend: (days = 14) => api.get("/dashboard/trend", { params: { days } }).then((r) => r.data),
+  analytics: (days = 14) => api.get("/dashboard/analytics", { params: { days } }).then((r) => r.data),
 };
 
 // ---- Knowledge ----
