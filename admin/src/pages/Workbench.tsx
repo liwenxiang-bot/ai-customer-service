@@ -84,8 +84,20 @@ export function Workbench() {
 
   useEffect(() => () => { if (typingHideRef.current) clearTimeout(typingHideRef.current); }, []);
 
-  // Realtime: refresh the queue on any backend queue event; refresh the open conversation
-  // on its live messages. The interval polls below are kept only as a slow fallback.
+  // Append one live message instead of refetching the whole thread — keeps the operator's
+  // view as instant as the customer's (which appends incrementally). Dedup by id so the
+  // realtime echo of our own reply doesn't double up with the optimistic append on send.
+  const appendMsg = (m: any) => {
+    if (!m?.id) return;
+    setDetail((d: any) =>
+      !d || (d.messages || []).some((x: any) => x.id === m.id)
+        ? d
+        : { ...d, messages: [...(d.messages || []), m] }
+    );
+  };
+
+  // Realtime: refresh the queue on backend queue events; on a live message, append it in place
+  // (instant) rather than refetching; only a status change re-pulls the thread. 15s poll = fallback.
   const showCustomerTyping = () => {
     setCustomerTyping(true);
     if (typingHideRef.current) clearTimeout(typingHideRef.current);
@@ -93,7 +105,14 @@ export function Workbench() {
   };
   const { watch, sendTyping } = useRealtime({
     onQueue: () => loadList(),
-    onSession: () => { setCustomerTyping(false); loadDetail(); }, // a real message supersedes the hint
+    onSession: (msg: any) => {
+      setCustomerTyping(false); // a real message supersedes the typing hint
+      if (msg?.type === "human_message" && msg.message_id)
+        appendMsg({ id: msg.message_id, role: "assistant", model: "human", content: msg.content });
+      else if (msg?.type === "customer_message" && msg.message_id)
+        appendMsg({ id: msg.message_id, role: "user", content: msg.content, attachments: msg.attachments || [] });
+      else loadDetail(); // takeover / resume / end → refresh session status + thread
+    },
     onTyping: showCustomerTyping,
   });
   useEffect(() => { watch(selectedId || ""); setCustomerTyping(false); }, [selectedId]);
@@ -116,8 +135,12 @@ export function Workbench() {
     const c = replyText.trim();
     if (!c) return;
     setSending(true);
-    try { await conversationApi.reply(selectedId!, c); setReplyText(""); await loadDetail(); }
-    catch (e) { message.error(apiError(e)); }
+    try {
+      const res = await conversationApi.reply(selectedId!, c);
+      setReplyText("");
+      // Show our own reply immediately (no full reload); the realtime echo dedups by id.
+      appendMsg({ id: res?.message_id, role: "assistant", model: "human", content: c });
+    } catch (e) { message.error(apiError(e)); }
     finally { setSending(false); }
   };
 
