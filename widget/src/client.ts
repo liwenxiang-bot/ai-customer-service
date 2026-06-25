@@ -33,6 +33,20 @@ export class ChatClient {
       channelKey
     )}`;
     this.origin = baseUrl;
+
+    // Mobile browsers drop the socket when backgrounded/locked; reconnect (and backfill
+    // history) as soon as the tab is visible again or the network returns — so operator
+    // replies / takeover state appear without a manual refresh.
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && !this.closedByUser && !this.isOpen()) this.connect();
+      });
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", () => {
+        if (!this.closedByUser && !this.isOpen()) this.connect();
+      });
+    }
   }
 
   connect(onOpen?: () => void) {

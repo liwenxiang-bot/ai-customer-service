@@ -167,6 +167,15 @@ class AgentRunner:
                 yield AgentEvent(kind="escalation", data=ctx.escalation)
             loop_i += 1
 
+        # No visible answer produced (e.g. the model only called a tool then returned empty
+        # on its final pass) — never leave the user with a blank bubble; stream a fallback.
+        if not (final_text or "").strip() and not degraded:
+            final_text = (
+                "我已为你转接人工，请稍候有同事跟进。" if ctx.escalation
+                else "你好，请问有什么可以帮你的吗？"
+            )
+            yield AgentEvent(kind="text", text=final_text)
+
         # ---- Persist the assistant message with the full trace ----
         latency_ms = int((time.monotonic() - started) * 1000)
         cost = estimate_cost(self.ai_config.llm_model, usage.prompt_tokens, usage.completion_tokens)
