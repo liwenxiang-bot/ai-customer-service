@@ -154,6 +154,19 @@ async def test_llm(body: TestLLMIn, db: AsyncSession = Depends(get_db), user: Ad
         raise HTTPException(status_code=502, detail=f"调用失败：{exc}")
 
 
+@router.post("/rebuild")
+async def trigger_rebuild(
+    db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)
+):
+    """Manually (re)build all embeddings with the current model/dim — used to retry a
+    failed rebuild or refresh vectors without changing the model."""
+    cfg = await get_active_ai_config(db)
+    job = await start_rebuild(db, cfg.embedding_model, cfg.embedding_dim, cfg.embedding_model, cfg.embedding_dim)
+    await write_audit(db, user, "ai_config.rebuild", "ai_config", str(cfg.id), {"manual": True})
+    await db.commit()
+    return {"ok": True, "job_id": str(job.id), "status": job.status}
+
+
 @router.get("/rebuild-status")
 async def rebuild_status(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)):
     job = await latest_job(db)

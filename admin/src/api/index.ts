@@ -55,6 +55,7 @@ export const aiConfigApi = {
   update: (body: any) => api.put("/ai-config", body).then((r) => r.data),
   testLLM: (message: string) => api.post("/ai-config/test-llm", { message }).then((r) => r.data),
   rebuildStatus: () => api.get("/ai-config/rebuild-status").then((r) => r.data),
+  rebuild: () => api.post("/ai-config/rebuild").then((r) => r.data),
 };
 
 // ---- Channels ----
@@ -91,6 +92,7 @@ export const conversationApi = {
 export const handoffApi = {
   tickets: (params: any) => api.get("/handoff/tickets", { params }).then((r) => r.data),
   resolve: (id: string, note: string) => api.post(`/handoff/tickets/${id}/resolve`, { note }).then((r) => r.data),
+  resend: (id: string) => api.post(`/handoff/tickets/${id}/resend`).then((r) => r.data),
 };
 
 // ---- Accounts ----

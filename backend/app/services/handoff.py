@@ -80,3 +80,23 @@ async def resolve_handoff(
     if assignee_id:
         ticket.assignee_id = assignee_id
     await db.flush()
+
+
+async def resend_handoff_notify(db: AsyncSession, ticket: HandoffTicket) -> tuple[bool, str]:
+    """Re-send the operator notification for an existing ticket (manual retry)."""
+    base = (settings.admin_base_url or settings.app_base_url).rstrip("/")
+    link = f"{base}/conversations?session={ticket.session_id}"
+    title = "🔔 转人工提醒（重发）"
+    body = (
+        f"> 渠道：{ticket.channel_type}\n"
+        f"> 用户：{ticket.end_user_id or '匿名'}\n"
+        f"> 原因：{ticket.reason_detail or ticket.reason}\n\n"
+        f"**对话摘要**：{ticket.conversation_summary[:500]}\n\n"
+        f"[点此在后台查看]({link})"
+    )
+    delivered, err = await notify_operator(db, title, body)
+    ticket.notified = delivered
+    ticket.notify_error = err
+    await db.flush()
+    log.info("handoff_notify_resent", ticket_id=str(ticket.id), notified=delivered)
+    return delivered, err
