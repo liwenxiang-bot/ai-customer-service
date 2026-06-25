@@ -36,6 +36,7 @@ async def create_handoff(
         reason=reason,
         reason_detail=reason_detail,
         conversation_summary=summary,
+        priority="high" if reason in ("negative_feedback", "error_fallback") else "normal",
         status=HandoffStatus.OPEN,
     )
     db.add(ticket)

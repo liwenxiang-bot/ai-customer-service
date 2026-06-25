@@ -32,6 +32,12 @@ export function Workbench() {
   const [sending, setSending] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
 
+  // Deep-link from a handoff ticket (?session=ID) → preselect that conversation.
+  useEffect(() => {
+    const sid = new URLSearchParams(window.location.search).get("session");
+    if (sid) setSelectedId(sid);
+  }, []);
+
   // ---- poll the queue ----
   const loadList = () => {
     const params =

@@ -118,6 +118,7 @@ class HandoffTicket(Base, TimestampMixin, TenantMixin):
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default=HandoffStatus.OPEN, index=True
     )
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal", index=True)
     notified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     notify_error: Mapped[str] = mapped_column(Text, nullable=False, default="")
     assignee_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
