@@ -105,8 +105,11 @@ export function App({ config }: { config: WidgetConfig }) {
   const [rating, setRating] = useState(0);
   const [rateNote, setRateNote] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [agentTyping, setAgentTyping] = useState(false);
 
   const clientRef = useRef<ChatClient | null>(null);
+  const typingHideRef = useRef<number | null>(null); // auto-hides the "客服正在输入" indicator
+  const lastTypingSentRef = useRef(0); // throttles our own outbound typing pings
   const channelKey = config.channelKey;
   const uid = useRef(uidFor(channelKey));
   const sessionKey = `acs_session_${channelKey}`;
@@ -145,7 +148,7 @@ export function App({ config }: { config: WidgetConfig }) {
   useEffect(() => {
     const el = listRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, pending]);
+  }, [messages, pending, agentTyping]);
 
   function handleEvent(ev: ServerEvent) {
     switch (ev.type) {
@@ -155,30 +158,44 @@ export function App({ config }: { config: WidgetConfig }) {
       case "_reconnecting":
         setStatus("connecting");
         break;
-      case "history":
+      case "history": {
+        // Status notices (转人工 / 人工接入 / 人工结束) are ephemeral real-time events that
+        // aren't persisted, so a refresh/reconnect would lose them. Reconstruct the current
+        // one from session.status and append it as the trailing system line. Rebuilding the
+        // whole list from history on every (re)connect keeps this idempotent (no duplicates).
         if (ev.messages?.length) {
-          setMessages(
-            ev.messages.map((m: any) => ({
-              id: m.id,
-              role: m.role,
-              content: m.content,
-              citations: m.citations,
-              attachments: m.attachments,
-              feedback: m.feedback,
-              fromHuman: m.from_human,
-              ts: m.created_at ? Date.parse(m.created_at) : undefined,
-              status: "sent",
-            }))
-          );
+          const msgs: Msg[] = ev.messages.map((m: any) => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            citations: m.citations,
+            attachments: m.attachments,
+            feedback: m.feedback,
+            fromHuman: m.from_human,
+            ts: m.created_at ? Date.parse(m.created_at) : undefined,
+            status: "sent",
+          }));
+          const notice = statusNotice(ev.status);
+          if (notice) msgs.push({ id: "sys-" + ev.status, role: "assistant", content: notice, system: true });
+          setMessages(msgs);
         }
-        // After a refresh/reconnect, re-show the takeover banner from session status
-        // (the human_takeover event itself isn't persisted, so history alone would lose it).
-        if (ev.status === "human_takeover") appendSystem("人工客服已接入，正在为你服务~");
+        // Restore handoff UI state so the 转人工 button stays hidden while a human is engaged.
+        setEscalated(ev.status === "escalated" || ev.status === "human_takeover");
+        if (ev.status === "closed") setEnded(true);
         break;
+      }
       case "human_takeover":
+        setEscalated(true); // proactive operator takeover (no prior 转人工) must hide the button too
+        if (ev.message) appendSystem(ev.message);
+        break;
       case "ai_resumed":
       case "human_ended":
+        setEscalated(false);
+        clearAgentTyping();
         if (ev.message) appendSystem(ev.message);
+        break;
+      case "agent_typing":
+        showAgentTyping();
         break;
       case "escalated":
         setEscalated(true);
@@ -186,8 +203,10 @@ export function App({ config }: { config: WidgetConfig }) {
         break;
       case "session_ended":
         setEnded(true);
+        clearAgentTyping();
         break;
       case "human_message":
+        clearAgentTyping(); // the message itself supersedes the "正在输入" hint
         setMessages((prev) => [
           ...prev,
           { id: ev.message_id || "h-" + Date.now(), role: "assistant", content: ev.content, fromHuman: true, ts: Date.now() },
@@ -269,6 +288,26 @@ export function App({ config }: { config: WidgetConfig }) {
   }
   function appendSystem(text: string) {
     setMessages((prev) => [...prev, { id: "sys-" + Date.now(), role: "assistant", content: text, system: true, ts: Date.now() }]);
+  }
+
+  // ---- typing indicators ----
+  function clearAgentTyping() {
+    if (typingHideRef.current) { clearTimeout(typingHideRef.current); typingHideRef.current = null; }
+    setAgentTyping(false);
+  }
+  // "客服正在输入" pings arrive only while typing; no reliable "stopped" signal, so self-expire.
+  function showAgentTyping() {
+    setAgentTyping(true);
+    if (typingHideRef.current) clearTimeout(typingHideRef.current);
+    typingHideRef.current = window.setTimeout(() => setAgentTyping(false), 4000);
+  }
+  // Tell a watching operator we're typing — only once a human is engaged, throttled to ~2.5s.
+  function maybeSendTyping() {
+    if (!escalated) return;
+    const now = Date.now();
+    if (now - lastTypingSentRef.current < 2500) return;
+    lastTypingSentRef.current = now;
+    clientRef.current?.sendTyping();
   }
 
   // ---- attachments ----
@@ -515,6 +554,16 @@ export function App({ config }: { config: WidgetConfig }) {
               );
             })}
 
+            {agentTyping && (
+              <div class="acs-msg assistant">
+                <div class="acs-human-label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                  人工客服
+                </div>
+                <div class="acs-bubble acs-typing"><span class="acs-dots"><span></span><span></span><span></span></span></div>
+              </div>
+            )}
+
             {showSuggest && (
               <div class="acs-suggest">
                 {suggestions.map((q) => (
@@ -583,7 +632,7 @@ export function App({ config }: { config: WidgetConfig }) {
                   aria-label="输入消息"
                   placeholder={b.placeholder}
                   value={input}
-                  onInput={(e) => { setInput((e.target as HTMLTextAreaElement).value); autoGrow(e.target as HTMLTextAreaElement); }}
+                  onInput={(e) => { setInput((e.target as HTMLTextAreaElement).value); autoGrow(e.target as HTMLTextAreaElement); maybeSendTyping(); }}
                   onKeyDown={onKey}
                 />
                 {busy ? (
@@ -628,4 +677,15 @@ export function App({ config }: { config: WidgetConfig }) {
 
 function escapeText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>");
+}
+
+/** Current-state notice reconstructed from session.status on (re)connect — keeps the
+ *  handoff banner alive across refresh, since these notices aren't persisted as messages. */
+function statusNotice(status?: string): string | null {
+  switch (status) {
+    case "escalated": return "已为你转接人工，我们会尽快安排同事跟进。";
+    case "human_takeover": return "人工客服已接入，正在为你服务~";
+    case "human_handled": return "本次人工服务已结束，感谢咨询。";
+    default: return null;
+  }
 }

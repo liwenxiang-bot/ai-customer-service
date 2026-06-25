@@ -26,7 +26,7 @@ from app.core.redis_client import get_redis
 from app.core.security import decode_token
 from app.db.session import session_scope
 from app.models.admin import AdminUser
-from app.services.takeover import ADMIN_CHANNEL, push_channel
+from app.services.takeover import ADMIN_CHANNEL, publish, push_channel
 
 router = APIRouter()
 log = get_logger("admin.ws")
@@ -104,6 +104,13 @@ async def admin_ws(websocket: WebSocket, token: str = Query("")) -> None:
                     session_task = None
                 if sid:
                     session_task = asyncio.create_task(relay(push_channel(sid)))
+            elif t == "typing":
+                # Relay "operator is typing" to the customer's chat window. Fire-and-forget;
+                # the operator client throttles. (The echo back to this admin socket is
+                # ignored client-side — useRealtime only surfaces customer_typing.)
+                sid = (payload.get("session_id") or "").strip()
+                if sid:
+                    await publish(sid, {"type": "agent_typing"})
     except WebSocketDisconnect:
         pass
     except Exception as exc:  # noqa: BLE001

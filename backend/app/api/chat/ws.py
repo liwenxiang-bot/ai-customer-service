@@ -1,9 +1,10 @@
 """WebSocket chat endpoint — streaming, domain-whitelisted, rate-limited.
 
 Wire protocol (server→client): connected, message_start, stream_chunk, tool_status,
-citations, message_end, escalation, error, pong, history.
+citations, message_end, escalation, error, pong, history, human_message, agent_typing
+(+ takeover status: human_takeover / ai_resumed / human_ended).
 Client→server: user_message {text, client_msg_id}, feedback {message_id, kind},
-history {limit}, ping.
+history {limit}, request_human, end_session, typing, ping.
 
 Reconnect/backfill: the client passes its session_id and uid on the URL and may request
 `history` to restore the transcript after a reconnect (requirements §5.1, §10).
@@ -34,6 +35,7 @@ from app.services.handoff import create_handoff
 from app.services.takeover import (
     is_takeover,
     persist_customer_message,
+    publish,
     push_channel,
 )
 
@@ -81,9 +83,17 @@ async def chat_ws(
     end_user_id = uid or f"anon-{uuid.uuid4().hex[:12]}"
     ip = _client_ip(websocket)
 
-    await websocket.send_json(
-        {"type": "connected", "session_id": session_id or None, "end_user_id": end_user_id}
-    )
+    # Single-writer guard: the main loop and the _push_listener task both emit on this socket,
+    # and Starlette's send_json writes multiple frames and isn't concurrency-safe. Serialize
+    # every send through one lock so a takeover push can't interleave with a streaming chunk
+    # and corrupt/drop a frame. (admin/ws.py solves the same problem with a dedicated sender.)
+    send_lock = asyncio.Lock()
+
+    async def send(payload: dict) -> None:
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    await send({"type": "connected", "session_id": session_id or None, "end_user_id": end_user_id})
 
     # Background task that relays operator (takeover) messages to this socket.
     push_task: asyncio.Task | None = None
@@ -91,7 +101,7 @@ async def chat_ws(
     def ensure_push_listener(sid: str) -> None:
         nonlocal push_task
         if sid and push_task is None:
-            push_task = asyncio.create_task(_push_listener(websocket, sid))
+            push_task = asyncio.create_task(_push_listener(send, sid))
 
     if session_id:
         ensure_push_listener(session_id)
@@ -102,11 +112,19 @@ async def chat_ws(
             mtype = payload.get("type")
 
             if mtype == "ping":
-                await websocket.send_json({"type": "pong"})
+                await send({"type": "pong"})
+                continue
+
+            if mtype == "typing":
+                # Relay "customer is typing" to a watching operator (best-effort, fire-and-
+                # forget). Only meaningful once a human is in the loop; the client throttles
+                # and only sends while escalated, so this stays off the AI hot path.
+                if session_id:
+                    await publish(session_id, {"type": "customer_typing"})
                 continue
 
             if mtype == "history":
-                await _send_history(websocket, session_id, int(payload.get("limit", 50)))
+                await _send_history(send, session_id, int(payload.get("limit", 50)))
                 continue
 
             if mtype == "feedback":
@@ -115,7 +133,7 @@ async def chat_ws(
                         db, payload.get("message_id", ""), payload.get("kind", ""),
                         payload.get("note", ""),
                     )
-                await websocket.send_json({"type": "feedback_ack", "ok": ok})
+                await send({"type": "feedback_ack", "ok": ok})
                 continue
 
             if mtype == "request_human":
@@ -128,7 +146,7 @@ async def chat_ws(
                                 s.summary or s.title or "",
                             )
                         await db.commit()
-                await websocket.send_json(
+                await send(
                     {"type": "escalated", "message": "已为你转接人工，我们会尽快安排同事跟进。"}
                 )
                 continue
@@ -146,7 +164,7 @@ async def chat_ws(
                             if note:
                                 s.satisfaction_note = note
                         await db.commit()
-                await websocket.send_json({"type": "session_ended"})
+                await send({"type": "session_ended"})
                 continue
 
             if mtype != "user_message":
@@ -160,7 +178,7 @@ async def chat_ws(
             # ---- Rate limit (per user + per IP) ----
             decision = await check_chat_limits(end_user_id, ip, user_limit, ip_limit)
             if not decision.allowed:
-                await websocket.send_json(
+                await send(
                     {
                         "type": "rate_limited",
                         "retry_after": decision.retry_after,
@@ -173,11 +191,11 @@ async def chat_ws(
             if session_id and await is_takeover(session_id):
                 async with session_scope() as db:
                     await persist_customer_message(db, session_id, text, attachments)
-                await websocket.send_json({"type": "received"})
+                await send({"type": "received"})
                 continue
 
             new_sid = await _run_turn(
-                websocket, end_user_id, ip, text, session_id, channel_key, payload
+                send, websocket, end_user_id, ip, text, session_id, channel_key, payload
             )
             # Adopt the (possibly newly created) session id for the rest of the connection.
             session_id = new_sid or session_id
@@ -188,7 +206,7 @@ async def chat_ws(
     except Exception as exc:  # noqa: BLE001
         log.warning("ws_error", error=str(exc))
         try:
-            await websocket.send_json({"type": "error", "message": "连接出现异常"})
+            await send({"type": "error", "message": "连接出现异常"})
         except Exception:  # noqa: BLE001
             pass
     finally:
@@ -196,8 +214,12 @@ async def chat_ws(
             push_task.cancel()
 
 
-async def _push_listener(websocket: WebSocket, session_id: str) -> None:
-    """Subscribe to the session's Redis channel and forward operator pushes to the WS."""
+async def _push_listener(send, session_id: str) -> None:
+    """Subscribe to the session's Redis channel and forward operator pushes to the WS.
+
+    `send` is the connection's locked writer (not the raw socket) so these pushes can't
+    interleave with the main loop's frames.
+    """
     pubsub = get_redis().pubsub()
     channel = push_channel(session_id)
     try:
@@ -206,7 +228,7 @@ async def _push_listener(websocket: WebSocket, session_id: str) -> None:
             if message.get("type") != "message":
                 continue
             try:
-                await websocket.send_json(json.loads(message["data"]))
+                await send(json.loads(message["data"]))
             except Exception:  # noqa: BLE001 — socket gone
                 break
     except asyncio.CancelledError:
@@ -221,10 +243,13 @@ async def _push_listener(websocket: WebSocket, session_id: str) -> None:
             pass
 
 
-async def _run_turn(ws, end_user_id, ip, text, session_id, channel_key, payload) -> str:
-    """Stream one turn; return the resolved session id (created lazily on first turn)."""
+async def _run_turn(send, ws, end_user_id, ip, text, session_id, channel_key, payload) -> str:
+    """Stream one turn; return the resolved session id (created lazily on first turn).
+
+    Writes go through `send` (the connection's locked writer); `ws` is kept only for headers.
+    """
     turn_id = uuid.uuid4().hex
-    await ws.send_json({"type": "message_start", "turn_id": turn_id})
+    await send({"type": "message_start", "turn_id": turn_id})
 
     inbound = InboundMessage(
         channel_type=ChannelType.WEB,
@@ -245,18 +270,18 @@ async def _run_turn(ws, end_user_id, ip, text, session_id, channel_key, payload)
             rendered = web_adapter.render_event(ev)
             if rendered is not None:
                 rendered["turn_id"] = turn_id
-                await ws.send_json(rendered)
+                await send(rendered)
     return resolved_sid
 
 
-async def _send_history(ws: WebSocket, session_id: str, limit: int) -> None:
+async def _send_history(send, session_id: str, limit: int) -> None:
     if not session_id:
-        await ws.send_json({"type": "history", "messages": []})
+        await send({"type": "history", "messages": []})
         return
     try:
         sid = uuid.UUID(session_id)
     except (ValueError, TypeError):
-        await ws.send_json({"type": "history", "messages": []})
+        await send({"type": "history", "messages": []})
         return
     async with session_scope() as db:
         rows = (
@@ -271,7 +296,7 @@ async def _send_history(ws: WebSocket, session_id: str, limit: int) -> None:
             )
         ).scalars().all()
         session = await db.get(Session, sid)
-    await ws.send_json(
+    await send(
         {
             "type": "history",
             "status": session.status if session else "",
