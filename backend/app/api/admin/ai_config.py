@@ -16,7 +16,7 @@ from app.db.session import get_db
 from app.llm.base import LLMSettings
 from app.llm.factory import get_provider
 from app.models.admin import AdminUser
-from app.services.ai_config import get_active_ai_config
+from app.services.ai_config import get_active_ai_config, merged_retrieval
 from app.services.audit import write_audit
 from app.services.embedding_rebuild import latest_job, start_rebuild
 
@@ -44,7 +44,7 @@ def _serialize(cfg) -> dict:
         "rerank_base_url": cfg.rerank_base_url,
         "rerank_api_key": mask_secret(cfg.rerank_api_key_enc),
         "rerank_model": cfg.rerank_model,
-        "retrieval": cfg.retrieval,
+        "retrieval": merged_retrieval(cfg),
         "content_safety_enabled": cfg.content_safety_enabled,
         "semantic_cache_enabled": cfg.semantic_cache_enabled,
     }
@@ -102,6 +102,15 @@ async def update_config(
         cfg.embedding_api_key_enc = _maybe_secret(cfg.embedding_api_key_enc, data.pop("embedding_api_key"))
     if "rerank_api_key" in data:
         cfg.rerank_api_key_enc = _maybe_secret(cfg.rerank_api_key_enc, data.pop("rerank_api_key"))
+
+    # Retrieval: merge into the existing dict (ignore nulls) so a blank form field never
+    # wipes an existing key.
+    incoming_retrieval = data.pop("retrieval", None)
+    if incoming_retrieval:
+        cfg.retrieval = {
+            **(cfg.retrieval or {}),
+            **{k: v for k, v in incoming_retrieval.items() if v is not None},
+        }
 
     for field, value in data.items():
         setattr(cfg, field, value)

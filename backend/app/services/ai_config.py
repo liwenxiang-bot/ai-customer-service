@@ -17,6 +17,35 @@ from app.llm.embeddings import EmbeddingSettings
 from app.llm.rerank import RerankSettings
 from app.models.config import AIConfig
 
+# Single source of truth for retrieval params: seeds a new config (_create_default),
+# fills gaps when serving the admin form (so it shows real effective values, never
+# blanks), and is the runtime fallback in hybrid_search.
+RETRIEVAL_DEFAULTS: dict = {
+    "chunk_size": settings.rag_chunk_size,
+    "chunk_overlap": settings.rag_chunk_overlap,
+    "top_k": settings.rag_top_k,
+    "vector_weight": settings.rag_vector_weight,
+    "keyword_weight": settings.rag_keyword_weight,
+    "vector_min_sim": settings.rag_vector_min_sim,
+    "min_score": settings.rag_min_score,
+    "trgm_threshold": settings.rag_trgm_threshold,
+    "candidate_multiplier": settings.rag_candidate_multiplier,
+    "rerank_top_n": 3,
+    "expand_context": True,
+}
+
+
+def merged_retrieval(cfg: AIConfig) -> dict:
+    """Defaults overlaid with the active config's retrieval (DB wins; null == missing).
+
+    Guarantees every key is present and non-null, so callers can index directly and the
+    admin form shows the real effective value instead of a blank box."""
+    out = dict(RETRIEVAL_DEFAULTS)
+    for key, value in (getattr(cfg, "retrieval", None) or {}).items():
+        if value is not None:
+            out[key] = value
+    return out
+
 
 async def get_active_ai_config(db: AsyncSession) -> AIConfig:
     row = (
@@ -53,19 +82,7 @@ async def _create_default(db: AsyncSession) -> AIConfig:
         if settings.rerank_api_key
         else None,
         rerank_model=settings.rerank_model,
-        retrieval={
-            "chunk_size": settings.rag_chunk_size,
-            "chunk_overlap": settings.rag_chunk_overlap,
-            "top_k": settings.rag_top_k,
-            "vector_weight": settings.rag_vector_weight,
-            "keyword_weight": settings.rag_keyword_weight,
-            "vector_min_sim": settings.rag_vector_min_sim,
-            "min_score": settings.rag_min_score,
-            "trgm_threshold": settings.rag_trgm_threshold,
-            "candidate_multiplier": settings.rag_candidate_multiplier,
-            "rerank_top_n": 3,
-            "expand_context": True,
-        },
+        retrieval=dict(RETRIEVAL_DEFAULTS),
         content_safety_enabled=settings.content_safety_enabled,
         semantic_cache_enabled=settings.semantic_cache_enabled,
     )
