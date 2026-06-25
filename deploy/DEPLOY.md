@@ -31,6 +31,13 @@ docker 全栈自托管。架构:终端用户 → Caddy/nginx(HTTPS/WSS)→ backe
 3. **反向代理 + HTTPS**:用 `deploy/Caddyfile`(改域名,admin 端口对齐 `ADMIN_PORT`,默认 8080)→
    `sudo systemctl reload caddy`。或用 `deploy/nginx.conf` + `certbot`(文件头部有命令)。
 
+   > ⚠️ **chat 和 admin 两个域名都必须配 WebSocket 升级**(`proxy_http_version 1.1` +
+   > `Upgrade`/`Connection "upgrade"`,见 `deploy/nginx.conf`)。漏在 admin 域名上时,后台
+   > 实时会**静默退化成轮询**:坐席工作台消息不实时、「客服/客户正在输入」提示失效、
+   > `ws/admin` 每 ~200ms 断一次疯狂重连(F12 → Network → WS 看到一堆 Finished)。
+   > **certbot 重写或手动精简 nginx 配置时最容易把 admin 块这段弄丢**——nginx 用户尤其留意
+   > (Caddy 自动透传 WSS,无此坑)。排查:`curl` 看 widget 没问题但后台不实时,基本就是这里。
+
 4. **后台初始化**:打开 admin 域名 → 用 `BOOTSTRAP_ADMIN_*` 登录 → 立刻改密 →「AI 配置」确认
    对话/Embedding 模型与 Key、把 `vector_min_sim` 设为 **0.5**、打开「上下文扩展」→「渠道配置」加 widget 域名白名单。
 
