@@ -17,6 +17,7 @@ from app.llm.factory import get_embedding_client
 from app.models.enums import ChunkStatus, KnowledgeStatus
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem, KnowledgeVersion
 from app.rag.chunking import chunk_text
+from app.rag.segment import segment
 from app.services.ai_config import get_active_ai_config, to_embedding_settings
 from app.services.audit import write_audit
 
@@ -130,6 +131,7 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
                 item_id=item.id,
                 chunk_index=i,
                 content=piece,
+                content_seg=segment(piece),
                 embedding=vec,
                 embedding_model=emb_cfg.model if vec is not None else "",
                 embedding_dim=emb_cfg.dim if vec is not None else 0,

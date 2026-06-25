@@ -39,6 +39,9 @@ orjson==3.10.13
 # ---- Observability ----
 prometheus-client==0.21.1
 
+# ---- Chinese NLP ----
+jieba==0.42.1  # word segmentation for the keyword (full-text) retrieval path
+
 # ---- Local embedding server (optional; OpenAI-compatible, ONNX, no PyTorch) ----
 # Powers scripts/local_embedding_server.py with a free, offline Chinese model.
 fastembed==0.5.1

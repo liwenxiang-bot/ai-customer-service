@@ -68,6 +68,10 @@ class KnowledgeChunk(Base, TimestampMixin, TenantMixin):
     )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # jieba-segmented copy of `content` (space-delimited), feeding the generated `tsv`
+    # column so Chinese full-text search works. Populated at (re)embed time; the tsv
+    # also indexes raw `content`, so it degrades to the old behaviour until backfilled.
+    content_seg: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
     # Dimension comes from config (EMBEDDING_DIM / active AIConfig), never hard-wired.
     embedding: Mapped[list[float] | None] = mapped_column(
