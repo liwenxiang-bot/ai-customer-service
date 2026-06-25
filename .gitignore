@@ -40,3 +40,7 @@ widget/dist/
 *.log
 /data/
 /tmp/
+
+# 发版产物
+backups/
+.last_release_commit
