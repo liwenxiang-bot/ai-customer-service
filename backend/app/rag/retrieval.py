@@ -32,6 +32,7 @@ from app.llm.factory import get_embedding_client, get_rerank_client
 from app.models.config import AIConfig
 from app.rag.segment import segment
 from app.services.ai_config import (
+    merged_retrieval,
     to_embedding_settings,
     to_rerank_settings,
 )
@@ -39,13 +40,6 @@ from app.services.ai_config import (
 log = get_logger("rag.retrieval")
 
 _RRF_K = 60  # RRF damping constant
-
-
-def _param(params: dict, key: str, default):
-    """Read a retrieval param, treating a missing key OR a null value as the default.
-    (The admin form can persist nulls for params the user left blank.)"""
-    val = params.get(key, default)
-    return default if val is None else val
 
 
 @dataclass
@@ -190,14 +184,14 @@ async def _expand_context(db: AsyncSession, chunk_ids: list[str]) -> dict[str, s
 async def hybrid_search(
     db: AsyncSession, cfg: AIConfig, query: str, top_k: int | None = None
 ) -> list[RetrievalResult]:
-    params = cfg.retrieval or {}
-    top_k = top_k or int(_param(params, "top_k", 5))
-    vw = float(_param(params, "vector_weight", 0.6))
-    kw = float(_param(params, "keyword_weight", 0.4))
-    vector_min_sim = float(_param(params, "vector_min_sim", 0.25))
-    min_score = float(_param(params, "min_score", 0.0))
-    trgm_threshold = float(_param(params, "trgm_threshold", 0.1))
-    candidate_multiplier = int(_param(params, "candidate_multiplier", 8))
+    params = merged_retrieval(cfg)  # defaults + DB (DB wins; nulls fall back to defaults)
+    top_k = top_k or int(params["top_k"])
+    vw = float(params["vector_weight"])
+    kw = float(params["keyword_weight"])
+    vector_min_sim = float(params["vector_min_sim"])
+    min_score = float(params["min_score"])
+    trgm_threshold = float(params["trgm_threshold"])
+    candidate_multiplier = int(params["candidate_multiplier"])
     candidate_n = max(top_k * candidate_multiplier, 20)
 
     vector_hits = await _vector_search(db, cfg, query, candidate_n, vector_min_sim)
@@ -212,7 +206,7 @@ async def hybrid_search(
     rer_cfg = to_rerank_settings(cfg)
     reranked = False
     if rer_cfg and rer_cfg.api_key and len(fused) > 1:
-        top_n = max(int(_param(params, "rerank_top_n", top_k)), top_k)
+        top_n = max(int(params["rerank_top_n"]), top_k)
         pool = fused[:candidate_n]
         docs = [f"{f[2]}\n{f[3]}" for f in pool]
         order = await get_rerank_client(rer_cfg).rerank(query, docs, top_n)
@@ -235,7 +229,7 @@ async def hybrid_search(
 
     expanded = (
         await _expand_context(db, [f[1] for f in results_src])
-        if _param(params, "expand_context", True)
+        if params["expand_context"]
         else {}
     )
 

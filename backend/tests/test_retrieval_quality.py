@@ -1,7 +1,10 @@
 """Unit: jieba segmentation + RRF fusion / param helpers (no DB required)."""
 
-from app.rag.retrieval import _fuse, _param
+from types import SimpleNamespace
+
+from app.rag.retrieval import _fuse
 from app.rag.segment import available, segment
+from app.services.ai_config import RETRIEVAL_DEFAULTS, merged_retrieval
 
 
 def test_segment_empty():
@@ -22,12 +25,14 @@ def test_segment_keeps_codes():
     assert "E1001" in out.replace(" ", "")
 
 
-def test_param_treats_null_as_default():
-    assert _param({"top_k": None}, "top_k", 5) == 5
-    assert _param({}, "top_k", 5) == 5
-    assert _param({"top_k": 8}, "top_k", 5) == 8
-    # An explicit 0 must be honoured (not treated as "blank").
-    assert _param({"min_score": 0}, "min_score", 0.25) == 0
+def test_merged_retrieval_fills_defaults_and_ignores_null():
+    cfg = SimpleNamespace(retrieval={"top_k": 8, "vector_min_sim": None, "min_score": 0})
+    m = merged_retrieval(cfg)
+    assert m["top_k"] == 8                                              # DB value wins
+    assert m["vector_min_sim"] == RETRIEVAL_DEFAULTS["vector_min_sim"]  # null → default
+    assert m["expand_context"] == RETRIEVAL_DEFAULTS["expand_context"]  # missing → default
+    assert m["min_score"] == 0                                          # explicit 0 honoured
+    assert set(RETRIEVAL_DEFAULTS).issubset(m)                          # every key present
 
 
 def test_fuse_propagates_vector_similarity():
