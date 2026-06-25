@@ -8,7 +8,7 @@ PIP := $(BACKEND)/.venv/bin/pip
 .DEFAULT_GOAL := help
 .PHONY: help setup deps-up deps-down migrate bootstrap dev-backend dev-worker \
         dev-embed dev-admin dev-widget build-widget build-admin test eval lint \
-        stack-up stack-down clean
+        stack-up stack-down release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -68,6 +68,9 @@ stack-up: ## Build & run the FULL stack in docker (backend+worker+admin+deps)
 
 stack-down: ## Stop the full stack
 	docker compose --profile app down
+
+release: ## 线上增量发版：备份→拉代码→重建+迁移→回填→健康检查
+	bash deploy/release.sh
 
 clean: ## Remove build artifacts
 	rm -rf widget/dist admin/dist $(BACKEND)/.pytest_cache $(BACKEND)/.ruff_cache
