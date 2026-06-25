@@ -12,6 +12,7 @@ import { knowledgeApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 import { useDebounce } from "../hooks/useDebounce";
+import { fmtTime } from "../utils/time";
 
 const STATUS_COLORS: any = { published: "green", draft: "orange", archived: "default" };
 const SOURCE_LABELS: any = { manual: "手动", import: "导入", auto_distilled: "自动沉淀" };
@@ -122,7 +123,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
     { title: "状态", dataIndex: "status", width: 90, render: (s: string) => <Tag color={STATUS_COLORS[s]}>{s}</Tag> },
     { title: "来源", dataIndex: "source", width: 100, render: (s: string) => SOURCE_LABELS[s] || s },
     { title: "版本", dataIndex: "version", width: 70 },
-    { title: "更新时间", dataIndex: "updated_at", width: 170, render: (t: string) => t?.replace("T", " ").slice(0, 19) },
+    { title: "更新时间", dataIndex: "updated_at", width: 170, render: (t: string) => fmtTime(t) },
     {
       title: "操作", width: 170, render: (_: any, r: any) => (
         <Space size="small">

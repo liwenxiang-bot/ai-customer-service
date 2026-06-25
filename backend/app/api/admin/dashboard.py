@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.clock import app_day_start_utc, app_today
 from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.conversation import Message, Session
@@ -22,8 +23,7 @@ router = APIRouter(prefix="/dashboard", tags=["admin-dashboard"])
 
 @router.get("/overview")
 async def overview(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)):
-    now = datetime.now(UTC)
-    today_start = datetime.combine(now.date(), datetime.min.time(), tzinfo=UTC)
+    today_start = app_day_start_utc(app_today())
 
     today_convs = (
         await db.execute(select(func.count(Session.id)).where(Session.created_at >= today_start))
@@ -108,7 +108,7 @@ async def overview(db: AsyncSession = Depends(get_db), user: AdminUser = Depends
 
 @router.get("/trend")
 async def trend(days: int = 14, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)):
-    start = date.today() - timedelta(days=days - 1)
+    start = app_today() - timedelta(days=days - 1)
     rows = (
         await db.execute(
             select(
@@ -142,7 +142,7 @@ async def analytics(days: int = 14, db: AsyncSession = Depends(get_db), user: Ad
     """Operational analytics over a window: CSAT (1–5), knowledge grounding + most-cited
     items (from message citations), and cost broken down by model and channel."""
     days = max(1, min(days, 90))
-    start = datetime.combine(date.today() - timedelta(days=days - 1), datetime.min.time(), tzinfo=UTC)
+    start = app_day_start_utc(app_today() - timedelta(days=days - 1))
 
     # ---- CSAT: visitor's 1–5 star rating ----
     rating_rows = (

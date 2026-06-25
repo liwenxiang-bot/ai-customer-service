@@ -13,6 +13,7 @@ import {
 import { cannedApi, conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
+import { fmtShort } from "../utils/time";
 
 /** 坐席工作台 — a two-pane live console for handling conversations that need a human:
  *  left = auto-refreshing queue (待人工 / 接管中), right = chat + takeover controls. */
@@ -137,7 +138,7 @@ export function Workbench() {
                   </div>
                   <div style={{ color: token.colorTextTertiary, fontSize: 11, marginTop: 3 }}>
                     <Tag bordered={false} style={{ fontSize: 10, lineHeight: "16px", padding: "0 5px", marginRight: 4 }}>{it.channel_type}</Tag>
-                    {(it.last_activity_at || "").replace("T", " ").slice(5, 16)}
+                    {fmtShort(it.last_activity_at)}
                   </div>
                 </div>
               ))
