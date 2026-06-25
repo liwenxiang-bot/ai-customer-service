@@ -14,6 +14,7 @@ import { cannedApi, conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 import { fmtShort } from "../utils/time";
+import { useRealtime } from "../hooks/useRealtime";
 
 /** 坐席工作台 — a two-pane live console for handling conversations that need a human:
  *  left = auto-refreshing queue (待人工 / 接管中), right = chat + takeover controls. */
@@ -54,7 +55,7 @@ export function Workbench() {
   };
   useEffect(() => {
     loadList();
-    const t = setInterval(loadList, 5000);
+    const t = setInterval(loadList, 15000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
@@ -67,7 +68,7 @@ export function Workbench() {
     setDetail(null);
     if (!selectedId) return;
     loadDetail();
-    const t = setInterval(loadDetail, 3000);
+    const t = setInterval(loadDetail, 15000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
@@ -75,6 +76,11 @@ export function Workbench() {
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [detail?.messages?.length]);
+
+  // Realtime: refresh the queue on any backend queue event; refresh the open conversation
+  // on its live messages. The interval polls below are kept only as a slow fallback.
+  const { watch } = useRealtime({ onQueue: () => loadList(), onSession: () => loadDetail() });
+  useEffect(() => { watch(selectedId || ""); }, [selectedId]);
 
   const s = detail?.session;
   const inTakeover = s?.status === "human_takeover";

@@ -238,6 +238,7 @@ async def mark_handled(
         raise HTTPException(status_code=404, detail="会话不存在")
     session.status = SessionStatus.HUMAN_HANDLED
     await db.commit()
+    await tk.publish_admin_event({"type": "queue", "event": "handled", "session_id": session_id})
     return {"ok": True}
 
 

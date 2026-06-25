@@ -33,6 +33,17 @@ def push_channel(session_id: str) -> str:
     return f"chat:push:{session_id}"
 
 
+ADMIN_CHANNEL = "admin:events"
+
+
+async def publish_admin_event(payload: dict) -> None:
+    """Broadcast a backend event to all connected admin/operator workbench clients."""
+    try:
+        await get_redis().publish(ADMIN_CHANNEL, json.dumps(payload, ensure_ascii=False))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("admin_event_publish_failed", error=str(exc))
+
+
 def _flag_key(session_id: str) -> str:
     return f"takeover:{session_id}"
 
@@ -59,6 +70,7 @@ async def start_takeover(db: AsyncSession, session: Session) -> None:
     await db.flush()
     await get_redis().set(_flag_key(str(session.id)), "1", ex=_TTL)
     await publish(str(session.id), {"type": "human_takeover", "message": "人工客服已接入，正在为你服务~"})
+    await publish_admin_event({"type": "queue", "event": "takeover", "session_id": str(session.id)})
     log.info("takeover_started", session_id=str(session.id))
 
 
@@ -73,6 +85,7 @@ async def end_takeover(db: AsyncSession, session: Session, resume_ai: bool = Tru
             "message": "AI 助手已恢复，继续为你服务。" if resume_ai else "本次人工服务已结束，感谢咨询。",
         },
     )
+    await publish_admin_event({"type": "queue", "event": "released", "session_id": str(session.id)})
     log.info("takeover_ended", session_id=str(session.id), resume_ai=resume_ai)
 
 
@@ -120,4 +133,8 @@ async def persist_customer_message(
     )
     db.add(msg)
     await db.flush()
+    await publish(
+        session_id,
+        {"type": "customer_message", "content": text, "message_id": str(msg.id)},
+    )
     return msg
