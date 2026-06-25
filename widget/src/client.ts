@@ -14,6 +14,8 @@ export class ChatClient {
   private origin: string;
   private handler: Handler;
   private heartbeat: number | null = null;
+  private awaitingPong = false; // a ping is outstanding → if still true next tick, socket is dead
+  private hiddenAt = 0; // epoch ms the tab was last backgrounded (0 = currently visible)
   private reconnectAttempts = 0;
   private closedByUser = false;
   private onOpenCb: (() => void) | null = null;
@@ -34,17 +36,29 @@ export class ChatClient {
     )}`;
     this.origin = baseUrl;
 
-    // Mobile browsers drop the socket when backgrounded/locked; reconnect (and backfill
-    // history) as soon as the tab is visible again or the network returns — so operator
-    // replies / takeover state appear without a manual refresh.
+    // Mobile browsers drop the socket when backgrounded/locked, but a resumed socket often
+    // still reports OPEN while silently dead ("zombie") — so it delivers nothing yet never
+    // triggers a reconnect. On returning to the foreground (or network recovery) we rebuild
+    // the socket rather than trust isOpen(); the fresh connection re-pulls history, so any
+    // operator replies / takeover notices missed while dead are backfilled — no manual refresh.
     if (typeof document !== "undefined") {
       document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible" && !this.closedByUser && !this.isOpen()) this.connect();
+        if (document.visibilityState === "hidden") {
+          this.hiddenAt = Date.now();
+          return;
+        }
+        if (this.closedByUser) return;
+        const staleGap = this.hiddenAt && Date.now() - this.hiddenAt > 8000;
+        this.hiddenAt = 0;
+        if (!this.isOpen()) this.connect();
+        else if (staleGap && this.sessionId) this.forceReconnect();
       });
     }
     if (typeof window !== "undefined") {
       window.addEventListener("online", () => {
-        if (!this.closedByUser && !this.isOpen()) this.connect();
+        if (this.closedByUser) return;
+        if (!this.isOpen()) this.connect();
+        else if (this.sessionId) this.forceReconnect(); // a network bounce can leave a half-open socket
       });
     }
   }
@@ -81,7 +95,10 @@ export class ChatClient {
       } catch {
         return;
       }
-      if (ev.type === "pong") return;
+      if (ev.type === "pong") {
+        this.awaitingPong = false;
+        return;
+      }
       if (ev.type === "connected" && ev.session_id) this.sessionId = ev.session_id;
       if (ev.type === "message_end" && ev.session_id) this.sessionId = ev.session_id;
       this.handler(ev);
@@ -120,7 +137,17 @@ export class ChatClient {
 
   private startHeartbeat() {
     this.stopHeartbeat();
-    this.heartbeat = window.setInterval(() => this.send({ type: "ping" }), 25000);
+    this.awaitingPong = false;
+    this.heartbeat = window.setInterval(() => {
+      // Watchdog: if the previous ping was never answered, the socket is a zombie (resumed
+      // from background, reports OPEN but dead) — rebuild it so history backfills what we missed.
+      if (this.awaitingPong) {
+        this.forceReconnect();
+        return;
+      }
+      this.awaitingPong = true;
+      this.send({ type: "ping" });
+    }, 15000);
   }
 
   private stopHeartbeat() {
@@ -128,6 +155,26 @@ export class ChatClient {
       clearInterval(this.heartbeat);
       this.heartbeat = null;
     }
+    this.awaitingPong = false;
+  }
+
+  /** Tear down a (possibly zombie) socket and open a fresh one; onopen re-pulls history. */
+  private forceReconnect() {
+    this.stopHeartbeat();
+    const old = this.ws;
+    this.ws = null;
+    if (old) {
+      old.onclose = null; // detach so it can't schedule a competing reconnect
+      old.onerror = null;
+      old.onmessage = null;
+      try {
+        old.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.handler({ type: "_reconnecting", attempt: 1 });
+    this.connect();
   }
 
   isOpen() {
@@ -150,6 +197,11 @@ export class ChatClient {
 
   requestHuman() {
     this.send({ type: "request_human" });
+  }
+
+  /** Notify a watching operator that the customer is typing (throttled by the caller). */
+  sendTyping() {
+    this.send({ type: "typing" });
   }
 
   endSession(rating?: number, note?: string) {

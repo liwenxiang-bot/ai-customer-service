@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
 import { tokenStore } from "../api/client";
 
-type Handlers = { onQueue?: () => void; onSession?: (msg: any) => void };
+type Handlers = { onQueue?: () => void; onSession?: (msg: any) => void; onTyping?: (msg: any) => void };
 
 /** Live admin events over WebSocket (reuses the backend Redis pub/sub bus at /ws/admin).
  *  Auto-reconnects with backoff. Call the returned `watch(sessionId)` to also receive that
- *  session's live messages (customer / operator) during takeover. */
+ *  session's live messages (customer / operator) during takeover, and `sendTyping(sessionId)`
+ *  to tell the customer the operator is typing. */
 export function useRealtime(handlers: Handlers) {
   const hRef = useRef(handlers);
   hRef.current = handlers;
@@ -40,9 +41,11 @@ export function useRealtime(handlers: Handlers) {
         let msg: any;
         try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.type === "queue") hRef.current.onQueue?.();
+        else if (msg.type === "customer_typing") hRef.current.onTyping?.(msg);
         else if (["customer_message", "human_message", "human_takeover", "ai_resumed", "human_ended"].includes(msg.type)) {
           hRef.current.onSession?.(msg);
         }
+        // agent_typing is our own echo (we published it) — ignore it here.
       };
       ws.onclose = () => {
         clearInterval(pingTimer);
@@ -72,5 +75,12 @@ export function useRealtime(handlers: Handlers) {
     }
   };
 
-  return { watch };
+  const sendTyping = (sessionId: string) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN && sessionId) {
+      ws.send(JSON.stringify({ type: "typing", session_id: sessionId }));
+    }
+  };
+
+  return { watch, sendTyping };
 }

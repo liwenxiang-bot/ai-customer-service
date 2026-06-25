@@ -34,7 +34,10 @@ export function Workbench() {
   const [detail, setDetail] = useState<any>(null);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const [customerTyping, setCustomerTyping] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const typingHideRef = useRef<ReturnType<typeof setTimeout> | null>(null); // auto-hide "客户正在输入"
+  const lastTypingRef = useRef(0); // throttle outbound operator typing pings
 
   // Deep-link from a handoff ticket (?session=ID) → preselect that conversation.
   useEffect(() => {
@@ -79,10 +82,28 @@ export function Workbench() {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [detail?.messages?.length]);
 
+  useEffect(() => () => { if (typingHideRef.current) clearTimeout(typingHideRef.current); }, []);
+
   // Realtime: refresh the queue on any backend queue event; refresh the open conversation
   // on its live messages. The interval polls below are kept only as a slow fallback.
-  const { watch } = useRealtime({ onQueue: () => loadList(), onSession: () => loadDetail() });
-  useEffect(() => { watch(selectedId || ""); }, [selectedId]);
+  const showCustomerTyping = () => {
+    setCustomerTyping(true);
+    if (typingHideRef.current) clearTimeout(typingHideRef.current);
+    typingHideRef.current = setTimeout(() => setCustomerTyping(false), 4000);
+  };
+  const { watch, sendTyping } = useRealtime({
+    onQueue: () => loadList(),
+    onSession: () => { setCustomerTyping(false); loadDetail(); }, // a real message supersedes the hint
+    onTyping: showCustomerTyping,
+  });
+  useEffect(() => { watch(selectedId || ""); setCustomerTyping(false); }, [selectedId]);
+
+  // Tell the customer the operator is typing (throttled ~2.5s; backend relays to their chat).
+  const onComposerChange = (v: string) => {
+    setReplyText(v);
+    const now = Date.now();
+    if (selectedId && now - lastTypingRef.current > 2500) { lastTypingRef.current = now; sendTyping(selectedId); }
+  };
 
   const s = detail?.session;
   const inTakeover = s?.status === "human_takeover";
@@ -221,13 +242,18 @@ export function Workbench() {
                 })}
               </div>
 
+              {/* live "customer is typing" hint */}
+              <div style={{ height: 18, padding: "0 16px", fontSize: 12, color: muted, display: "flex", alignItems: "center", gap: 6, opacity: customerTyping ? 1 : 0, transition: "opacity .15s" }}>
+                {customerTyping && <><UserOutlined /> 客户正在输入…</>}
+              </div>
+
               {/* composer */}
               <div style={{ borderTop: `1px solid ${line}`, padding: 12 }}>
                 {inTakeover ? (
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
                     <Input.TextArea
                       value={replyText}
-                      onChange={(e) => setReplyText(e.target.value)}
+                      onChange={(e) => onComposerChange(e.target.value)}
                       autoSize={{ minRows: 1, maxRows: 4 }}
                       placeholder="输入回复，回车发送给客户（Shift+Enter 换行）"
                       onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); sendReply(); } }}

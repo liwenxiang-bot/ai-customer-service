@@ -114,6 +114,8 @@ export function buildStyles(themeColor: string): string {
 
 /* tool status / typing */
 .acs-tool { font-size:12.5px; color:var(--acs-sub); display:flex; align-items:center; gap:7px; padding:6px 4px 2px; }
+/* "客服正在输入" bubble — bot bubble whose only content is the animated dots */
+.acs-bubble.acs-typing { display:inline-flex; align-items:center; padding:13px 15px; }
 .acs-dots { display:inline-flex; gap:3px; }
 .acs-dots span { width:6px; height:6px; background:var(--acs-sub); border-radius:50%; opacity:.5; animation:acs-bounce 1.3s infinite ease-in-out; }
 .acs-dots span:nth-child(2){animation-delay:.18s} .acs-dots span:nth-child(3){animation-delay:.36s}
