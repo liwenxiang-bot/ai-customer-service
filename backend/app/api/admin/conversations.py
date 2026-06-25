@@ -52,7 +52,16 @@ def _filtered_sessions(
             or_(Session.escalated.is_(True), Session.status == SessionStatus.HUMAN_TAKEOVER)
         )
     if q:
-        stmt = stmt.where(Session.title.ilike(f"%{q}%"))
+        like = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                Session.title.ilike(like),
+                Session.end_user_display.ilike(like),
+                select(Message.id)
+                .where(Message.session_id == Session.id, Message.content.ilike(like))
+                .exists(),
+            )
+        )
     if (df := _parse_day(date_from)) is not None:
         stmt = stmt.where(Session.created_at >= df)
     if (dt := _parse_day(date_to)) is not None:

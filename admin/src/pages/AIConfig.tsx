@@ -56,6 +56,16 @@ export function AIConfig() {
     }
   };
 
+  const doRebuild = async () => {
+    try {
+      await aiConfigApi.rebuild();
+      message.info("已触发向量重建，进度见上方");
+      aiConfigApi.rebuildStatus().then((d) => setRebuild(d.rebuild));
+    } catch (e) {
+      message.error(apiError(e));
+    }
+  };
+
   const rebuilding = rebuild && (rebuild.status === "running" || rebuild.status === "pending");
 
   return (
@@ -71,7 +81,8 @@ export function AIConfig() {
         />
       )}
       {rebuild?.status === "failed" && (
-        <Alert type="error" showIcon style={{ marginBottom: 16 }} message={`上次向量重建失败：${rebuild.error}`} />
+        <Alert type="error" showIcon style={{ marginBottom: 16 }} message={`上次向量重建失败：${rebuild.error}`}
+          action={admin && <Button size="small" danger onClick={doRebuild}>重试重建</Button>} />
       )}
 
       <Form form={form} layout="vertical" disabled={!admin}>

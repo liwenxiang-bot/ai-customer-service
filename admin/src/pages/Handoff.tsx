@@ -32,12 +32,24 @@ export function Handoff() {
     { title: "状态", dataIndex: "status", width: 90, render: (s: string) => <Tag color={STATUS_COLORS[s]}>{s}</Tag> },
     { title: "时间", dataIndex: "created_at", width: 160, render: (t: string) => t?.replace("T", " ").slice(0, 19) },
     {
-      title: "操作", width: 100, render: (_: any, r: any) =>
-        editable && r.status !== "resolved" ? (
-          <Popconfirm title="标记该工单为已解决？" onConfirm={async () => { await handoffApi.resolve(r.id, ""); message.success("已解决"); load(); }}>
-            <a>标记解决</a>
-          </Popconfirm>
-        ) : null,
+      title: "操作", width: 150, render: (_: any, r: any) => (
+        <Space size="small">
+          {editable && !r.notified && (
+            <a onClick={async () => {
+              try {
+                const res = await handoffApi.resend(r.id);
+                res.notified ? message.success("已重发通知") : message.warning("仍未送达：" + (res.error || "未配置通知渠道"));
+              } catch (e) { message.error(apiError(e)); }
+              load();
+            }}>重试通知</a>
+          )}
+          {editable && r.status !== "resolved" && (
+            <Popconfirm title="标记该工单为已解决？" onConfirm={async () => { await handoffApi.resolve(r.id, ""); message.success("已解决"); load(); }}>
+              <a>标记解决</a>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
     },
   ];
 

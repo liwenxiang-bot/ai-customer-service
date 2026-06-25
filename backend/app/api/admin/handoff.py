@@ -14,7 +14,7 @@ from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.conversation import HandoffTicket
 from app.models.enums import HandoffStatus
-from app.services.handoff import resolve_handoff
+from app.services.handoff import resend_handoff_notify, resolve_handoff
 
 router = APIRouter(prefix="/handoff", tags=["admin-handoff"])
 
@@ -80,3 +80,17 @@ async def resolve(
     await resolve_handoff(db, ticket, body.note, user.id)
     await db.commit()
     return {"ok": True}
+
+
+@router.post("/tickets/{ticket_id}/resend")
+async def resend(
+    ticket_id: str, db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """Manually re-send the operator notification for a ticket whose notify failed."""
+    ticket = await db.get(HandoffTicket, uuid.UUID(ticket_id))
+    if not ticket:
+        raise HTTPException(status_code=404, detail="工单不存在")
+    delivered, err = await resend_handoff_notify(db, ticket)
+    await db.commit()
+    return {"ok": delivered, "notified": delivered, "error": err}

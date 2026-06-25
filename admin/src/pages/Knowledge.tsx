@@ -7,9 +7,11 @@ import {
   PlusOutlined, SearchOutlined, UploadOutlined, ExperimentOutlined,
   HistoryOutlined, DownloadOutlined,
 } from "@ant-design/icons";
+import ReactMarkdown from "react-markdown";
 import { knowledgeApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
+import { useDebounce } from "../hooks/useDebounce";
 
 const STATUS_COLORS: any = { published: "green", draft: "orange", archived: "default" };
 const SOURCE_LABELS: any = { manual: "手动", import: "导入", auto_distilled: "自动沉淀" };
@@ -60,6 +62,9 @@ function ItemsTab({ editable }: { editable: boolean }) {
   const [allTags, setAllTags] = useState<string[]>([]);
   const [selected, setSelected] = useState<any[]>([]);
   const [vec, setVec] = useState<any>(null);
+  const [search, setSearch] = useState("");
+  const dq = useDebounce(search, 400);
+  useEffect(() => { setParams((p: any) => ({ ...p, q: dq, page: 1 })); }, [dq]);
 
   const loadMeta = () => {
     knowledgeApi.categories().then((d) => setCats(d.categories)).catch(() => {});
@@ -150,7 +155,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
       <Space style={{ marginBottom: 12 }} wrap>
         <Input
           allowClear placeholder="搜索标题/内容" prefix={<SearchOutlined />} style={{ width: 220 }}
-          onChange={(e) => setParams((p: any) => ({ ...p, q: e.target.value, page: 1 }))}
+          value={search} onChange={(e) => setSearch(e.target.value)}
         />
         <Select
           allowClear placeholder="分类" style={{ width: 130 }}
@@ -203,6 +208,19 @@ function ItemsTab({ editable }: { editable: boolean }) {
           <Form.Item name="title" label="标题"><Input placeholder="简短标题" /></Form.Item>
           <Form.Item name="content" label="内容（支持 Markdown）" rules={[{ required: true, message: "请输入内容" }]}>
             <Input.TextArea rows={12} placeholder="知识正文。保存后系统会自动分块并生成向量。" />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(p, c) => p.content !== c.content}>
+            {() => {
+              const md = form.getFieldValue("content") || "";
+              return md ? (
+                <div style={{ marginTop: -8, marginBottom: 12 }}>
+                  <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Markdown 预览</div>
+                  <div className="acs-md" style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: "8px 12px", background: "#fafafa", maxHeight: 260, overflow: "auto" }}>
+                    <ReactMarkdown>{md}</ReactMarkdown>
+                  </div>
+                </div>
+              ) : null;
+            }}
           </Form.Item>
           <Space style={{ width: "100%" }} size="large">
             <Form.Item name="category" label="分类" style={{ flex: 1 }}><Input placeholder="如 售后" /></Form.Item>

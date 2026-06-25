@@ -7,6 +7,7 @@ import { RobotOutlined, UserOutlined, ToolOutlined, BookOutlined, DownloadOutlin
 import { conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
+import { useDebounce } from "../hooks/useDebounce";
 
 export function Conversations() {
   const { user } = useAuth();
@@ -17,6 +18,9 @@ export function Conversations() {
   const [params, setParams] = useState<any>({ page: 1, page_size: 10, channel_type: "", pending_human: false, q: "", date_from: "", date_to: "", feedback: "", degraded: false });
   const [detail, setDetail] = useState<any>(null);
   const [exporting, setExporting] = useState(false);
+  const [search, setSearch] = useState("");
+  const dq = useDebounce(search, 400);
+  useEffect(() => { setParams((p: any) => ({ ...p, q: dq, page: 1 })); }, [dq]);
 
   const doExport = async () => {
     setExporting(true);
@@ -53,7 +57,7 @@ export function Conversations() {
       <div className="acs-page-sub">查看全部历史会话与详情（工具调用、引用来源、调用链路），可一键加入知识库。实时接待请用「坐席工作台」。</div>
       <Card>
         <Space style={{ marginBottom: 12 }} wrap>
-          <Input allowClear placeholder="搜索标题" style={{ width: 180 }} onChange={(e) => setParams((p: any) => ({ ...p, q: e.target.value, page: 1 }))} />
+          <Input allowClear placeholder="搜索标题/内容/用户" style={{ width: 200 }} value={search} onChange={(e) => setSearch(e.target.value)} />
           <DatePicker.RangePicker
             onChange={(d: any) => setParams((p: any) => ({ ...p, date_from: d?.[0] ? d[0].format("YYYY-MM-DD") : "", date_to: d?.[1] ? d[1].format("YYYY-MM-DD") : "", page: 1 }))}
           />
