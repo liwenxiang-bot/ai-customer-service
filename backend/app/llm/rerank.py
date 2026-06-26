@@ -30,6 +30,8 @@ class RerankClient:
         self._is_dashscope = "dashscope" in cfg.base_url.lower()
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(30.0, connect=10.0),
+            # Keep connections warm across turns (httpx defaults to a 5s keep-alive).
+            limits=httpx.Limits(max_keepalive_connections=20, keepalive_expiry=90.0),
             headers={"Authorization": f"Bearer {cfg.api_key}"},
         )
 

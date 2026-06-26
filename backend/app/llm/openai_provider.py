@@ -34,6 +34,8 @@ class OpenAICompatProvider(LLMProvider):
         self._client = httpx.AsyncClient(
             base_url=cfg.base_url.rstrip("/"),
             timeout=httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT),
+            # Keep connections warm across turns (httpx defaults to a 5s keep-alive).
+            limits=httpx.Limits(max_keepalive_connections=20, keepalive_expiry=90.0),
             headers={
                 "Authorization": f"Bearer {cfg.api_key}",
                 "Content-Type": "application/json",
