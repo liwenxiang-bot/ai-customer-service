@@ -74,7 +74,6 @@ body {
   height: 46px; font-size: 15px; font-weight: 600;
   box-shadow: 0 10px 22px -8px rgba(15, 118, 110, 0.55);
 }
-.acs-login-foot { text-align: center; font-size: 12px; color: #aab2bd; margin-top: 24px; }
 .acs-login-card .ant-input-affix-wrapper { padding-top: 9px; padding-bottom: 9px; }
 
 /* ─────────────────────────── Dashboard ─────────────────────────── */

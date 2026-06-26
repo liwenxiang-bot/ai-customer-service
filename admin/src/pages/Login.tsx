@@ -88,8 +88,6 @@ export function Login() {
 
           <Button type="primary" block htmlType="submit" loading={loading} className="acs-login-btn">登 录</Button>
         </Form>
-
-        <div className="acs-login-foot">© 2026 AI 客服 · 对话 · 知识库 · 人工协同</div>
       </div>
     </div>
   );
