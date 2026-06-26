@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     database_url: str | None = None
+    # Dedicated NON-superuser role the runtime app connects as, so Postgres RLS actually
+    # applies (a superuser/owner bypasses it). Leave APP_DB_PASSWORD empty to keep connecting
+    # as the owner → RLS inert → single-tenant. Set it (and run migrate, which provisions the
+    # role) to switch tenant isolation on. Migrations/bootstrap still use the owner connection.
+    app_db_user: str = "acs_app"
+    app_db_password: str = ""
 
     # ---- Redis ----
     redis_host: str = "localhost"
@@ -154,10 +160,23 @@ class Settings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def sqlalchemy_url(self) -> str:
+        """Owner connection — used by alembic + bootstrap (DDL, cross-tenant setup)."""
         if self.database_url:
             return self.database_url
         return (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def app_sqlalchemy_url(self) -> str:
+        """Runtime connection. Uses the non-superuser app role when APP_DB_PASSWORD is set so
+        RLS is enforced; otherwise falls back to the owner connection (RLS inert)."""
+        if not self.app_db_password:
+            return self.sqlalchemy_url
+        return (
+            f"postgresql+asyncpg://{self.app_db_user}:{self.app_db_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
