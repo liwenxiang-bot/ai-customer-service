@@ -35,6 +35,10 @@ class EmbeddingClient:
         self._client = httpx.AsyncClient(
             base_url=cfg.base_url.rstrip("/"),
             timeout=httpx.Timeout(60.0, connect=10.0),
+            # Sporadic chat traffic + httpx's 5s default keep-alive = a cold reconnect on almost
+            # every turn (added latency, occasional cold-connect failure → vector degrades to
+            # keyword-only). Hold connections open longer so turns reuse a warm one.
+            limits=httpx.Limits(max_keepalive_connections=20, keepalive_expiry=90.0),
             headers={"Authorization": f"Bearer {cfg.api_key}"},
         )
 
