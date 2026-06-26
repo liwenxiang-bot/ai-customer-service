@@ -150,11 +150,13 @@ export function Workbench() {
     : <Tag>{it.status}</Tag>;
 
   return (
-    <div>
+    // Fill the padded content area exactly (viewport − 64px header − 48px acs-content padding)
+    // so the panels end on the 24px bottom gap like every other page, not at the edge.
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 112px)" }}>
       <div className="acs-page-title">坐席工作台</div>
       <div className="acs-page-sub">实时接待需要人工处理的会话：接管后可直接与客户对话，AI 自动让位。</div>
 
-      <div style={{ display: "flex", gap: 14, height: "calc(100vh - 150px)" }}>
+      <div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
         {/* ---- queue ---- */}
         <div style={{ width: 300, display: "flex", flexDirection: "column", background: panel, border: `1px solid ${line}`, borderRadius: 8, overflow: "hidden" }}>
           <div style={{ padding: "10px 12px", borderBottom: `1px solid ${line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
