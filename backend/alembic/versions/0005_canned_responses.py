@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from alembic import op
-
 from app.models.conversation import CannedResponse
 
 revision: str = "0005"

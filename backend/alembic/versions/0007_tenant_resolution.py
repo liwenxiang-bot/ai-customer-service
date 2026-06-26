@@ -13,7 +13,6 @@ Revises: 0006
 from __future__ import annotations
 
 from alembic import op
-
 from app.config import settings
 
 revision = "0007"
