@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import estimate_tokens
@@ -159,6 +159,71 @@ async def test_retrieval(db: AsyncSession, query: str) -> list[dict]:
 
 async def count_chunks(db: AsyncSession) -> int:
     return (await db.execute(select(func.count(KnowledgeChunk.id)))).scalar_one()
+
+
+async def chunk_coverage(db: AsyncSession, item_ids: list) -> dict[str, tuple[int, int]]:
+    """{item_id: (total_chunks, ready_chunks)} for a page of items — so the list view can
+    flag items whose vectors are missing/incomplete (e.g. an embed batch that failed)."""
+    if not item_ids:
+        return {}
+    rows = (
+        await db.execute(
+            text(
+                "SELECT item_id::text, count(*) AS total, "
+                "count(*) FILTER (WHERE status = 'ready') AS ready "
+                "FROM knowledge_chunks WHERE item_id = ANY(:ids) GROUP BY item_id"
+            ),
+            {"ids": [str(i) for i in item_ids]},
+        )
+    ).all()
+    return {r[0]: (int(r[1]), int(r[2])) for r in rows}
+
+
+async def list_item_chunks(db: AsyncSession, item_id: str) -> list[dict]:
+    """Per-chunk detail for one item (no vector payload pulled) — lets the editor see how a
+    document was split and which chunks lack an embedding."""
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id::text, chunk_index, content, status, token_count, "
+                "(embedding IS NOT NULL) AS embedded, embedding_model, embedding_dim "
+                "FROM knowledge_chunks WHERE item_id = :iid ORDER BY chunk_index"
+            ),
+            {"iid": item_id},
+        )
+    ).all()
+    return [
+        {
+            "id": r[0], "chunk_index": r[1], "content": r[2], "status": r[3],
+            "token_count": r[4], "embedded": bool(r[5]),
+            "embedding_model": r[6], "embedding_dim": r[7],
+        }
+        for r in rows
+    ]
+
+
+async def items_needing_embedding(db: AsyncSession) -> list[str]:
+    """Non-archived items with content whose chunks are missing or not all 'ready' — the
+    set to re-embed after an embedding outage or the long-doc batch fix."""
+    rows = (
+        await db.execute(
+            text(
+                """
+                SELECT i.id::text FROM knowledge_items i
+                WHERE i.status <> 'archived' AND i.content <> ''
+                  AND (NOT EXISTS (SELECT 1 FROM knowledge_chunks c WHERE c.item_id = i.id)
+                       OR EXISTS (SELECT 1 FROM knowledge_chunks c
+                                  WHERE c.item_id = i.id AND c.status <> 'ready'))
+                """
+            )
+        )
+    ).all()
+    return [r[0] for r in rows]
+
+
+async def enqueue_reembed(item_id: str) -> None:
+    """Public wrapper so the admin API can (re)queue an item's embedding."""
+    await _enqueue_embed(item_id)
 
 
 async def _enqueue_embed(item_id) -> None:

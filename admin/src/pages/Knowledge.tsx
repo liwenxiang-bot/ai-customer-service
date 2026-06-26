@@ -5,7 +5,8 @@ import {
 } from "antd";
 import {
   PlusOutlined, SearchOutlined, UploadOutlined, ExperimentOutlined,
-  HistoryOutlined, DownloadOutlined,
+  HistoryOutlined, DownloadOutlined, PartitionOutlined, ThunderboltOutlined,
+  ReloadOutlined,
 } from "@ant-design/icons";
 import ReactMarkdown from "react-markdown";
 import { knowledgeApi } from "../api";
@@ -59,6 +60,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
   const [testOpen, setTestOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [versionsItem, setVersionsItem] = useState<any>(null);
+  const [chunksItem, setChunksItem] = useState<any>(null);
   const [cats, setCats] = useState<any[]>([]);
   const [allTags, setAllTags] = useState<string[]>([]);
   const [selected, setSelected] = useState<any[]>([]);
@@ -92,6 +94,16 @@ function ItemsTab({ editable }: { editable: boolean }) {
     load();
   };
 
+  const reembedPending = async () => {
+    try {
+      const r = await knowledgeApi.reembedPending();
+      message.success(r.queued ? `已排队重嵌 ${r.queued} 条，向量将后台生成` : "没有待处理的条目");
+      loadMeta();
+    } catch (e) {
+      message.error(apiError(e));
+    }
+  };
+
   const openEdit = async (item: any) => {
     if (item?.id) {
       const full = await knowledgeApi.get(item.id);
@@ -123,11 +135,23 @@ function ItemsTab({ editable }: { editable: boolean }) {
     { title: "状态", dataIndex: "status", width: 90, render: (s: string) => <Tag color={STATUS_COLORS[s]}>{s}</Tag> },
     { title: "来源", dataIndex: "source", width: 100, render: (s: string) => SOURCE_LABELS[s] || s },
     { title: "版本", dataIndex: "version", width: 70 },
-    { title: "更新时间", dataIndex: "updated_at", width: 170, render: (t: string) => fmtTime(t) },
     {
-      title: "操作", width: 170, render: (_: any, r: any) => (
+      title: "向量", width: 90, render: (_: any, r: any) => {
+        const total = r.chunk_count ?? 0, ready = r.ready_count ?? 0;
+        if (!total) return <Tag>未分块</Tag>;
+        return (
+          <Tooltip title={ready >= total ? "向量已就绪" : "部分分片缺向量，检索可能漏命中——点「分片」查看或重新嵌入"}>
+            <Tag color={ready >= total ? "green" : "error"}>{ready}/{total}</Tag>
+          </Tooltip>
+        );
+      },
+    },
+    { title: "更新时间", dataIndex: "updated_at", width: 160, render: (t: string) => fmtTime(t) },
+    {
+      title: "操作", width: 210, render: (_: any, r: any) => (
         <Space size="small">
           <a onClick={() => openEdit(r)}>{editable ? "编辑" : "查看"}</a>
+          <a onClick={() => setChunksItem(r)}><PartitionOutlined /> 分片</a>
           <a onClick={() => setVersionsItem(r)}><HistoryOutlined /> 版本</a>
           {editable && (
             <Popconfirm title="确认删除？" onConfirm={async () => { await knowledgeApi.remove(r.id); message.success("已删除"); load(); }}>
@@ -175,6 +199,11 @@ function ItemsTab({ editable }: { editable: boolean }) {
         />
         <Button icon={<ExperimentOutlined />} onClick={() => setTestOpen(true)}>测试检索</Button>
         {editable && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>批量导入</Button>}
+        {editable && (
+          <Tooltip title="为所有缺向量/未分块的条目重新生成向量">
+            <Button icon={<ReloadOutlined />} onClick={reembedPending}>重嵌待处理</Button>
+          </Tooltip>
+        )}
         {editable && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>新增条目</Button>}
       </Space>
 
@@ -237,7 +266,66 @@ function ItemsTab({ editable }: { editable: boolean }) {
       <TestRetrievalModal open={testOpen} onClose={() => setTestOpen(false)} />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onDone={load} />
       <VersionsModal item={versionsItem} onClose={() => setVersionsItem(null)} onRollback={load} editable={editable} />
+      <ChunksModal item={chunksItem} editable={editable} onClose={() => setChunksItem(null)} onReembedded={load} />
     </Card>
+  );
+}
+
+function ChunksModal({ item, editable, onClose, onReembedded }: any) {
+  const { message } = AntApp.useApp();
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!item?.id) { setData(null); return; }
+    setLoading(true);
+    knowledgeApi.itemChunks(item.id).then(setData).finally(() => setLoading(false));
+  }, [item?.id]);
+  const reembed = async () => {
+    setBusy(true);
+    try {
+      await knowledgeApi.reembedItem(item.id);
+      message.success("已排队重新嵌入，稍后刷新查看");
+      onReembedded?.();
+    } catch (e) {
+      message.error(apiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={`分片详情 — ${item?.title || "（无标题）"}`} open={!!item} onCancel={onClose} width={760}
+      footer={editable ? [
+        <Button key="r" icon={<ThunderboltOutlined />} loading={busy} onClick={reembed}>重新嵌入此条</Button>,
+        <Button key="c" type="primary" onClick={onClose}>关闭</Button>,
+      ] : null}
+    >
+      {data && (
+        <div style={{ marginBottom: 10, fontSize: 13, color: "#5b6573" }}>
+          共 {data.chunk_count} 段，已向量化 {data.ready_count}/{data.chunk_count}
+          {data.ready_count < data.chunk_count && <Tag color="error" style={{ marginLeft: 8 }}>有分片缺向量</Tag>}
+        </div>
+      )}
+      <List
+        loading={loading} size="small" dataSource={data?.chunks || []}
+        style={{ maxHeight: 460, overflow: "auto" }}
+        locale={{ emptyText: "暂无分片（保存内容后会自动分块）" }}
+        renderItem={(c: any) => (
+          <List.Item>
+            <div style={{ width: "100%" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                <span style={{ fontSize: 12, color: "#888" }}>#{c.chunk_index} · {c.token_count} tokens</span>
+                <Tag color={c.status === "ready" ? "green" : c.status === "pending" ? "orange" : "error"}>
+                  {c.embedded ? c.status : "无向量"}
+                </Tag>
+              </div>
+              <div style={{ fontSize: 13, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.content}</div>
+            </div>
+          </List.Item>
+        )}
+      />
+    </Modal>
   );
 }
 

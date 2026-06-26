@@ -85,6 +85,9 @@ class Settings(BaseSettings):
     embedding_api_key: str = ""
     embedding_model: str = "text-embedding-3-small"
     embedding_dim: int = 1536
+    # Max inputs per /embeddings request. DashScope text-embedding-v4 caps at 10; OpenAI
+    # allows far more. Items chunked beyond this are embedded in batches (never dropped).
+    embedding_batch_size: int = 10
 
     # ---- Rerank ----
     rerank_enabled: bool = False
@@ -101,8 +104,9 @@ class Settings(BaseSettings):
     # Semantic floor for the vector path: chunks whose cosine similarity to the query
     # is below this are dropped before fusion — this stops "always hit on the
     # nearest-but-irrelevant chunk". Calibrate per embedding model
-    # (OpenAI ~0.2-0.35, BGE/Jina ~0.4-0.5).
-    rag_vector_min_sim: float = 0.25
+    # (OpenAI text-embedding-3 ~0.2-0.35, BGE/Jina/通义 text-embedding-v4 ~0.5-0.6).
+    # Default tuned for the de-facto 通义 v4; lower it if you switch to an OpenAI model.
+    rag_vector_min_sim: float = 0.5
     # Final relevance floor applied to rerank scores when rerank is enabled (0 = off).
     rag_min_score: float = 0.0
     # Trigram similarity floor for the keyword path (exact-substring matches).

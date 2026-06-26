@@ -108,6 +108,7 @@ def to_embedding_settings(cfg: AIConfig) -> EmbeddingSettings:
         api_key=decrypt_secret(cfg.embedding_api_key_enc) or settings.embedding_api_key,
         model=cfg.embedding_model,
         dim=cfg.embedding_dim,
+        batch_size=settings.embedding_batch_size,
     )
 
 

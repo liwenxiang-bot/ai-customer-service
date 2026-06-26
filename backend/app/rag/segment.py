@@ -52,6 +52,34 @@ def segment(text: str) -> str:
         return text
 
 
+def segment_query(text: str) -> str:
+    """OR-join the query's tokens for ``websearch_to_tsquery('simple', …)``.
+
+    Document side uses ``segment`` (space-joined → AND-ish coverage). But on the QUERY
+    side, jieba's many sub-tokens (退货政策→退货/政策/退货政策…) under the default AND mean a
+    chunk must contain *every* sub-token to match — far too strict for Chinese, so the
+    high-quality FTS signal all but vanishes on multi-word queries. OR-joining lets a chunk
+    matching *any* meaningful token become a candidate; precision is restored downstream by
+    the vector floor, RRF fusion and rerank. (``websearch_to_tsquery`` reads ``or`` as ``|``
+    and sanitises odd tokens, so this stays injection-safe.)
+    """
+    if not text or not text.strip():
+        return ""
+    if not _JIEBA_OK:
+        return text
+    try:
+        seen: set[str] = set()
+        toks: list[str] = []
+        for t in jieba.cut_for_search(text):
+            t = t.strip()
+            if t and t.lower() != "or" and t not in seen:
+                seen.add(t)
+                toks.append(t)
+        return " or ".join(toks) or text
+    except Exception:  # noqa: BLE001 — never let segmentation break search
+        return text
+
+
 def available() -> bool:
     """Whether jieba-backed segmentation is active (False → trigram-only fallback)."""
     return _JIEBA_OK

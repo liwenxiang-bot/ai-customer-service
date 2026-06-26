@@ -30,7 +30,7 @@ from app.core.logging import get_logger
 from app.core.metrics import retrieval_calls
 from app.llm.factory import get_embedding_client, get_rerank_client
 from app.models.config import AIConfig
-from app.rag.segment import segment
+from app.rag.segment import segment_query
 from app.services.ai_config import (
     merged_retrieval,
     to_embedding_settings,
@@ -66,6 +66,19 @@ async def _vector_search(
         qvec = await client.embed_one(query)
         if not qvec:
             return []
+        # HNSW recall tuning (applies to this transaction only):
+        #  - ef_search defaults to 40 in pgvector; with LIMIT == candidate pool we'd be at the
+        #    recall edge, so widen the search list to ~2× the pool.
+        #  - iterative_scan (pgvector 0.8+) keeps probing the index until enough rows survive
+        #    the status/published/dim WHERE filter — without it a heavily-filtered query can
+        #    silently under-return. Guarded by a savepoint so older pgvector just skips it.
+        ef = min(max(limit * 2, 100), 1000)
+        await db.execute(text(f"SET LOCAL hnsw.ef_search = {ef}"))
+        try:
+            async with db.begin_nested():
+                await db.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
+        except Exception:  # noqa: BLE001 — pgvector <0.8 lacks this GUC; ef_search alone still helps
+            pass
         # ORDER BY <=> LIMIT uses the HNSW index; we return similarity and apply the
         # floor in Python so the index scan stays fast.
         sql = text(
@@ -99,25 +112,25 @@ async def _vector_search(
 async def _keyword_search(
     db: AsyncSession, query: str, limit: int, trgm_threshold: float
 ) -> list[tuple[str, str, str, str]]:
-    """Full-text (jieba-segmented tsvector) + trigram exact-term matching."""
+    """Full-text (jieba-segmented tsvector, OR-matched) + trigram exact-term matching."""
     try:
-        q_seg = segment(query) or query
+        q_or = segment_query(query) or query  # OR over tokens (see segment_query)
         sql = text(
             """
             SELECT c.item_id::text, c.id::text, i.title, c.content
             FROM knowledge_chunks c
             JOIN knowledge_items i ON i.id = c.item_id
             WHERE i.status = 'published'
-              AND (c.tsv @@ websearch_to_tsquery('simple', :q_seg)
+              AND (c.tsv @@ websearch_to_tsquery('simple', :q_or)
                    OR similarity(c.content, :q) > :trgm)
-            ORDER BY (ts_rank_cd(c.tsv, websearch_to_tsquery('simple', :q_seg)) * 2
+            ORDER BY (ts_rank_cd(c.tsv, websearch_to_tsquery('simple', :q_or)) * 2
                       + similarity(c.content, :q)) DESC
             LIMIT :limit
             """
         )
         rows = (
             await db.execute(
-                sql, {"q_seg": q_seg, "q": query, "trgm": trgm_threshold, "limit": limit}
+                sql, {"q_or": q_or, "q": query, "trgm": trgm_threshold, "limit": limit}
             )
         ).all()
         return [(r[0], r[1], r[2], r[3]) for r in rows]
