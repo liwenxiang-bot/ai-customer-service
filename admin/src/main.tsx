@@ -27,27 +27,32 @@ function Root() {
         algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
           colorPrimary: "#0F766E",
-          borderRadius: 6,
+          borderRadius: 8,
           fontFamily: FONT,
           colorSuccess: "#16A34A",
           colorWarning: "#D97706",
           colorError: "#DC2626",
           colorInfo: "#0EA5E9",
-          ...(dark ? {} : { colorBgLayout: "#F6F8FA", colorText: "#18222E", colorTextSecondary: "#5B6573", colorBorderSecondary: "#E3E7EC" }),
+          ...(dark ? {} : { colorBgLayout: "#F5F7FA", colorText: "#18222E", colorTextSecondary: "#5B6573", colorBorder: "#E5E9EE", colorBorderSecondary: "#EAEDF1" }),
         },
         components: dark
           ? {
               // Keep the sider, its trigger and the header on one dark surface (#141414)
               // so the menu area doesn't read as a different shade from the brand bar.
               Layout: { siderBg: "#141414", headerBg: "#141414", triggerBg: "#141414", triggerColor: "rgba(255,255,255,0.65)" },
-              Menu: { itemBorderRadius: 6, itemBg: "transparent", itemSelectedBg: "rgba(45,212,191,0.16)", itemSelectedColor: "#5eead4" },
-              Table: { cellPaddingBlock: 10 },
+              Menu: { itemBorderRadius: 8, itemBg: "transparent", itemSelectedBg: "rgba(45,212,191,0.16)", itemSelectedColor: "#5eead4", itemMarginInline: 8 },
+              Table: { cellPaddingBlock: 12, headerSplitColor: "transparent" },
+              Card: { borderRadiusLG: 12 },
+              Tabs: { titleFontSize: 14 },
+              Button: { fontWeight: 500 },
             }
           : {
-              Layout: { siderBg: "#FFFFFF", headerBg: "#FFFFFF", bodyBg: "#F6F8FA" },
-              Table: { headerBg: "#F6F8FA", headerColor: "#5B6573", cellPaddingBlock: 10 },
-              Menu: { itemBorderRadius: 6, itemSelectedBg: "#E6F2F0", itemSelectedColor: "#0F766E" },
-              Card: { borderRadiusLG: 8 },
+              Layout: { siderBg: "#FFFFFF", headerBg: "#FFFFFF", bodyBg: "#F5F7FA" },
+              Table: { headerBg: "#F6F8FA", headerColor: "#5B6573", cellPaddingBlock: 12, headerSplitColor: "transparent", rowHoverBg: "#F7FAF9" },
+              Menu: { itemBorderRadius: 8, itemSelectedBg: "#E6F2F0", itemSelectedColor: "#0F766E", itemMarginInline: 8 },
+              Card: { borderRadiusLG: 12 },
+              Tabs: { titleFontSize: 14 },
+              Button: { fontWeight: 500 },
             },
       }}
     >
