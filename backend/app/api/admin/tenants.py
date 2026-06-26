@@ -60,4 +60,5 @@ async def update_tenant(
     ok = await tsvc.set_tenant_active(db, tenant_id, body.is_active)
     if not ok:
         raise HTTPException(status_code=404, detail="租户不存在")
+    await db.commit()  # get_db doesn't auto-commit; without this the toggle is rolled back
     return {"ok": True}

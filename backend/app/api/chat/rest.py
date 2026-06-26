@@ -26,7 +26,11 @@ from app.core.ratelimit import check_chat_limits
 from app.db.session import get_db
 from app.models.conversation import Message as DBMessage
 from app.models.enums import ChannelType, MessageRole
-from app.services.channel import get_web_channel, is_origin_allowed, public_branding
+from app.services.channel import (
+    is_origin_allowed,
+    public_branding,
+    resolve_active_web_channel,
+)
 from app.services.conversation import handle_turn
 from app.services.feedback import set_feedback
 
@@ -55,8 +59,11 @@ async def chat_config(
     origin: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    channel = await get_web_channel(db, channel_key)
+    channel = await resolve_active_web_channel(db, channel_key)
     await db.commit()
+    if channel is None:
+        # unknown / disabled channel, or suspended tenant — widget refuses to load
+        return {"allowed": False, "branding": {}}
     return {
         "allowed": is_origin_allowed(channel, origin or ""),
         "branding": public_branding(channel),
@@ -73,9 +80,9 @@ async def chat_upload(
     db: AsyncSession = Depends(get_db),
 ):
     """Store a customer attachment (image/doc) and return a descriptor for the next message."""
-    channel = await get_web_channel(db, channel_key)
+    channel = await resolve_active_web_channel(db, channel_key)
     await db.commit()
-    if not channel.enabled or not is_origin_allowed(channel, origin or ""):
+    if channel is None or not is_origin_allowed(channel, origin or ""):
         raise HTTPException(status_code=403, detail="origin not allowed")
     if not channel.settings.get("file_upload_enabled", True):
         raise HTTPException(status_code=403, detail="文件上传未开启")
@@ -135,8 +142,8 @@ async def chat_message(
     db: AsyncSession = Depends(get_db),
 ):
     """Non-streaming fallback. Aggregates the streamed turn into one response."""
-    channel = await get_web_channel(db, body.channel_key)
-    if not channel.enabled or not is_origin_allowed(channel, origin or ""):
+    channel = await resolve_active_web_channel(db, body.channel_key)
+    if channel is None or not is_origin_allowed(channel, origin or ""):
         raise HTTPException(status_code=403, detail="origin not allowed")
 
     end_user_id = body.uid or f"anon-{uuid.uuid4().hex[:12]}"

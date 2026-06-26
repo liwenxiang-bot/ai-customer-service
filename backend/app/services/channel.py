@@ -68,6 +68,19 @@ async def get_web_channel(db: AsyncSession, key: str = "default") -> ChannelConf
     return row
 
 
+async def resolve_active_web_channel(db: AsyncSession, channel_key: str) -> ChannelConfig | None:
+    """Public widget/chat path: return the web channel ONLY if it maps to an ENABLED channel of
+    an ACTIVE tenant; otherwise None (caller rejects). Unlike get_web_channel this never
+    auto-creates, so an unknown / disabled / suspended channel_key can't silently fall back to —
+    or pollute — the default tenant."""
+    from app.services.tenant import tenant_for_channel
+
+    tid = await tenant_for_channel(db, "web", channel_key)
+    if tid is None:
+        return None
+    return await get_web_channel(db, channel_key)
+
+
 def _host_of(origin: str) -> str:
     if not origin:
         return ""
