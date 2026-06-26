@@ -32,14 +32,19 @@ function WebTab() {
   const { user } = useAuth();
   const admin = isAdmin(user?.role);
   const { message } = AntApp.useApp();
-  const { form, loading, setLoading } = useChannelForm(channelApi.getWeb, (d) => ({
-    enabled: d.enabled,
-    allowed_domains: d.allowed_domains,
-    rate_limit_user_per_min: d.rate_limit_user_per_min,
-    rate_limit_ip_per_min: d.rate_limit_ip_per_min,
-    system_prompt_override: d.system_prompt_override,
-    ...d.settings,
-  }));
+  // channelKey + public base URL drive the embed snippet (both tenant-specific).
+  const [embed, setEmbed] = useState({ key: "default", base: location.origin });
+  const { form, loading, setLoading } = useChannelForm(channelApi.getWeb, (d) => {
+    setEmbed({ key: d.key || "default", base: (d.app_base_url || location.origin).replace(/\/$/, "") });
+    return {
+      enabled: d.enabled,
+      allowed_domains: d.allowed_domains,
+      rate_limit_user_per_min: d.rate_limit_user_per_min,
+      rate_limit_ip_per_min: d.rate_limit_ip_per_min,
+      system_prompt_override: d.system_prompt_override,
+      ...d.settings,
+    };
+  });
 
   const save = async () => {
     const v = await form.validateFields();
@@ -99,8 +104,10 @@ function WebTab() {
         <Form.Item name="system_prompt_override" label="覆盖该渠道的 System Prompt"><Input.TextArea rows={4} placeholder="留空则用全局 AI 配置的 System Prompt" /></Form.Item>
 
         <Divider orientation="left">嵌入代码</Divider>
-        <Alert type="info" message="将以下代码粘贴到目标网站，即可在右下角加载客服窗口：" style={{ marginBottom: 8 }} />
-        <Input.TextArea readOnly rows={2} value={`<script src="${location.origin}/embed/widget.js"></script>`} />
+        <Alert type="info" message="把下面代码粘贴到目标网站，即可在右下角加载客服窗口（已绑定本租户的知识库与品牌）：" style={{ marginBottom: 8 }} />
+        <Input.TextArea readOnly rows={5} value={`<script>\n  window.ACS_CONFIG = { channelKey: "${embed.key}" };\n</script>\n<script src="${embed.base}/embed/widget.js"></script>`} />
+        <Alert type="info" message="或直接把这个独立对话页地址发给客户：" style={{ margin: "8px 0" }} />
+        <Input readOnly value={`${embed.base}/chat?channel_key=${embed.key}`} />
 
         {admin && <div style={{ marginTop: 16 }}><Button type="primary" loading={loading} onClick={save}>保存</Button></div>}
       </Form>

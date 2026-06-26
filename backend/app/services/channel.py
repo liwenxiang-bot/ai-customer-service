@@ -4,11 +4,45 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.tenant_context import get_current_tenant
 from app.models.config import ChannelConfig
 from app.models.enums import ChannelType
+
+
+async def get_tenant_web_channel(db: AsyncSession) -> ChannelConfig:
+    """The CURRENT tenant's web channel, found by type rather than key.
+
+    A tenant's web channel is keyed by its slug (so the public widget can resolve the tenant
+    from channel_key); the default tenant's key is 'default'. The admin UI must read/write THIS
+    row — not a hard-coded key='default' — otherwise (for any non-default tenant) its branding
+    is written to a row the widget never reads. RLS already scopes the query to this tenant."""
+    row = (
+        await db.execute(
+            select(ChannelConfig)
+            .where(ChannelConfig.channel_type == ChannelType.WEB)
+            .order_by(ChannelConfig.created_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        return row
+    # No web channel yet (pre-provisioning / fresh default) — key it by the tenant slug.
+    tid = get_current_tenant()
+    slug = "default"
+    if tid:
+        slug = (
+            await db.execute(text("SELECT slug FROM tenants WHERE id = :i"), {"i": str(tid)})
+        ).scalar() or "default"
+    row = ChannelConfig(
+        channel_type=ChannelType.WEB, key=slug, name="Web 对话窗口",
+        enabled=True, settings=ChannelConfig.default_web_settings(), allowed_domains=[],
+    )
+    db.add(row)
+    await db.flush()
+    return row
 
 
 async def get_web_channel(db: AsyncSession, key: str = "default") -> ChannelConfig:

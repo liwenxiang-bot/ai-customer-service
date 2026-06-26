@@ -8,13 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_admin
+from app.config import settings
 from app.core.encryption import encrypt_secret, mask_secret
 from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.config import ChannelConfig
 from app.models.enums import ChannelType
 from app.services.audit import write_audit
-from app.services.channel import get_web_channel
+from app.services.channel import get_tenant_web_channel
 
 router = APIRouter(prefix="/channels", tags=["admin-channels"])
 
@@ -48,14 +49,16 @@ async def list_channels(db: AsyncSession = Depends(get_db), user: AdminUser = De
 # ------------------------------------------------------------------- web
 @router.get("/web")
 async def get_web(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)):
-    c = await get_web_channel(db)
+    c = await get_tenant_web_channel(db)
     await db.commit()
     return {
-        "id": str(c.id), "enabled": c.enabled, "settings": c.settings,
+        "id": str(c.id), "key": c.key, "enabled": c.enabled, "settings": c.settings,
         "allowed_domains": c.allowed_domains,
         "rate_limit_user_per_min": c.rate_limit_user_per_min,
         "rate_limit_ip_per_min": c.rate_limit_ip_per_min,
         "system_prompt_override": c.system_prompt_override,
+        # public base URL where the widget/chat are served (may differ from the admin origin)
+        "app_base_url": settings.app_base_url.rstrip("/"),
     }
 
 
@@ -70,7 +73,7 @@ class WebUpdate(BaseModel):
 
 @router.put("/web")
 async def update_web(body: WebUpdate, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
-    c = await get_web_channel(db)
+    c = await get_tenant_web_channel(db)
     data = body.model_dump(exclude_unset=True)
     if "settings" in data and data["settings"] is not None:
         c.settings = {**c.settings, **data.pop("settings")}
