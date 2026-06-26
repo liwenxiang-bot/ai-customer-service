@@ -42,12 +42,15 @@ async def check_chat_limits(
     user_limit = settings.rate_limit_user_per_min if user_limit is None else user_limit
     ip_limit = settings.rate_limit_ip_per_min if ip_limit is None else ip_limit
 
+    from app.db.tenant_context import DEFAULT_TENANT_ID, get_current_tenant
+    t = get_current_tenant() or DEFAULT_TENANT_ID  # namespace counters per tenant
+
     if end_user_id:
-        ok, retry = await _check(f"rl:user:{end_user_id}", user_limit)
+        ok, retry = await _check(f"rl:{t}:user:{end_user_id}", user_limit)
         if not ok:
             return RateDecision(False, retry, "user")
     if ip:
-        ok, retry = await _check(f"rl:ip:{ip}", ip_limit)
+        ok, retry = await _check(f"rl:{t}:ip:{ip}", ip_limit)
         if not ok:
             return RateDecision(False, retry, "ip")
     return RateDecision(True)

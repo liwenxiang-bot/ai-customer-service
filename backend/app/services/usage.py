@@ -23,7 +23,10 @@ log = get_logger("usage")
 
 
 def _today_key() -> str:
-    return f"cost:daily:{app_today():%Y-%m-%d}"
+    from app.db.tenant_context import DEFAULT_TENANT_ID, get_current_tenant
+
+    tid = get_current_tenant() or DEFAULT_TENANT_ID
+    return f"cost:daily:{tid}:{app_today():%Y-%m-%d}"
 
 
 async def get_today_cost() -> float:

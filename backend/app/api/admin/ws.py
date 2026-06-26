@@ -27,7 +27,7 @@ from app.core.security import decode_token
 from app.db.session import session_scope
 from app.db.tenant_context import set_current_tenant
 from app.models.admin import AdminUser
-from app.services.takeover import ADMIN_CHANNEL, publish, push_channel
+from app.services.takeover import admin_channel, publish, push_channel
 
 router = APIRouter()
 log = get_logger("admin.ws")
@@ -91,7 +91,7 @@ async def admin_ws(websocket: WebSocket, token: str = Query("")) -> None:
             pass
 
     sender_task = asyncio.create_task(sender())
-    admin_task = asyncio.create_task(relay(ADMIN_CHANNEL))
+    admin_task = asyncio.create_task(relay(admin_channel(user.tenant_id)))  # this tenant only
     session_task: asyncio.Task | None = None
 
     try:
