@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Checkbox, Form, Input, Typography, App as AntApp } from "antd";
-import { LockOutlined, UserOutlined, RobotOutlined } from "@ant-design/icons";
+import { LockOutlined, UserOutlined, RobotOutlined, ApartmentOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
-import { apiError } from "../api/client";
+import { apiError, tenantStore } from "../api/client";
 
 const REMEMBER_KEY = "acs_login_remember";
 
@@ -26,18 +26,20 @@ export function Login() {
     const saved = localStorage.getItem(REMEMBER_KEY);
     if (saved) {
       try {
-        const { email, password } = JSON.parse(saved);
-        form.setFieldsValue({ email, password: dec(password || ""), remember: true });
+        const { email, password, tenant } = JSON.parse(saved);
+        form.setFieldsValue({ email, password: dec(password || ""), tenant: tenant || tenantStore.slug, remember: true });
       } catch { /* ignore corrupt value */ }
+    } else if (tenantStore.slug) {
+      form.setFieldsValue({ tenant: tenantStore.slug });
     }
   }, [form]);
 
-  const onFinish = async (v: { email: string; password: string; remember?: boolean }) => {
+  const onFinish = async (v: { email: string; password: string; tenant?: string; remember?: boolean }) => {
     setLoading(true);
     try {
-      await login(v.email, v.password);
+      await login(v.email, v.password, v.tenant);
       if (v.remember) {
-        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ email: v.email, password: enc(v.password) }));
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ email: v.email, password: enc(v.password), tenant: v.tenant || "" }));
       } else {
         localStorage.removeItem(REMEMBER_KEY);
       }
@@ -64,6 +66,9 @@ export function Login() {
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: "请输入密码" }]}>
             <Input.Password size="large" prefix={<LockOutlined />} placeholder="密码" autoComplete="current-password" />
+          </Form.Item>
+          <Form.Item name="tenant" tooltip="多租户部署填你的租户标识(slug)；单租户/超级管理员留空即可">
+            <Input size="large" prefix={<ApartmentOutlined />} placeholder="租户标识 slug（单租户可留空）" autoComplete="organization" />
           </Form.Item>
           <Form.Item name="remember" valuePropName="checked" style={{ marginBottom: 16 }}>
             <Checkbox>记住账号密码</Checkbox>

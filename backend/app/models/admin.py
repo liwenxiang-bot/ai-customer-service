@@ -18,11 +18,14 @@ class AdminUser(Base, TimestampMixin, TenantMixin):
     __tablename__ = "admin_users"
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    # Unique per-tenant (uq_admin_users_tenant_email), not globally — see migration 0006.
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default=AdminRole.OPERATOR)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Cross-tenant operator who can manage tenants (orthogonal to the within-tenant role).
+    is_super_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

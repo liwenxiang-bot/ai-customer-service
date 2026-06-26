@@ -32,8 +32,14 @@ async def authenticate(db: AsyncSession, email: str, password: str) -> AdminUser
 
 
 async def issue_tokens(db: AsyncSession, user: AdminUser) -> dict:
-    access = create_access_token(str(user.id), user.role, {"email": user.email, "name": user.name})
-    refresh, jti = create_refresh_token(str(user.id))
+    access = create_access_token(
+        str(user.id), user.role,
+        {
+            "email": user.email, "name": user.name,
+            "tenant": str(user.tenant_id), "super": user.is_super_admin,
+        },
+    )
+    refresh, jti = create_refresh_token(str(user.id), str(user.tenant_id))
     db.add(
         RefreshToken(
             jti=jti,
@@ -46,7 +52,10 @@ async def issue_tokens(db: AsyncSession, user: AdminUser) -> dict:
         "access_token": access,
         "refresh_token": refresh,
         "token_type": "bearer",
-        "user": {"id": str(user.id), "email": user.email, "name": user.name, "role": user.role},
+        "user": {
+            "id": str(user.id), "email": user.email, "name": user.name,
+            "role": user.role, "is_super_admin": user.is_super_admin,
+        },
     }
 
 

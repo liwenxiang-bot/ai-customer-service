@@ -7,10 +7,10 @@ import uuid
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import decode_token
-from app.db.session import get_db
+from app.db.session import session_scope
+from app.db.tenant_context import DEFAULT_TENANT_ID, tenant_scope
 from app.models.admin import AdminUser
 from app.models.enums import AdminRole
 
@@ -19,7 +19,6 @@ _bearer = HTTPBearer(auto_error=False)
 
 async def get_current_user(
     creds: HTTPAuthorizationCredentials | None = Depends(_bearer),
-    db: AsyncSession = Depends(get_db),
 ) -> AdminUser:
     if creds is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未提供凭证")
@@ -28,12 +27,17 @@ async def get_current_user(
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="token 类型错误")
         user_id = payload["sub"]
+        home = payload.get("tenant")
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
     except (jwt.PyJWTError, KeyError):
         raise HTTPException(status_code=401, detail="无效凭证")
 
-    user = await db.get(AdminUser, uuid.UUID(user_id))
+    # Load the authenticated user from THEIR home tenant — the request's data context may be a
+    # different tenant (a super-admin acting-as one), and the user lives only in their own.
+    with tenant_scope(home or DEFAULT_TENANT_ID):
+        async with session_scope() as auth_db:
+            user = await auth_db.get(AdminUser, uuid.UUID(user_id))
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="账号不存在或已停用")
     return user
@@ -58,3 +62,10 @@ def require_role(minimum: AdminRole):
 require_readonly = require_role(AdminRole.READONLY)   # any authenticated user
 require_operator = require_role(AdminRole.OPERATOR)   # operator or admin
 require_admin = require_role(AdminRole.ADMIN)         # admin only
+
+
+async def require_super_admin(user: AdminUser = Depends(get_current_user)) -> AdminUser:
+    """Cross-tenant operator — may create/manage tenants."""
+    if not getattr(user, "is_super_admin", False):
+        raise HTTPException(status_code=403, detail="需要超级管理员权限")
+    return user

@@ -6,46 +6,61 @@ All tasks are idempotent-ish and use their own DB session; ARQ provides retries.
 
 from __future__ import annotations
 
+from sqlalchemy import text
+
 from app.core.logging import configure_logging, get_logger, set_trace_id
 from app.db.session import session_scope
+from app.db.tenant_context import DEFAULT_TENANT_ID, tenant_scope
 from app.tasks.queue import redis_settings
 
 log = get_logger("worker")
 
 
-async def embed_item(ctx, item_id: str) -> int:
+async def embed_item(ctx, item_id: str, _tenant: str | None = None) -> int:
     from app.services.knowledge import reembed_item
 
-    async with session_scope() as db:
-        return await reembed_item(db, item_id)
+    with tenant_scope(_tenant):
+        async with session_scope() as db:
+            return await reembed_item(db, item_id)
 
 
-async def rebuild_embeddings(ctx, job_id: str) -> None:
+async def rebuild_embeddings(ctx, job_id: str, _tenant: str | None = None) -> None:
     from app.services.embedding_rebuild import run_rebuild
 
-    async with session_scope() as db:
-        await run_rebuild(db, job_id)
+    with tenant_scope(_tenant):
+        async with session_scope() as db:
+            await run_rebuild(db, job_id)
 
 
-async def summarize_session(ctx, session_id: str) -> bool:
+async def summarize_session(ctx, session_id: str, _tenant: str | None = None) -> bool:
     from app.services.summarize import summarize_session as _s
 
-    async with session_scope() as db:
-        return await _s(db, session_id)
+    with tenant_scope(_tenant):
+        async with session_scope() as db:
+            return await _s(db, session_id)
 
 
-async def distill_from_feedback(ctx, message_id: str) -> bool:
+async def distill_from_feedback(ctx, message_id: str, _tenant: str | None = None) -> bool:
     from app.services.distill import distill_from_message
 
-    async with session_scope() as db:
-        return await distill_from_message(db, message_id)
+    with tenant_scope(_tenant):
+        async with session_scope() as db:
+            return await distill_from_message(db, message_id)
 
 
-async def cleanup_expired(ctx) -> int:
+async def cleanup_expired(ctx, _tenant: str | None = None) -> int:
+    """Cron, cross-tenant: clean each active tenant under its own RLS context."""
     from app.services.cleanup import cleanup_expired as _c
 
-    async with session_scope() as db:
-        return await _c(db)
+    with tenant_scope(DEFAULT_TENANT_ID):
+        async with session_scope() as db:
+            tids = (await db.execute(text("SELECT id FROM tenants WHERE is_active"))).scalars().all()
+    total = 0
+    for tid in tids:
+        with tenant_scope(tid):
+            async with session_scope() as db:
+                total += await _c(db)
+    return total
 
 
 async def on_startup(ctx) -> None:

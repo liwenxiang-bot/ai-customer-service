@@ -109,6 +109,14 @@ export const accountApi = {
   auditLogs: (params: any) => api.get("/accounts/audit-logs", { params }).then((r) => r.data),
 };
 
+// ---- Tenants (super-admin) ----
+export const tenantApi = {
+  list: () => api.get("/tenants").then((r) => r.data),
+  create: (body: any) => api.post("/tenants", body).then((r) => r.data),
+  setActive: (id: string, is_active: boolean) =>
+    api.patch(`/tenants/${id}`, { is_active }).then((r) => r.data),
+};
+
 // ---- Canned responses ----
 export const cannedApi = {
   list: (q = "") => api.get("/canned", { params: { q } }).then((r) => r.data),

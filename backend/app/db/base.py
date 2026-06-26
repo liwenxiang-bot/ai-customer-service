@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.config import settings
+from app.db.tenant_context import current_tenant_for_insert
 
 
 class Base(DeclarativeBase):
@@ -39,7 +40,9 @@ class TenantMixin:
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         nullable=False,
-        default=uuid.UUID(settings.default_tenant_id),
+        # New rows belong to the active tenant (db.tenant_context); the literal server_default
+        # only covers raw SQL inserts that bypass the ORM.
+        default=current_tenant_for_insert,
         server_default=settings.default_tenant_id,
         index=True,
     )

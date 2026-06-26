@@ -11,6 +11,7 @@ from app.api.admin.conversations import router as conversations_router
 from app.api.admin.dashboard import router as dashboard_router
 from app.api.admin.handoff import router as handoff_router
 from app.api.admin.knowledge import router as knowledge_router
+from app.api.admin.tenants import router as tenants_router
 
 admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
 admin_router.include_router(auth_router)
@@ -22,5 +23,6 @@ admin_router.include_router(conversations_router)
 admin_router.include_router(handoff_router)
 admin_router.include_router(accounts_router)
 admin_router.include_router(canned_router)
+admin_router.include_router(tenants_router)
 
 __all__ = ["admin_router"]

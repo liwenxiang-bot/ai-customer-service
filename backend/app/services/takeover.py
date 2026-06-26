@@ -33,13 +33,18 @@ def push_channel(session_id: str) -> str:
     return f"chat:push:{session_id}"
 
 
-ADMIN_CHANNEL = "admin:events"
+def admin_channel(tenant_id) -> str:
+    """Per-tenant admin event bus — operators only see their own tenant's queue events."""
+    return f"admin:events:{tenant_id}"
 
 
 async def publish_admin_event(payload: dict) -> None:
-    """Broadcast a backend event to all connected admin/operator workbench clients."""
+    """Broadcast a backend event to the current tenant's admin/operator workbench clients."""
+    from app.db.tenant_context import DEFAULT_TENANT_ID, get_current_tenant
+
+    tid = get_current_tenant() or DEFAULT_TENANT_ID
     try:
-        await get_redis().publish(ADMIN_CHANNEL, json.dumps(payload, ensure_ascii=False))
+        await get_redis().publish(admin_channel(tid), json.dumps(payload, ensure_ascii=False))
     except Exception as exc:  # noqa: BLE001
         log.warning("admin_event_publish_failed", error=str(exc))
 

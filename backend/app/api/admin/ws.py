@@ -25,8 +25,9 @@ from app.core.logging import get_logger
 from app.core.redis_client import get_redis
 from app.core.security import decode_token
 from app.db.session import session_scope
+from app.db.tenant_context import set_current_tenant
 from app.models.admin import AdminUser
-from app.services.takeover import ADMIN_CHANNEL, publish, push_channel
+from app.services.takeover import admin_channel, publish, push_channel
 
 router = APIRouter()
 log = get_logger("admin.ws")
@@ -42,6 +43,8 @@ async def _authed_user(token: str) -> AdminUser | None:
         uid = payload["sub"]
     except (jwt.PyJWTError, KeyError):
         return None
+    if payload.get("tenant"):
+        set_current_tenant(payload["tenant"])  # pin tenant before the RLS-bound user lookup
     async with session_scope() as db:
         user = await db.get(AdminUser, uuid.UUID(uid))
         return user if user and user.is_active else None
@@ -88,7 +91,7 @@ async def admin_ws(websocket: WebSocket, token: str = Query("")) -> None:
             pass
 
     sender_task = asyncio.create_task(sender())
-    admin_task = asyncio.create_task(relay(ADMIN_CHANNEL))
+    admin_task = asyncio.create_task(relay(admin_channel(user.tenant_id)))  # this tenant only
     session_task: asyncio.Task | None = None
 
     try:
