@@ -131,11 +131,11 @@ export function Dashboard() {
           <Card size="small" title="最近会话" extra={<Button type="link" size="small" onClick={() => nav("/conversations")}>全部 <RightOutlined /></Button>}>
             <List
               size="small"
+              className="acs-clickable-list"
               dataSource={recent}
               locale={{ emptyText: "暂无会话" }}
               renderItem={(it: any) => (
                 <List.Item
-                  style={{ cursor: "pointer" }}
                   onClick={() => nav(`/conversations?session=${it.id}`)}
                 >
                   <List.Item.Meta
