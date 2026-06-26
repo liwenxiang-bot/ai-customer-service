@@ -107,6 +107,23 @@ gunzip -c backups/acs_YYYY-MM-DD_HHMMSS.sql.gz \
 
 ---
 
+## 五·五、多租户（可选，默认关闭）
+
+默认是**单租户**——`APP_DB_PASSWORD` 留空时应用以 owner 连库，RLS 失效，行为不变。开启多租户后，各租户的知识库 / 会话 / 坐席 / 账号由 **Postgres 行级安全(RLS)在数据库层强制隔离**（漏不掉）。
+
+**开启步骤：**
+1. `.env` 设强密码 `APP_DB_PASSWORD=...`（`APP_DB_USER` 默认 `acs_app`）。
+2. `make release`（或 `make migrate`）—— 迁移会自动建一个 **NOSUPERUSER** 角色并授权；应用随后以该角色连库，RLS 生效。
+3. 用初始超级管理员（`admin@…`，bootstrap 时已置 `is_super_admin`）登录后台 → **「租户管理」** 新建租户：自动开通该租户的默认 AI 配置、web 渠道、管理员。
+4. 各租户：
+   - **管理员登录**：登录页填该租户的 **slug**（单租户/超管留空）。
+   - **widget 嵌入**：用该租户的 **channel_key**（= 其 slug，新建后弹窗里给出）。
+
+> ⚠️ 关键：**应用必须以非超级用户角色连库**——超级用户/owner 会绕过 RLS。迁移已自动处理（`acs_app` 为 `NOSUPERUSER NOBYPASSRLS`）。`POSTGRES_USER`（owner）仅用于迁移 / bootstrap。
+> 自查隔离：`scripts` 里那套测试已验证「A 看不到 B、无上下文返回空」;线上可建两个租户各放一条知识，互相检索验证。
+
+---
+
 ## 六、前提与注意
 
 - 线上仓库需在 **main 分支**且无本地改动(`make release` 用 `git pull --ff-only`,否则报错停下,不会乱合并)。
