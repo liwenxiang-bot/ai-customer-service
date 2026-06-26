@@ -88,6 +88,9 @@ class Settings(BaseSettings):
     # Max inputs per /embeddings request. DashScope text-embedding-v4 caps at 10; OpenAI
     # allows far more. Items chunked beyond this are embedded in batches (never dropped).
     embedding_batch_size: int = 10
+    # Items embedded concurrently during a full rebuild — hides per-call API latency. Keep
+    # modest to stay under the embedding provider's QPS limit.
+    embedding_rebuild_concurrency: int = 6
 
     # ---- Rerank ----
     rerank_enabled: bool = False
@@ -107,8 +110,11 @@ class Settings(BaseSettings):
     # (OpenAI text-embedding-3 ~0.2-0.35, BGE/Jina/通义 text-embedding-v4 ~0.5-0.6).
     # Default tuned for the de-facto 通义 v4; lower it if you switch to an OpenAI model.
     rag_vector_min_sim: float = 0.5
-    # Final relevance floor applied to rerank scores when rerank is enabled (0 = off).
-    rag_min_score: float = 0.0
+    # Final relevance floor on rerank scores (0 = off). Calibrated for 通义 gte-rerank-v2,
+    # whose scores are compressed (genuine hits ~0.15-0.9, off-topic ≤0.06): 0.08 drops the
+    # junk tail without touching real hits. Harmless for 0-1-scored rerankers (Cohere/Jina),
+    # whose noise already exceeds it. Recalibrate if you swap rerank models.
+    rag_min_score: float = 0.08
     # Trigram similarity floor for the keyword path (exact-substring matches).
     rag_trgm_threshold: float = 0.1
     # Candidate pool before fusion/rerank = top_k * this (bigger → better rerank recall).

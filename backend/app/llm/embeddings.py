@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 
 import httpx
@@ -10,6 +11,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.logging import get_logger
 
 log = get_logger("llm.embeddings")
+
+_QCACHE_MAX = 1024  # cap on cached query embeddings per client
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,9 @@ class EmbeddingSettings:
 class EmbeddingClient:
     def __init__(self, cfg: EmbeddingSettings) -> None:
         self.cfg = cfg
+        # LRU of query embeddings (deterministic for a fixed model). Lives with the client,
+        # which the factory recreates on any config/model change — so it can't go stale.
+        self._qcache: OrderedDict[str, list[float]] = OrderedDict()
         self._client = httpx.AsyncClient(
             base_url=cfg.base_url.rstrip("/"),
             timeout=httpx.Timeout(60.0, connect=10.0),
@@ -61,5 +67,20 @@ class EmbeddingClient:
         return [d["embedding"] for d in ordered]
 
     async def embed_one(self, text: str) -> list[float]:
-        out = await self.embed([text])
-        return out[0] if out else []
+        """Embed a single query, cached. Queries (search + semantic-cache lookup) repeat far
+        more than documents, so this trims a network round-trip + cost off the hot path."""
+        key = (text or "").strip()
+        if not key:
+            return []
+        cached = self._qcache.get(key)
+        if cached is not None:
+            self._qcache.move_to_end(key)
+            return cached
+        out = await self.embed([key])
+        vec = out[0] if out else []
+        if vec:
+            self._qcache[key] = vec
+            self._qcache.move_to_end(key)
+            if len(self._qcache) > _QCACHE_MAX:
+                self._qcache.popitem(last=False)
+        return vec

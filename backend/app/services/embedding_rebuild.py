@@ -10,13 +10,16 @@ not-yet-rebuilt chunks are skipped) while keyword search keeps working
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.logging import get_logger
+from app.db.session import session_scope
 from app.models.enums import ChunkStatus, JobStatus, KnowledgeStatus
 from app.models.knowledge import EmbeddingRebuildJob, KnowledgeChunk, KnowledgeItem
 from app.services.knowledge import reembed_item
@@ -100,9 +103,23 @@ async def run_rebuild(db: AsyncSession, job_id: str) -> None:
         ).scalar_one() or len(item_ids)
         await db.commit()
 
+        # Re-embed items concurrently (bounded) — each worker on its own session so the
+        # embedding-API latency overlaps instead of summing. The job session stays owned by
+        # this coroutine, which advances progress as workers finish.
+        sem = asyncio.Semaphore(max(1, settings.embedding_rebuild_concurrency))
+
+        async def _one(iid) -> int:
+            async with sem, session_scope() as s:
+                return await reembed_item(s, str(iid))  # commits its own session
+
         processed = 0
-        for iid in item_ids:
-            n = await reembed_item(db, str(iid))  # commits internally
+        tasks = [asyncio.create_task(_one(i)) for i in item_ids]
+        for fut in asyncio.as_completed(tasks):
+            try:
+                n = await fut
+            except Exception as exc:  # noqa: BLE001 — one item failing must not abort the rebuild
+                log.warning("rebuild_item_failed", error=str(exc))
+                n = 0
             processed += max(n, 1)
             job.processed_chunks = processed
             job.progress = min(processed / job.total_chunks, 0.99) if job.total_chunks else 1.0
