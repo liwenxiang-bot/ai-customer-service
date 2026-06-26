@@ -14,8 +14,9 @@ import {
   BellOutlined,
   BulbOutlined,
   ThunderboltOutlined,
+  ApartmentOutlined,
 } from "@ant-design/icons";
-import { useAuth, isAdmin } from "./auth";
+import { useAuth, isAdmin, isSuperAdmin } from "./auth";
 import { useThemeMode } from "./theme";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
@@ -27,6 +28,7 @@ import { Conversations } from "./pages/Conversations";
 import { Handoff } from "./pages/Handoff";
 import { CannedResponses } from "./pages/CannedResponses";
 import { Accounts } from "./pages/Accounts";
+import { Tenants } from "./pages/Tenants";
 
 const { Header, Sider, Content } = Layout;
 
@@ -40,6 +42,7 @@ const MENU = [
   { key: "/ai-config", icon: <RobotOutlined />, label: "AI 配置" },
   { key: "/channels", icon: <ApiOutlined />, label: "渠道配置" },
   { key: "/accounts", icon: <TeamOutlined />, label: "账号权限", adminOnly: true },
+  { key: "/tenants", icon: <ApartmentOutlined />, label: "租户管理", superOnly: true },
 ];
 
 function AppLayout() {
@@ -49,7 +52,9 @@ function AppLayout() {
   const { token } = theme.useToken();
   const { dark, toggle } = useThemeMode();
   const [collapsed, setCollapsed] = useState(false);
-  const items = MENU.filter((m) => !m.adminOnly || isAdmin(user?.role));
+  const items = MENU.filter(
+    (m) => (!m.adminOnly || isAdmin(user?.role)) && (!m.superOnly || isSuperAdmin(user))
+  );
 
   return (
     <Layout style={{ height: "100vh" }}>
@@ -93,6 +98,7 @@ function AppLayout() {
               <Route path="/ai-config" element={<AIConfig />} />
               <Route path="/channels" element={<Channels />} />
               <Route path="/accounts" element={isAdmin(user?.role) ? <Accounts /> : <Navigate to="/dashboard" />} />
+              <Route path="/tenants" element={isSuperAdmin(user) ? <Tenants /> : <Navigate to="/dashboard" />} />
               <Route path="*" element={<Navigate to="/dashboard" />} />
             </Routes>
           </div>

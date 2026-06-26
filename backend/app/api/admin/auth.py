@@ -55,7 +55,10 @@ async def refresh(body: RefreshIn, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me")
 async def me(user: AdminUser = Depends(get_current_user)):
-    return {"id": str(user.id), "email": user.email, "name": user.name, "role": user.role}
+    return {
+        "id": str(user.id), "email": user.email, "name": user.name,
+        "role": user.role, "is_super_admin": user.is_super_admin,
+    }
 
 
 @router.post("/logout")

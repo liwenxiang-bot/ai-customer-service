@@ -2,6 +2,18 @@ import axios, { AxiosError, AxiosRequestConfig } from "axios";
 
 const ACCESS_KEY = "acs_admin_access";
 const REFRESH_KEY = "acs_admin_refresh";
+const TENANT_KEY = "acs_admin_tenant";
+
+// Tenant slug for multi-tenant deploys; blank → the default tenant (single-tenant).
+export const tenantStore = {
+  get slug() {
+    return localStorage.getItem(TENANT_KEY) || "";
+  },
+  set(slug: string) {
+    if (slug) localStorage.setItem(TENANT_KEY, slug);
+    else localStorage.removeItem(TENANT_KEY);
+  },
+};
 
 export const tokenStore = {
   get access() {
@@ -25,6 +37,7 @@ export const api = axios.create({ baseURL: "/api/admin", timeout: 60000 });
 api.interceptors.request.use((cfg) => {
   const t = tokenStore.access;
   if (t) cfg.headers.Authorization = `Bearer ${t}`;
+  if (tenantStore.slug) cfg.headers["X-Tenant-Slug"] = tenantStore.slug;
   return cfg;
 });
 
@@ -33,7 +46,11 @@ let refreshing: Promise<string> | null = null;
 async function doRefresh(): Promise<string> {
   const refresh = tokenStore.refresh;
   if (!refresh) throw new Error("no refresh token");
-  const resp = await axios.post("/api/admin/auth/refresh", { refresh_token: refresh });
+  const resp = await axios.post(
+    "/api/admin/auth/refresh",
+    { refresh_token: refresh },
+    tenantStore.slug ? { headers: { "X-Tenant-Slug": tenantStore.slug } } : undefined,
+  );
   tokenStore.set(resp.data.access_token, resp.data.refresh_token);
   return resp.data.access_token;
 }

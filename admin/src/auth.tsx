@@ -1,18 +1,19 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { authApi } from "./api";
-import { tokenStore } from "./api/client";
+import { tokenStore, tenantStore } from "./api/client";
 
 interface User {
   id: string;
   email: string;
   name: string;
   role: "admin" | "operator" | "readonly";
+  is_super_admin?: boolean;
 }
 
 interface AuthCtx {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, tenant?: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -35,7 +36,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string, tenant?: string) => {
+    tenantStore.set((tenant || "").trim()); // route this login (and later requests) to the tenant
     const u = await authApi.login(email, password);
     setUser(u);
   };
@@ -56,4 +58,7 @@ export function canEdit(role?: string) {
 }
 export function isAdmin(role?: string) {
   return role === "admin";
+}
+export function isSuperAdmin(user?: { is_super_admin?: boolean } | null) {
+  return !!user?.is_super_admin;
 }

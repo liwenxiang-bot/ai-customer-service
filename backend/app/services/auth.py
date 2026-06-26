@@ -49,7 +49,10 @@ async def issue_tokens(db: AsyncSession, user: AdminUser) -> dict:
         "access_token": access,
         "refresh_token": refresh,
         "token_type": "bearer",
-        "user": {"id": str(user.id), "email": user.email, "name": user.name, "role": user.role},
+        "user": {
+            "id": str(user.id), "email": user.email, "name": user.name,
+            "role": user.role, "is_super_admin": user.is_super_admin,
+        },
     }
 
 
