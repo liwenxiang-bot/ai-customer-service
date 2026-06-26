@@ -58,3 +58,10 @@ def require_role(minimum: AdminRole):
 require_readonly = require_role(AdminRole.READONLY)   # any authenticated user
 require_operator = require_role(AdminRole.OPERATOR)   # operator or admin
 require_admin = require_role(AdminRole.ADMIN)         # admin only
+
+
+async def require_super_admin(user: AdminUser = Depends(get_current_user)) -> AdminUser:
+    """Cross-tenant operator — may create/manage tenants."""
+    if not getattr(user, "is_super_admin", False):
+        raise HTTPException(status_code=403, detail="需要超级管理员权限")
+    return user
