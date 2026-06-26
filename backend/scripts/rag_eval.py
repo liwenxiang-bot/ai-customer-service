@@ -70,6 +70,38 @@ async def _seed(db) -> list[str]:
     return ids
 
 
+async def _metrics(db, cfg) -> tuple[float, float, float]:
+    """(recall@K, MRR, correct-rejection-rate) for the labelled cases under `cfg`."""
+    hits, rr = 0, 0.0
+    for query, expected in POSITIVE_CASES:
+        results = await hybrid_search(db, cfg, query, top_k=TOP_K)
+        rank = next((i + 1 for i, r in enumerate(results) if expected in (r.title or "")), 0)
+        if rank:
+            hits += 1
+            rr += 1.0 / rank
+    rejected = 0
+    for query in NEGATIVE_CASES:
+        if not await hybrid_search(db, cfg, query, top_k=TOP_K):
+            rejected += 1
+    return hits / len(POSITIVE_CASES), rr / len(POSITIVE_CASES), rejected / len(NEGATIVE_CASES)
+
+
+# min_score values to sweep — the rerank precision/recall gate. Re-run as your KB grows to
+# pick the frontier for YOUR data (highest reject rate that still holds recall@K at 100%).
+SWEEP_MIN_SCORE = (0.0, 0.08, 0.10, 0.12, 0.15, 0.20)
+
+
+async def _sweep_min_score(db, cfg) -> None:
+    orig = dict(cfg.retrieval or {})
+    print(f"\n--- min_score sweep ---\n{'min_score':>10} | {'recall@' + str(TOP_K):>9} | {'MRR':>6} | {'reject':>7}")
+    print("-" * 42)
+    for ms in SWEEP_MIN_SCORE:
+        cfg.retrieval = {**orig, "min_score": ms}  # in-memory only; never committed
+        rec, mrr, rej = await _metrics(db, cfg)
+        print(f"{ms:>10.2f} | {rec:>9.0%} | {mrr:>6.3f} | {rej:>7.0%}")
+    cfg.retrieval = orig
+
+
 async def main() -> None:
     configure_logging()
     async with session_scope() as db:
@@ -102,7 +134,9 @@ async def main() -> None:
         np_, nn = len(POSITIVE_CASES), len(NEGATIVE_CASES)
         print("-" * 72)
         print(f"Recall@{TOP_K}: {hits}/{np_} = {hits / np_:.0%}   MRR: {rr_sum / np_:.3f}")
-        print(f"Correct rejection: {rejected}/{nn} = {rejected / nn:.0%}\n")
+        print(f"Correct rejection: {rejected}/{nn} = {rejected / nn:.0%}")
+
+        await _sweep_min_score(db, cfg)
 
         # Cleanup seeded corpus.
         await db.execute(

@@ -110,11 +110,12 @@ class Settings(BaseSettings):
     # (OpenAI text-embedding-3 ~0.2-0.35, BGE/Jina/通义 text-embedding-v4 ~0.5-0.6).
     # Default tuned for the de-facto 通义 v4; lower it if you switch to an OpenAI model.
     rag_vector_min_sim: float = 0.5
-    # Final relevance floor on rerank scores (0 = off). Calibrated for 通义 gte-rerank-v2,
-    # whose scores are compressed (genuine hits ~0.15-0.9, off-topic ≤0.06): 0.08 drops the
-    # junk tail without touching real hits. Harmless for 0-1-scored rerankers (Cohere/Jina),
-    # whose noise already exceeds it. Recalibrate if you swap rerank models.
-    rag_min_score: float = 0.08
+    # Final relevance floor on rerank scores (0 = off). Calibrated for 通义 gte-rerank-v2 via
+    # scripts/rag_eval (min_score sweep): 0.15 is the frontier — highest off-topic rejection
+    # (75%) that still holds recall@3 at 100%; ≥0.20 starts dropping real hits. Genuine hits
+    # score ≥0.15, off-topic ≤0.06. Harmless for 0-1-scored rerankers (Cohere/Jina). Re-run
+    # the eval sweep on your own corpus when you swap rerank models or the KB grows.
+    rag_min_score: float = 0.15
     # Trigram similarity floor for the keyword path (exact-substring matches).
     rag_trgm_threshold: float = 0.1
     # Candidate pool before fusion/rerank = top_k * this (bigger → better rerank recall).
