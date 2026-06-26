@@ -9,11 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.security import decode_token
-from app.db.session import get_db
+from app.db.session import get_db, session_scope
 from app.db.tenant_context import set_current_tenant
 from app.models.admin import AdminUser
 from app.services.audit import write_audit
 from app.services.auth import AuthError, authenticate, issue_tokens, revoke_all, rotate_refresh
+from app.services.tenant import tenant_for_admin_email
 
 router = APIRouter(prefix="/auth", tags=["admin-auth"])
 
@@ -25,6 +26,14 @@ class LoginIn(BaseModel):
 
 @router.post("/login")
 async def login(body: LoginIn, request: Request, db: AsyncSession = Depends(get_db)):
+    # No explicit tenant slug? Route by email (only when it maps to exactly one tenant) so the
+    # slug field stays optional. Resolve in a separate session, then pin before the auth query
+    # (the per-transaction GUC reads the context at transaction start).
+    if not request.headers.get("x-tenant-slug"):
+        async with session_scope() as s:
+            tid = await tenant_for_admin_email(s, body.email)
+        if tid:
+            set_current_tenant(tid)
     try:
         user = await authenticate(db, body.email, body.password)
     except AuthError as exc:

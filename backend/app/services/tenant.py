@@ -30,6 +30,13 @@ async def tenant_for_slug(db: AsyncSession, slug: str) -> uuid.UUID | None:
     return row.scalar()
 
 
+async def tenant_for_admin_email(db: AsyncSession, email: str) -> uuid.UUID | None:
+    """The tenant owning this admin email — only when unambiguous (one active tenant). Lets
+    login route by email so the slug is optional; None means none or an ambiguous collision."""
+    row = await db.execute(text("SELECT tenant_for_admin_email(:e)"), {"e": email})
+    return row.scalar()
+
+
 # ----------------------------------------------------------------- management
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 

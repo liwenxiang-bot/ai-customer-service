@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Checkbox, Form, Input, Typography, App as AntApp } from "antd";
+import { Button, Checkbox, Form, Input, App as AntApp } from "antd";
 import { LockOutlined, UserOutlined, RobotOutlined, ApartmentOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth";
@@ -19,6 +19,7 @@ export function Login() {
   const nav = useNavigate();
   const { message } = AntApp.useApp();
   const [loading, setLoading] = useState(false);
+  const [showTenant, setShowTenant] = useState(false);
   const [form] = Form.useForm();
 
   // Pre-fill from a previously remembered login.
@@ -28,9 +29,11 @@ export function Login() {
       try {
         const { email, password, tenant } = JSON.parse(saved);
         form.setFieldsValue({ email, password: dec(password || ""), tenant: tenant || tenantStore.slug, remember: true });
+        if (tenant || tenantStore.slug) setShowTenant(true);
       } catch { /* ignore corrupt value */ }
     } else if (tenantStore.slug) {
       form.setFieldsValue({ tenant: tenantStore.slug });
+      setShowTenant(true);
     }
   }, [form]);
 
@@ -52,32 +55,42 @@ export function Login() {
   };
 
   return (
-    <div style={{ height: "100vh", display: "grid", placeItems: "center", background: "linear-gradient(140deg,#0F766E 0%,#115E59 55%,#134E4A 100%)" }}>
-      <Card style={{ width: 380, boxShadow: "0 12px 48px rgba(0,0,0,.2)" }}>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <Typography.Title level={3} style={{ marginBottom: 4 }}>
-            <RobotOutlined style={{ color: "#0F766E", marginRight: 8 }} />AI 客服后台
-          </Typography.Title>
-          <Typography.Text type="secondary">运营管理后台 · 登录</Typography.Text>
+    <div className="acs-login-bg">
+      <div className="acs-login-card">
+        <div className="acs-login-brand">
+          <div className="acs-login-logo"><RobotOutlined /></div>
+          <div>
+            <div className="acs-login-title">AI 客服后台</div>
+            <div className="acs-login-sub">运营管理 · 知识库驱动的智能客服</div>
+          </div>
         </div>
-        <Form form={form} layout="vertical" onFinish={onFinish}>
+
+        <Form form={form} layout="vertical" onFinish={onFinish} requiredMark={false} size="large">
           <Form.Item name="email" rules={[{ required: true, message: "请输入邮箱" }]}>
-            <Input size="large" prefix={<UserOutlined />} placeholder="邮箱" autoComplete="username" />
+            <Input prefix={<UserOutlined className="acs-login-icon" />} placeholder="邮箱" autoComplete="username" />
           </Form.Item>
-          <Form.Item name="password" rules={[{ required: true, message: "请输入密码" }]}>
-            <Input.Password size="large" prefix={<LockOutlined />} placeholder="密码" autoComplete="current-password" />
+          <Form.Item name="password" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 12 }}>
+            <Input.Password prefix={<LockOutlined className="acs-login-icon" />} placeholder="密码" autoComplete="current-password" />
           </Form.Item>
-          <Form.Item name="tenant" tooltip="多租户部署填你的租户标识(slug)；单租户/超级管理员留空即可">
-            <Input size="large" prefix={<ApartmentOutlined />} placeholder="租户标识 slug（单租户可留空）" autoComplete="organization" />
+          <Form.Item name="tenant" hidden={!showTenant} style={{ marginBottom: 12 }}
+            tooltip="仅当同一邮箱存在于多个租户时才需要填写；通常留空即可（系统按邮箱自动识别租户）">
+            <Input prefix={<ApartmentOutlined className="acs-login-icon" />} placeholder="租户标识 slug（一般无需填写）" autoComplete="organization" />
           </Form.Item>
-          <Form.Item name="remember" valuePropName="checked" style={{ marginBottom: 16 }}>
-            <Checkbox>记住账号密码</Checkbox>
-          </Form.Item>
-          <Button type="primary" size="large" block htmlType="submit" loading={loading}>
-            登录
-          </Button>
+
+          <div className="acs-login-row">
+            <Form.Item name="remember" valuePropName="checked" noStyle>
+              <Checkbox>记住登录</Checkbox>
+            </Form.Item>
+            {!showTenant && (
+              <span className="acs-login-link" onClick={() => setShowTenant(true)}>指定租户登录</span>
+            )}
+          </div>
+
+          <Button type="primary" block htmlType="submit" loading={loading} className="acs-login-btn">登 录</Button>
         </Form>
-      </Card>
+
+        <div className="acs-login-foot">© 2026 AI 客服 · 对话 · 知识库 · 人工协同</div>
+      </div>
     </div>
   );
 }
