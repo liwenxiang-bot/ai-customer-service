@@ -13,6 +13,7 @@ from app.config import settings
 from app.core.logging import configure_logging, get_logger
 from app.core.security import hash_password
 from app.db.session import session_scope
+from app.db.tenant_context import DEFAULT_TENANT_ID, tenant_scope
 from app.models.admin import AdminUser
 from app.models.config import ChannelConfig
 from app.models.enums import AdminRole, ChannelType
@@ -98,12 +99,14 @@ async def _seed_wechat(db) -> None:
 
 async def main() -> None:
     configure_logging()
-    async with session_scope() as db:
-        await get_active_ai_config(db)   # creates the default AI config if missing
-        await get_web_channel(db)        # creates the default web channel if missing
-        await _seed_notify(db)
-        await _seed_wechat(db)
-        await _seed_admin(db)
+    # Seed everything under the default tenant so it passes RLS when the app role is active.
+    with tenant_scope(DEFAULT_TENANT_ID):
+        async with session_scope() as db:
+            await get_active_ai_config(db)   # creates the default AI config if missing
+            await get_web_channel(db)        # creates the default web channel if missing
+            await _seed_notify(db)
+            await _seed_wechat(db)
+            await _seed_admin(db)
     log.info("bootstrap_done")
 
 

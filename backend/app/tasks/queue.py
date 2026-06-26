@@ -12,6 +12,7 @@ from arq.connections import ArqRedis, RedisSettings
 
 from app.config import settings
 from app.core.logging import get_logger
+from app.db.tenant_context import get_current_tenant
 
 log = get_logger("tasks.queue")
 
@@ -34,8 +35,13 @@ async def get_pool() -> ArqRedis:
 
 
 async def enqueue(func_name: str, *args, **kwargs) -> str | None:
-    """Enqueue a job; returns the job id, or None if the queue is unreachable."""
+    """Enqueue a job; returns the job id, or None if the queue is unreachable.
+
+    Carries the enqueuing tenant so the worker can re-establish the RLS context."""
     try:
+        if "_tenant" not in kwargs:
+            tid = get_current_tenant()
+            kwargs["_tenant"] = str(tid) if tid else None
         pool = await get_pool()
         job = await pool.enqueue_job(func_name, *args, **kwargs)
         return job.job_id if job else None

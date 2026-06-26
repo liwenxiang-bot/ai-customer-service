@@ -64,6 +64,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Establish the tenant context for every HTTP request (RLS). Pure-ASGI so the contextvar
+# propagates to handlers; WS endpoints set it themselves.
+from app.api.tenant_mw import TenantContextMiddleware  # noqa: E402
+
+app.add_middleware(TenantContextMiddleware)
+
 
 @app.middleware("http")
 async def observability_mw(request: Request, call_next):
