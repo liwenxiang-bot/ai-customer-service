@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Layout, Menu, Spin, Dropdown, Avatar, Tag, Button, Tooltip, theme } from "antd";
+import { Layout, Menu, Spin, Dropdown, Avatar, Tag, Button, Tooltip, Alert, theme } from "antd";
 import {
   DashboardOutlined,
   BookOutlined,
@@ -17,6 +17,7 @@ import {
   ApartmentOutlined,
 } from "@ant-design/icons";
 import { useAuth, isAdmin, isSuperAdmin } from "./auth";
+import { tenantStore } from "./api/client";
 import { useThemeMode } from "./theme";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
@@ -55,6 +56,8 @@ function AppLayout() {
   const items = MENU.filter(
     (m) => (!m.adminOnly || isAdmin(user?.role)) && (!m.superOnly || isSuperAdmin(user))
   );
+  // Super-admin "act as tenant": a non-empty slug means we're scoped into another tenant.
+  const actingAs = isSuperAdmin(user) ? tenantStore.slug : "";
 
   return (
     <Layout style={{ height: "100vh" }}>
@@ -87,6 +90,15 @@ function AppLayout() {
           </Dropdown>
         </Header>
         <Content style={{ overflow: "auto", background: token.colorBgLayout }}>
+          {actingAs && (
+            <Alert
+              banner
+              type="warning"
+              showIcon
+              message={<span>正在以租户 <b>{tenantStore.name || actingAs}</b> 身份查看 —— 所有数据已切换到该租户</span>}
+              action={<Button size="small" onClick={() => { tenantStore.set(""); window.location.assign("/tenants"); }}>退出</Button>}
+            />
+          )}
           <div className="acs-content">
             <Routes>
               <Route path="/dashboard" element={<Dashboard />} />

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Card, Form, Input, Modal, Switch, Table, Tag } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { App as AntApp, Button, Card, Form, Input, Modal, Space, Switch, Table, Tag } from "antd";
+import { LoginOutlined, PlusOutlined } from "@ant-design/icons";
 import { tenantApi } from "../api";
-import { apiError } from "../api/client";
+import { apiError, tenantStore } from "../api/client";
 
 /** 租户管理 (super-admin only): create/list/suspend tenants. Isolation is DB-enforced (RLS);
  *  this page just drives the registry + onboarding. */
@@ -40,6 +40,13 @@ export function Tenants() {
       message.error(apiError(e));
     }
   };
+  // "Act as" this tenant: scope every request to its slug, then hard-reload so all pages
+  // refetch under the new context and the acting-as banner shows.
+  const enter = (r: any) => {
+    tenantStore.set(r.slug, r.name);
+    window.location.assign("/knowledge");
+  };
+  const active = tenantStore.slug;
 
   const columns = [
     { title: "名称", dataIndex: "name" },
@@ -48,7 +55,18 @@ export function Tenants() {
     { title: "管理员", dataIndex: "admins", width: 80 },
     { title: "知识条目", dataIndex: "knowledge_items", width: 90 },
     { title: "状态", dataIndex: "is_active", width: 80, render: (a: boolean) => <Tag color={a ? "green" : "red"}>{a ? "启用" : "停用"}</Tag> },
-    { title: "操作", width: 110, render: (_: any, r: any) => <Switch checked={r.is_active} onChange={() => toggle(r)} checkedChildren="启用" unCheckedChildren="停用" /> },
+    {
+      title: "操作", width: 200, render: (_: any, r: any) => (
+        <Space>
+          {active === r.slug ? (
+            <Tag color="gold">查看中</Tag>
+          ) : (
+            <Button size="small" icon={<LoginOutlined />} disabled={!r.is_active} onClick={() => enter(r)}>进入</Button>
+          )}
+          <Switch size="small" checked={r.is_active} onChange={() => toggle(r)} checkedChildren="启用" unCheckedChildren="停用" />
+        </Space>
+      ),
+    },
   ];
 
   return (
@@ -60,7 +78,7 @@ export function Tenants() {
       </div>
       <Table rowKey="id" loading={loading} columns={columns as any} dataSource={rows} size="small" pagination={false} />
 
-      <Modal title="新建租户" open={open} onCancel={() => setOpen(false)} onOk={create} okText="创建并开通" destroyOnClose>
+      <Modal title="新建租户" open={open} onCancel={() => setOpen(false)} onOk={create} okText="创建并开通" destroyOnHidden>
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="租户名称" rules={[{ required: true, message: "请输入名称" }]}>
             <Input placeholder="如 Acme 公司" />
