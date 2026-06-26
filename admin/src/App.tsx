@@ -67,6 +67,7 @@ function AppLayout() {
         </div>
         <Menu
           mode="inline"
+          style={{ borderInlineEnd: "none" }}
           selectedKeys={[loc.pathname]}
           items={items.map((m) => ({ key: m.key, icon: m.icon, label: m.label }))}
           onClick={({ key }) => nav(key)}
