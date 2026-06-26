@@ -27,7 +27,17 @@ async def _resolve(request: Request) -> uuid.UUID:
     auth = request.headers.get("authorization", "")
     if auth.lower().startswith("bearer "):
         try:
-            claim = decode_token(auth[7:]).get("tenant")
+            payload = decode_token(auth[7:])
+            # A super-admin (signed claim) may act within another tenant by passing its slug;
+            # a normal tenant user's X-Tenant-Slug is ignored — they're bound to their JWT tenant.
+            if payload.get("super"):
+                slug = request.headers.get("x-tenant-slug") or request.query_params.get("tenant")
+                if slug:
+                    async with session_scope() as db:
+                        tid = await tenant_for_slug(db, slug)
+                    if tid:
+                        return tid
+            claim = payload.get("tenant")
             if claim:
                 return uuid.UUID(str(claim))
         except Exception:  # noqa: BLE001 — fall through to other signals

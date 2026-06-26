@@ -122,6 +122,11 @@ gunzip -c backups/acs_YYYY-MM-DD_HHMMSS.sql.gz \
 > ⚠️ 关键：**应用必须以非超级用户角色连库**——超级用户/owner 会绕过 RLS。迁移已自动处理（`acs_app` 为 `NOSUPERUSER NOBYPASSRLS`）。`POSTGRES_USER`（owner）仅用于迁移 / bootstrap。
 > 自查隔离：`scripts` 里那套测试已验证「A 看不到 B、无上下文返回空」;线上可建两个租户各放一条知识，互相检索验证。
 
+**其它入口的租户路由：**
+- **企业微信**：各租户把回调 URL 配成 `…/api/wechat/callback?tenant=<slug>`（中间件按 `?tenant=` 解析）；单租户不带即默认租户。
+- **超级管理员「以租户身份查看」**：带 `X-Tenant-Slug: <slug>` 请求即可切到该租户上下文浏览其数据（普通租户管理员带这个头无效，只能看自己租户——绑定在已签名的 JWT 上）。
+- **未知/停用的 channel_key**：聊天连接直接拒绝（不再回落默认租户）。
+
 ---
 
 ## 六、前提与注意

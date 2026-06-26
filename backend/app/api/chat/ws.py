@@ -25,7 +25,7 @@ from app.core.logging import get_logger
 from app.core.ratelimit import check_chat_limits
 from app.core.redis_client import get_redis
 from app.db.session import session_scope
-from app.db.tenant_context import DEFAULT_TENANT_ID, set_current_tenant
+from app.db.tenant_context import set_current_tenant
 from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
 from app.models.enums import ChannelType, HandoffReason, MessageRole, SessionStatus
@@ -69,10 +69,14 @@ async def chat_ws(
     origin = websocket.headers.get("origin", "")
 
     # Pin the tenant for this connection from the channel (resolver bypasses RLS) — the channel
-    # row itself is tenant-scoped, so this must run before any other query.
+    # row itself is tenant-scoped, so this must run before any other query. An unknown/disabled
+    # channel (or suspended tenant) resolves to NULL → reject, never fall back to a tenant.
     async with session_scope() as db:
         tid = await tenant_for_channel(db, "web", channel_key)
-    set_current_tenant(tid or DEFAULT_TENANT_ID)
+    if tid is None:
+        await websocket.close(code=4403)
+        return
+    set_current_tenant(tid)
 
     # ---- Domain whitelist enforced before accepting the socket ----
     async with session_scope() as db:

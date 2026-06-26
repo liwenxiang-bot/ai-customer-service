@@ -18,6 +18,8 @@ Revises: 0005
 
 from __future__ import annotations
 
+import re
+
 from alembic import op
 from app.config import settings
 
@@ -60,6 +62,8 @@ def upgrade() -> None:
     pw = (settings.app_db_password or "").replace("'", "''")
     if pw:
         user = settings.app_db_user
+        if not re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", user):
+            raise ValueError(f"unsafe APP_DB_USER (must be a plain SQL identifier): {user!r}")
         op.execute(
             f"""
             DO $$

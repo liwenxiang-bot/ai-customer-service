@@ -39,24 +39,23 @@ def _slugify(s: str) -> str:
 
 
 async def list_tenants(db: AsyncSession) -> list[dict]:
-    """The tenants registry has no RLS, so a super-admin sees them all regardless of context."""
-    rows = (await db.execute(select(Tenant).order_by(Tenant.created_at.asc()))).scalars().all()
-    out = []
-    for t in rows:
-        # per-tenant counts must be read under that tenant's context (RLS)
-        with tenant_scope(t.id):
-            async with session_scope() as tdb:
-                admins = (await tdb.execute(text("SELECT count(*) FROM admin_users"))).scalar()
-                kb = (await tdb.execute(text("SELECT count(*) FROM knowledge_items"))).scalar()
-                ch = (await tdb.execute(
-                    text("SELECT key FROM channel_configs WHERE channel_type='web' LIMIT 1")
-                )).scalar()
-        out.append({
-            "id": str(t.id), "name": t.name, "slug": t.slug, "is_active": t.is_active,
-            "admins": admins, "knowledge_items": kb, "web_channel_key": ch,
-            "created_at": t.created_at.isoformat() if t.created_at else None,
-        })
-    return out
+    """One SECURITY DEFINER call returns every tenant + its counts (no per-tenant RLS round-trip)."""
+    rows = (
+        await db.execute(
+            text(
+                "SELECT id::text, name, slug, is_active, created_at, admins, "
+                "knowledge_items, web_channel_key FROM tenant_stats()"
+            )
+        )
+    ).all()
+    return [
+        {
+            "id": r[0], "name": r[1], "slug": r[2], "is_active": r[3],
+            "created_at": r[4].isoformat() if r[4] else None,
+            "admins": r[5], "knowledge_items": r[6], "web_channel_key": r[7],
+        }
+        for r in rows
+    ]
 
 
 async def provision_tenant(name: str, slug: str, admin_email: str, admin_password: str) -> dict:

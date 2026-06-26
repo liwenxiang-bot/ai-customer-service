@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import text
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -23,6 +23,24 @@ engine = create_async_engine(
     max_overflow=20,
 )
 
+
+@event.listens_for(engine.sync_engine, "begin")
+def _pin_tenant_on_begin(conn) -> None:
+    """Pin Postgres' app.tenant_id at the start of EVERY transaction (not once per session),
+    so RLS keeps filtering to the active tenant even after a mid-session commit opens a new
+    transaction (e.g. the rebuild job's progress commits). set_config(is_local=true) →
+    transaction-scoped, never leaks across the pool; empty when no tenant context → RLS
+    matches nothing (fail-closed).
+
+    The value is always a UUID string or '' (the contextvar coerces to uuid.UUID), so direct
+    interpolation is injection-safe. Listening on sync_engine + exec_driver_sql is the
+    documented way to run per-transaction SQL under the asyncio extension.
+    """
+    tid = get_current_tenant()
+    val = str(tid) if tid else ""
+    conn.exec_driver_sql(f"SELECT set_config('app.tenant_id', '{val}', true)")
+
+
 SessionLocal = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -31,25 +49,9 @@ SessionLocal = async_sessionmaker(
 )
 
 
-async def _pin_tenant(session: AsyncSession) -> None:
-    """Pin Postgres' app.tenant_id for this transaction so RLS filters to the active tenant.
-    Empty when no context is set → RLS matches nothing (fail-closed). Uses set_config(...,
-    is_local=true), i.e. transaction-scoped, so it never leaks across pooled connections.
-
-    Note: the codebase commits terminally within a session_scope/request, so one pin per
-    session is sufficient. A path that commits and then keeps querying the same session must
-    re-pin (or open a new session)."""
-    tid = get_current_tenant()
-    await session.execute(
-        text("SELECT set_config('app.tenant_id', :t, true)"),
-        {"t": str(tid) if tid else ""},
-    )
-
-
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency yielding a request-scoped, tenant-pinned session."""
+    """FastAPI dependency yielding a request-scoped session (tenant pinned per transaction)."""
     async with SessionLocal() as session:
-        await _pin_tenant(session)
         try:
             yield session
         except Exception:
@@ -68,7 +70,6 @@ class session_scope:
 
     async def __aenter__(self) -> AsyncSession:
         self._session = SessionLocal()
-        await _pin_tenant(self._session)
         return self._session
 
     async def __aexit__(self, exc_type, exc, tb) -> None:

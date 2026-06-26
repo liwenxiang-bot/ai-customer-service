@@ -43,16 +43,19 @@ def create_access_token(subject: str, role: str, extra: dict[str, Any] | None = 
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def create_refresh_token(subject: str) -> tuple[str, str]:
-    """Return (token, jti). The jti is persisted so refresh tokens can be rotated/revoked."""
+def create_refresh_token(subject: str, tenant: str | None = None) -> tuple[str, str]:
+    """Return (token, jti). The jti is persisted so refresh tokens can be rotated/revoked.
+    `tenant` is embedded so a refresh can re-establish RLS context without an extra header."""
     jti = str(uuid.uuid4())
-    payload = {
+    payload: dict[str, Any] = {
         "sub": subject,
         "type": "refresh",
         "iat": _now(),
         "exp": _now() + timedelta(days=settings.jwt_refresh_ttl_days),
         "jti": jti,
     }
+    if tenant:
+        payload["tenant"] = tenant
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, jti
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user
 from app.core.security import decode_token
 from app.db.session import get_db
+from app.db.tenant_context import set_current_tenant
 from app.models.admin import AdminUser
 from app.services.audit import write_audit
 from app.services.auth import AuthError, authenticate, issue_tokens, revoke_all, rotate_refresh
@@ -44,6 +45,8 @@ async def refresh(body: RefreshIn, db: AsyncSession = Depends(get_db)):
         payload = decode_token(body.refresh_token)
         if payload.get("type") != "refresh":
             raise HTTPException(status_code=401, detail="token 类型错误")
+        if payload.get("tenant"):
+            set_current_tenant(payload["tenant"])  # re-establish RLS context for the lookup
         tokens = await rotate_refresh(db, payload["jti"], payload["sub"])
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="refresh token 无效")
