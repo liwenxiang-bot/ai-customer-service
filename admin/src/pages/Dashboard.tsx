@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, Col, Row, Statistic, Spin, Empty, Button, Progress, List, Tag, Space } from "antd";
+import { Card, Col, Row, Statistic, Spin, Empty, Button, Progress, List, Tag, Space, theme } from "antd";
 import {
   MessageOutlined,
   UserOutlined,
@@ -19,6 +19,7 @@ import { fmtShort } from "../utils/time";
 
 export function Dashboard() {
   const nav = useNavigate();
+  const { token } = theme.useToken();
   const [data, setData] = useState<any>(null);
   const [trend, setTrend] = useState<any[]>([]);
   const [recent, setRecent] = useState<any[]>([]);
@@ -38,30 +39,36 @@ export function Dashboard() {
   const vecPct = kb.chunks_total ? Math.round((kb.chunks_ready / kb.chunks_total) * 100) : 100;
 
   const cards = [
-    { title: "今日对话", value: t.conversations, icon: <MessageOutlined />, color: "#0F766E" },
-    { title: "今日用户", value: t.users, icon: <UserOutlined />, color: "#0ea5e9" },
-    { title: "平均响应(ms)", value: t.avg_latency_ms, icon: <ThunderboltOutlined />, color: "#f59e0b" },
-    { title: "转人工率", value: (t.escalation_rate * 100).toFixed(1) + "%", icon: <CustomerServiceOutlined />, color: "#ef4444" },
-    { title: "满意度", value: data.satisfaction == null ? "—" : (data.satisfaction * 100).toFixed(0) + "%", icon: <LikeOutlined />, color: "#10b981" },
-    { title: "今日成本($)", value: t.cost_usd, icon: <DollarOutlined />, color: "#8b5cf6" },
+    { title: "今日对话", value: t.conversations, icon: <MessageOutlined />, color: "#0F766E", bg: "rgba(15,118,110,.10)" },
+    { title: "今日用户", value: t.users, icon: <UserOutlined />, color: "#0ea5e9", bg: "rgba(14,165,233,.10)" },
+    { title: "平均响应(ms)", value: t.avg_latency_ms, icon: <ThunderboltOutlined />, color: "#f59e0b", bg: "rgba(245,158,11,.13)" },
+    { title: "转人工率", value: (t.escalation_rate * 100).toFixed(1) + "%", icon: <CustomerServiceOutlined />, color: "#ef4444", bg: "rgba(239,68,68,.10)" },
+    { title: "满意度", value: data.satisfaction == null ? "—" : (data.satisfaction * 100).toFixed(0) + "%", icon: <LikeOutlined />, color: "#10b981", bg: "rgba(16,185,129,.10)" },
+    { title: "今日成本($)", value: t.cost_usd, icon: <DollarOutlined />, color: "#8b5cf6", bg: "rgba(139,92,246,.10)" },
   ];
 
   return (
-    <div>
+    <div className="acs-dash">
       <div className="acs-page-title">概览</div>
       <div className="acs-page-sub">今日核心指标、待处理事项与近 14 天趋势一览。</div>
 
-      <Row gutter={[12, 12]}>
+      <Row gutter={[16, 16]}>
         {cards.map((c) => (
           <Col xs={12} sm={8} lg={4} key={c.title}>
-            <Card size="small">
-              <Statistic title={<span>{c.icon} {c.title}</span>} value={c.value} valueStyle={{ color: c.color, fontSize: 22 }} />
+            <Card size="small" styles={{ body: { padding: 16 } }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <div className="acs-kpi-ic" style={{ background: c.bg, color: c.color }}>{c.icon}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="acs-kpi-label" style={{ color: token.colorTextSecondary }}>{c.title}</div>
+                  <div className="acs-kpi-value" style={{ color: token.colorText }}>{c.value}</div>
+                </div>
+              </div>
             </Card>
           </Col>
         ))}
       </Row>
 
-      <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         {/* backlog → workbench */}
         <Col xs={24} lg={8}>
           <Card size="small" title="待处理" extra={<Button type="link" size="small" onClick={() => nav("/workbench")}>去工作台 <RightOutlined /></Button>}>
@@ -98,7 +105,7 @@ export function Dashboard() {
         </Col>
       </Row>
 
-      <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
+      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={15}>
           <Card size="small" title="近 14 天趋势">
             {trend.length === 0 ? (
@@ -106,7 +113,7 @@ export function Dashboard() {
             ) : (
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={trend}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={token.colorBorderSecondary} />
                   <XAxis dataKey="day" fontSize={12} />
                   <YAxis fontSize={12} />
                   <Tooltip />
@@ -144,7 +151,7 @@ export function Dashboard() {
       </Row>
 
       {analytics && (
-        <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
+        <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
           {/* CSAT 满意度评分 */}
           <Col xs={24} lg={8}>
             <Card size="small" title={`满意度评分（近 ${analytics.days} 天）`}>
@@ -156,7 +163,7 @@ export function Dashboard() {
                   </Space>
                   <ResponsiveContainer width="100%" height={140}>
                     <BarChart data={analytics.csat.distribution}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+                      <CartesianGrid strokeDasharray="3 3" stroke={token.colorBorderSecondary} />
                       <XAxis dataKey="rating" tickFormatter={(v) => `${v}★`} fontSize={12} />
                       <YAxis allowDecimals={false} fontSize={12} />
                       <Tooltip />

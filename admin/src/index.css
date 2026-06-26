@@ -29,7 +29,62 @@ body {
 .acs-content { padding: 20px; }
 .acs-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
 
+.acs-content { padding: 24px; }
+
 /* Dark mode: the few hand-set text colors above need readable values on dark. */
 [data-theme="dark"] body { color: rgba(255, 255, 255, 0.85); }
 [data-theme="dark"] .acs-page-title { color: rgba(255, 255, 255, 0.92); }
 [data-theme="dark"] .acs-page-sub { color: rgba(255, 255, 255, 0.5); }
+
+/* ─────────────────────────── Login ─────────────────────────── */
+.acs-login-bg {
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(1100px 560px at 72% -12%, rgba(45, 212, 191, 0.34), transparent 60%),
+    radial-gradient(820px 520px at -8% 112%, rgba(13, 148, 136, 0.42), transparent 55%),
+    linear-gradient(135deg, #0f766e 0%, #115e59 52%, #134e4a 100%);
+}
+.acs-login-card {
+  width: 410px;
+  max-width: 100%;
+  background: #fff;
+  border-radius: 16px;
+  padding: 38px 38px 26px;
+  box-shadow: 0 28px 70px -16px rgba(6, 38, 36, 0.5), 0 6px 20px -8px rgba(0, 0, 0, 0.18);
+}
+.acs-login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 30px; }
+.acs-login-logo {
+  width: 50px; height: 50px; flex: none;
+  border-radius: 13px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, #2dd4bf 0%, #0f766e 100%);
+  color: #fff; font-size: 25px;
+  box-shadow: 0 8px 18px -5px rgba(15, 118, 110, 0.6);
+}
+.acs-login-title { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; color: #18222e; line-height: 1.15; }
+.acs-login-sub { font-size: 13px; color: #6b7480; margin-top: 3px; }
+.acs-login-icon { color: #aab2bd; }
+.acs-login-row { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 18px; }
+.acs-login-link { font-size: 13px; color: #0f766e; cursor: pointer; transition: color 0.15s; }
+.acs-login-link:hover { color: #115e59; text-decoration: underline; }
+.acs-login-card .acs-login-btn {
+  height: 46px; font-size: 15px; font-weight: 600;
+  box-shadow: 0 10px 22px -8px rgba(15, 118, 110, 0.55);
+}
+.acs-login-foot { text-align: center; font-size: 12px; color: #aab2bd; margin-top: 24px; }
+.acs-login-card .ant-input-affix-wrapper { padding-top: 9px; padding-bottom: 9px; }
+
+/* ─────────────────────────── Dashboard ─────────────────────────── */
+/* Equal-height cards per row → no ragged bottoms. */
+.acs-dash .ant-card { height: 100%; }
+.acs-kpi-ic {
+  width: 42px; height: 42px; flex: none;
+  border-radius: 11px;
+  display: grid; place-items: center;
+  font-size: 19px;
+}
+.acs-kpi-label { font-size: 12.5px; line-height: 1.2; white-space: nowrap; }
+.acs-kpi-value { font-size: 23px; font-weight: 680; line-height: 1.25; letter-spacing: -0.01em; }
