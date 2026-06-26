@@ -18,6 +18,9 @@ class EmbeddingSettings:
     api_key: str
     model: str
     dim: int
+    # Providers cap inputs per /embeddings request (DashScope text-embedding-v4 = 10).
+    # Exceeding it 400s the whole call; we split into batches of this size and concatenate.
+    batch_size: int = 10
 
 
 class EmbeddingClient:
@@ -32,10 +35,22 @@ class EmbeddingClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=6), reraise=True)
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed any number of texts, transparently chunked under the provider's per-request
+        cap. A long knowledge item (>10 chunks) used to 400 the whole call → stored
+        unembedded → invisible to vector search; batching fixes that."""
         if not texts:
             return []
+        bs = max(1, self.cfg.batch_size)
+        if len(texts) <= bs:
+            return await self._embed_batch(texts)
+        out: list[list[float]] = []
+        for i in range(0, len(texts), bs):
+            out.extend(await self._embed_batch(texts[i : i + bs]))
+        return out
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=6), reraise=True)
+    async def _embed_batch(self, texts: list[str]) -> list[list[float]]:
         resp = await self._client.post(
             "/embeddings", json={"model": self.cfg.model, "input": texts}
         )

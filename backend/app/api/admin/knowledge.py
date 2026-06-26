@@ -46,7 +46,9 @@ class ItemUpdate(BaseModel):
     change_note: str = "edited"
 
 
-def _item_dict(it: KnowledgeItem, chunk_count: int | None = None) -> dict:
+def _item_dict(
+    it: KnowledgeItem, chunk_count: int | None = None, ready_count: int | None = None
+) -> dict:
     return {
         "id": str(it.id),
         "title": it.title,
@@ -57,6 +59,7 @@ def _item_dict(it: KnowledgeItem, chunk_count: int | None = None) -> dict:
         "source": it.source,
         "version": it.version,
         "chunk_count": chunk_count,
+        "ready_count": ready_count,  # embedded chunks; < chunk_count ⇒ vectors missing
         "created_at": it.created_at.isoformat() if it.created_at else None,
         "updated_at": it.updated_at.isoformat() if it.updated_at else None,
     }
@@ -96,11 +99,14 @@ async def list_items(
             .limit(page_size)
         )
     ).scalars().all()
+    coverage = await ksvc.chunk_coverage(db, [it.id for it in rows])
     return {
         "total": total,
         "page": page,
         "page_size": page_size,
-        "items": [_item_dict(it) for it in rows],
+        "items": [
+            _item_dict(it, *coverage.get(str(it.id), (0, 0))) for it in rows
+        ],
     }
 
 
@@ -264,6 +270,40 @@ async def embedding_status(db: AsyncSession = Depends(get_db), user: AdminUser =
             "from_model": job.from_model, "to_model": job.to_model, "error": job.error,
         },
     }
+
+
+# ----------------------------------------------------------------- chunks / re-embed
+@router.get("/{item_id}/chunks")
+async def item_chunks(
+    item_id: str, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)
+):
+    """How an item was split + which chunks have a vector (diagnose 'why isn't this found')."""
+    item = await _get_or_404(db, item_id)
+    chunks = await ksvc.list_item_chunks(db, str(item.id))
+    ready = sum(1 for c in chunks if c["status"] == "ready")
+    return {"item_id": str(item.id), "chunk_count": len(chunks), "ready_count": ready, "chunks": chunks}
+
+
+@router.post("/{item_id}/reembed")
+async def reembed_one(
+    item_id: str, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_operator)
+):
+    """Re-chunk + re-embed a single item (e.g. after an embedding outage)."""
+    item = await _get_or_404(db, item_id)
+    await ksvc.enqueue_reembed(str(item.id))
+    return {"ok": True, "queued": True}
+
+
+@router.post("/reembed-pending")
+async def reembed_pending(
+    db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_operator)
+):
+    """Re-embed every item whose chunks are missing/incomplete — one click to heal coverage
+    after an embedding outage or the long-document batch fix."""
+    ids = await ksvc.items_needing_embedding(db)
+    for iid in ids:
+        await ksvc.enqueue_reembed(iid)
+    return {"ok": True, "queued": len(ids)}
 
 
 # ----------------------------------------------------------------- review queue
