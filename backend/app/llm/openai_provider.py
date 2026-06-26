@@ -51,6 +51,7 @@ class OpenAICompatProvider(LLMProvider):
         stream: bool,
         temperature: float | None,
         max_tokens: int | None,
+        tool_choice: str | dict = "auto",
     ) -> dict:
         payload: dict = {
             "model": self.cfg.model,
@@ -61,7 +62,7 @@ class OpenAICompatProvider(LLMProvider):
         }
         if tools:
             payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+            payload["tool_choice"] = tool_choice
         if stream:
             payload["stream_options"] = {"include_usage": True}
         return payload
@@ -74,8 +75,9 @@ class OpenAICompatProvider(LLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        tool_choice: str | dict = "auto",
     ) -> AsyncIterator[StreamEvent]:
-        payload = self._payload(messages, tools, True, temperature, max_tokens)
+        payload = self._payload(messages, tools, True, temperature, max_tokens, tool_choice)
         # Accumulate tool-call fragments by index across delta chunks.
         tool_acc: dict[int, dict] = {}
         usage = Usage()

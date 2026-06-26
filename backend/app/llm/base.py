@@ -39,6 +39,7 @@ class LLMProvider(abc.ABC):
         *,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        tool_choice: str | dict = "auto",
     ) -> AsyncIterator[StreamEvent]:
         """Yield StreamEvents (text deltas, then tool_calls/done)."""
         raise NotImplementedError

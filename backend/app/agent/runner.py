@@ -79,12 +79,18 @@ class AgentRunner:
                 if allow_tools and not (has_image_input and image_tools_disabled)
                 else None
             )
+            # With an image, the model tends to answer the picture directly and skip retrieval.
+            # Force a knowledge search on the first pass so the reply is still grounded in the KB
+            # (subsequent passes go back to "auto" so it can answer or call other tools).
+            tool_choice: str | dict = "auto"
+            if loop_i == 0 and has_image_input and tools_for_call:
+                tool_choice = {"type": "function", "function": {"name": "search_knowledge"}}
             assistant_text = ""
             pending: list[ToolCall] = []
             errored = False
 
             async for ev in self.provider.stream_chat(
-                messages, tools=tools_for_call
+                messages, tools=tools_for_call, tool_choice=tool_choice
             ):
                 if ev.kind == "text":
                     assistant_text += ev.text

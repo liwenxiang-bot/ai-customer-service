@@ -11,7 +11,7 @@ import pytest
 from app.agent.runner import AgentRunner
 from app.agent.tools.base import Tool, ToolContext, ToolRegistry
 from app.llm.base import LLMProvider, LLMSettings
-from app.llm.types import StreamEvent, Usage
+from app.llm.types import StreamEvent, ToolCall, Usage
 from app.models.config import AIConfig
 from app.models.conversation import Session
 from app.models.enums import SessionStatus
@@ -24,7 +24,7 @@ class RecordingProvider(LLMProvider):
         self.calls: list[dict] = []
 
     async def stream_chat(self, messages, tools=None, **kw) -> AsyncIterator[StreamEvent]:
-        self.calls.append({"messages": messages, "tools": tools})
+        self.calls.append({"messages": messages, "tools": tools, "tool_choice": kw.get("tool_choice", "auto")})
         turn = self._turns.pop(0)
         for ev in turn:
             yield ev
@@ -124,6 +124,36 @@ async def test_image_turn_retries_without_tools(monkeypatch):
     assert [bool(c["tools"]) for c in provider.calls] == [True, False]
     assert "".join(ev.text for ev in events if ev.kind == "text") == "这是一张品牌标志。"
     assert events[-1].data["degraded"] is False
+
+
+@pytest.mark.asyncio
+async def test_image_turn_forces_knowledge_search(monkeypatch):
+    """With an image, the first pass must force search_knowledge so the answer stays grounded
+    in the KB instead of the model replying to the picture directly."""
+    monkeypatch.setattr("app.agent.runner.build_messages", _fake_build_messages)
+    monkeypatch.setattr("app.agent.runner.record_turn_cost", _noop_record_turn_cost)
+    provider = RecordingProvider(
+        [
+            # forced first pass → the model calls search_knowledge
+            [
+                StreamEvent(kind="tool_calls", tool_calls=[ToolCall(id="c1", name="search_knowledge", arguments="{}")]),
+                StreamEvent(kind="done", usage=Usage(5, 3), finish_reason="tool_calls"),
+            ],
+            # second pass → answers from the retrieved context
+            [
+                StreamEvent(kind="text", text="根据知识库，这是…"),
+                StreamEvent(kind="done", usage=Usage(8, 5), finish_reason="stop"),
+            ],
+        ]
+    )
+    runner = AgentRunner(provider, _registry(), AIConfig(llm_model="vision-model"), image_understanding=True)
+
+    events = await _run(runner)
+
+    # first call forces the search tool; subsequent calls go back to "auto"
+    assert provider.calls[0]["tool_choice"] == {"type": "function", "function": {"name": "search_knowledge"}}
+    assert provider.calls[1]["tool_choice"] == "auto"
+    assert "".join(ev.text for ev in events if ev.kind == "text") == "根据知识库，这是…"
 
 
 @pytest.mark.asyncio
