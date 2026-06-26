@@ -12,12 +12,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import app.models  # noqa: F401  (populate metadata)
 from alembic import op
-
 from app.config import settings
 from app.db.base import Base
-
-import app.models  # noqa: F401  (populate metadata)
 
 revision: str = "0001"
 down_revision: str | None = None
