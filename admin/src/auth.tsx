@@ -43,6 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
   const logout = async () => {
     await authApi.logout();
+    tenantStore.set(""); // drop any super-admin "act as tenant" scope
     setUser(null);
   };
 

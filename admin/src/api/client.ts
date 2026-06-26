@@ -3,15 +3,27 @@ import axios, { AxiosError, AxiosRequestConfig } from "axios";
 const ACCESS_KEY = "acs_admin_access";
 const REFRESH_KEY = "acs_admin_refresh";
 const TENANT_KEY = "acs_admin_tenant";
+const TENANT_NAME_KEY = "acs_admin_tenant_name";
 
 // Tenant slug for multi-tenant deploys; blank → the default tenant (single-tenant).
+// A super-admin sets this to "act as" a tenant (the backend honours X-Tenant-Slug only for
+// the signed `super` claim); `name` is kept purely to label the acting-as banner.
 export const tenantStore = {
   get slug() {
     return localStorage.getItem(TENANT_KEY) || "";
   },
-  set(slug: string) {
-    if (slug) localStorage.setItem(TENANT_KEY, slug);
-    else localStorage.removeItem(TENANT_KEY);
+  get name() {
+    return localStorage.getItem(TENANT_NAME_KEY) || "";
+  },
+  set(slug: string, name?: string) {
+    if (slug) {
+      localStorage.setItem(TENANT_KEY, slug);
+      if (name) localStorage.setItem(TENANT_NAME_KEY, name);
+      else localStorage.removeItem(TENANT_NAME_KEY);
+    } else {
+      localStorage.removeItem(TENANT_KEY);
+      localStorage.removeItem(TENANT_NAME_KEY);
+    }
   },
 };
 
