@@ -35,7 +35,8 @@ export const knowledgeApi = {
   create: (body: any) => api.post("/knowledge", body).then((r) => r.data),
   update: (id: string, body: any) => api.put(`/knowledge/${id}`, body).then((r) => r.data),
   remove: (id: string) => api.delete(`/knowledge/${id}`).then((r) => r.data),
-  versions: (id: string) => api.get(`/knowledge/${id}/versions`).then((r) => r.data),
+  versions: (id: string, full = false) =>
+    api.get(`/knowledge/${id}/versions`, { params: full ? { full: true } : {} }).then((r) => r.data),
   rollback: (id: string, vid: string) => api.post(`/knowledge/${id}/rollback/${vid}`).then((r) => r.data),
   testRetrieval: (query: string) => api.post("/knowledge/test-retrieval", { query }).then((r) => r.data),
   embeddingStatus: () => api.get("/knowledge/embedding/status").then((r) => r.data),
@@ -45,11 +46,19 @@ export const knowledgeApi = {
   reviewList: (status = "pending") => api.get("/knowledge/review/list", { params: { status } }).then((r) => r.data),
   reviewApprove: (id: string, body: any) => api.post(`/knowledge/review/${id}/approve`, body).then((r) => r.data),
   reviewReject: (id: string) => api.post(`/knowledge/review/${id}/reject`).then((r) => r.data),
-  importFile: (file: File) => {
+  importFile: (file: File, dryRun = false) => {
     const fd = new FormData();
     fd.append("file", file);
-    return api.post("/knowledge/import", fd).then((r) => r.data);
+    return api.post("/knowledge/import", fd, { params: dryRun ? { dry_run: true } : {} }).then((r) => r.data);
   },
+  // Authenticated blob download — a bare <a href> can't carry the Bearer header.
+  importTemplate: () => api.get("/knowledge/import/template", { responseType: "blob" }).then((r) => r.data),
+  exportItems: (params: any) => api.get("/knowledge/export", { params, responseType: "blob" }),
+  usageStats: () => api.get("/knowledge/usage-stats").then((r) => r.data),
+  renameCategory: (fromName: string, toName: string) =>
+    api.post("/knowledge/category/rename", { from_name: fromName, to_name: toName }).then((r) => r.data),
+  rebuildAll: () => api.post("/knowledge/rebuild").then((r) => r.data),
+  reviewCount: () => api.get("/knowledge/review/count").then((r) => r.data),
 };
 
 // ---- AI config ----

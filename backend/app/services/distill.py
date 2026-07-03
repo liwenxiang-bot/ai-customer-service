@@ -72,15 +72,23 @@ async def distill_from_message(db: AsyncSession, message_id: str) -> bool:
         log.warning("distill_parse_failed", error=str(exc))
         return False
 
+    title = str(data.get("title") or "").strip()
+    content = str(data.get("content") or "").strip()
+    if not title or not content:
+        # Valid JSON with empty fields still happens; an empty candidate only wastes
+        # reviewer time (and would become an unretrievable item if approved).
+        log.warning("distill_empty_fields", message_id=message_id)
+        return False
+
     db.add(
         KnowledgeReviewCandidate(
             tenant_id=msg.tenant_id,
             source_session_id=msg.session_id,
             source_message_id=msg.id,
             raw_excerpt=f"问：{question.content}\n答：{msg.content}"[:2000],
-            suggested_title=data.get("title", "")[:500],
-            suggested_content=data.get("content", ""),
-            suggested_category=data.get("category", ""),
+            suggested_title=title[:500],
+            suggested_content=content,
+            suggested_category=str(data.get("category") or "").strip(),
             status=ReviewStatus.PENDING,
         )
     )

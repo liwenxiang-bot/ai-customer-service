@@ -4,6 +4,7 @@ import {
   Collapse, Empty, Tooltip, App as AntApp, Modal, Form, DatePicker, Popconfirm, theme,
 } from "antd";
 import { RobotOutlined, UserOutlined, ToolOutlined, BookOutlined, DownloadOutlined, PaperClipOutlined } from "@ant-design/icons";
+import { useNavigate } from "react-router-dom";
 import { conversationApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
@@ -117,8 +118,9 @@ export function Conversations() {
 }
 
 function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const { token } = theme.useToken();
+  const nav = useNavigate();
   const [kModal, setKModal] = useState<any>(null);
   const [form] = Form.useForm();
   const [live, setLive] = useState<any>(null);
@@ -246,7 +248,16 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
                 )}
                 {m.citations?.length > 0 && (
                   <div style={{ marginTop: 4 }}>
-                    {m.citations.map((c: any) => <Tooltip key={c.ref} title={c.snippet}><Tag icon={<BookOutlined />} color="blue">[{c.ref}] {c.title}</Tag></Tooltip>)}
+                    {/* 有 item_id 的引用可点击跳知识库编辑（?item= 深链）；旧消息可能缺 item_id，保持纯展示 */}
+                    {m.citations.map((c: any) => (
+                      <Tooltip key={c.ref} title={c.item_id ? <>{c.snippet}<div style={{ marginTop: 4, opacity: 0.75 }}>点击可编辑该知识条目</div></> : c.snippet}>
+                        <Tag
+                          icon={<BookOutlined />} color="blue"
+                          style={c.item_id ? { cursor: "pointer" } : undefined}
+                          onClick={c.item_id ? () => nav(`/knowledge?item=${c.item_id}`) : undefined}
+                        >[{c.ref}] {c.title}</Tag>
+                      </Tooltip>
+                    ))}
                   </div>
                 )}
                 {m.trace_id && <div style={{ color: token.colorTextTertiary, fontSize: 11, marginTop: 4 }}>trace: {m.trace_id}</div>}
@@ -277,8 +288,22 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
 
       <Modal title="加入知识库" open={!!kModal} onCancel={() => setKModal(null)} onOk={async () => {
         const v = await form.validateFields();
-        try { await conversationApi.toKnowledge(s.id, v); message.success("已加入知识库（向量后台生成）"); setKModal(null); }
-        catch (e) { message.error(apiError(e)); }
+        try {
+          await conversationApi.toKnowledge(s.id, { ...v, message_id: kModal?.id });
+          message.success("已加入知识库（向量后台生成）"); setKModal(null);
+        } catch (e: any) {
+          // 内容与已有条目重复 → 409 带 item_id，给出跳转编辑入口而不是让操作者干瞪眼
+          const dup = e?.response?.status === 409 ? e.response?.data?.detail : null;
+          if (dup?.item_id) {
+            modal.confirm({
+              title: "知识库已有相同内容",
+              content: dup.message || `与已有条目《${dup.title || dup.item_id}》内容重复`,
+              okText: "查看该条目",
+              cancelText: "返回修改",
+              onOk: () => { setKModal(null); nav(`/knowledge?item=${dup.item_id}`); },
+            });
+          } else message.error(apiError(e));
+        }
       }}>
         <Form form={form} layout="vertical">
           <Form.Item name="title" label="标题" rules={[{ required: true }]}><Input /></Form.Item>

@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_operator
+from app.core.strings import escape_like
 from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.conversation import CannedResponse
@@ -33,8 +34,13 @@ async def list_canned(
 ):
     stmt = select(CannedResponse)
     if q:
-        like = f"%{q}%"
-        stmt = stmt.where(or_(CannedResponse.title.ilike(like), CannedResponse.content.ilike(like)))
+        like = f"%{escape_like(q)}%"
+        stmt = stmt.where(
+            or_(
+                CannedResponse.title.ilike(like, escape="\\"),
+                CannedResponse.content.ilike(like, escape="\\"),
+            )
+        )
     stmt = stmt.order_by(CannedResponse.sort_order, CannedResponse.created_at.desc())
     rows = (await db.execute(stmt)).scalars().all()
     return {"items": [_ser(c) for c in rows]}

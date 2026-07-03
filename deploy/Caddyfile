@@ -7,6 +7,10 @@
 
 # ── 对话端（公开）：widget.js / /chat / /api / WebSocket 都在 backend ──
 chat.example.com {
+    # 上传体积上限（对齐 nginx 示例的 client_max_body_size；应用层另有自己的限制）
+    request_body {
+        max_size 25MB
+    }
     reverse_proxy 127.0.0.1:8000
 }
 
@@ -16,6 +20,10 @@ admin.example.com {
     # @blocked not remote_ip 1.2.3.4 5.6.7.0/24
     # respond @blocked 403
 
+    # 知识库批量导入上传上限（略高于后端 20MB 限制，让后端能返回友好的 413 中文提示）
+    request_body {
+        max_size 25MB
+    }
     reverse_proxy 127.0.0.1:8090
 }
 
@@ -28,6 +36,9 @@ agent.example.com {
     # @blocked not remote_ip 1.2.3.4 5.6.7.0/24
     # respond @blocked 403
 
+    request_body {
+        max_size 25MB
+    }
     handle /api/* {
         reverse_proxy 127.0.0.1:8000
     }

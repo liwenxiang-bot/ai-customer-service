@@ -14,7 +14,9 @@ async def write_audit(
     target_type: str = "",
     target_id: str = "",
     detail: dict | None = None,
-    ip: str = "",
+    # None is accepted so callers can pass request.client.host verbatim (it is None
+    # for e.g. unix-socket connections); stored as "" — the column is non-nullable.
+    ip: str | None = None,
     note: str = "",
 ) -> None:
     db.add(
@@ -25,7 +27,7 @@ async def write_audit(
             target_type=target_type,
             target_id=target_id,
             detail=detail or {},
-            ip=ip,
+            ip=ip or "",
             note=note,
         )
     )

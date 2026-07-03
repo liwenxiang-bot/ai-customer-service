@@ -280,10 +280,12 @@ export function Dashboard() {
               <div style={{ fontSize: 12, color: token.colorTextSecondary, margin: "4px 0 8px" }}>Top 引用知识</div>
               <List
                 size="small"
+                className="acs-clickable-list"
                 dataSource={(analytics.knowledge.top_items || []).slice(0, 5)}
                 locale={{ emptyText: "暂无引用" }}
                 renderItem={(it: any) => (
-                  <List.Item>
+                  // 点击跳知识库并深链到该条目（?item=）；旧引用可能缺 item_id，退回默认列表
+                  <List.Item onClick={() => nav(it.item_id ? `/knowledge?item=${it.item_id}` : "/knowledge")}>
                     <List.Item.Meta
                       title={<span style={{ fontSize: 13 }}>{it.title}</span>}
                       description={<span style={{ fontSize: 12 }}>{it.hits} 次 · 均分 {it.avg_score}</span>}
