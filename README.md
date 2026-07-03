@@ -1,6 +1,6 @@
 # AI 客服系统（起步版）
 
-一套基于大语言模型的多渠道智能客服系统。单租户、可自托管、端到端跑通：可嵌入的 Web 对话窗口 + 企业微信渠道、Agent 核心（对话 / 上下文管理 / 工具调用 / 知识库 RAG）、运营管理后台、轻量转人工兜底，以及限流、成本熔断、可观测、异步任务等生产基本面。
+一套基于大语言模型的多渠道智能客服系统。单租户、可自托管、端到端跑通：可嵌入的 Web 对话窗口 + 企业微信渠道、Agent 核心（对话 / 上下文管理 / 工具调用 / 知识库 RAG）、运营管理后台、**移动优先的独立坐席工作台**、带认领闭环的转人工兜底，以及限流、成本熔断、可观测、异步任务等生产基本面。
 
 > 实现自《AI客服系统需求文档_起步版_v2.1》。数据模型保持「**租户就绪**」，未来可增量演进到多租户 SaaS。
 
@@ -16,8 +16,9 @@
 | **工具** | `search_knowledge`（RAG）、`escalate_to_human`（转人工）、`get_order`（业务工具示例）；可扩展 |
 | **知识库 RAG** | 分块（带重叠）→ 异步生成向量 → 全文索引；**混合检索（向量 + 关键词）+ RRF 融合 + 可选重排**；检索失败降级纯 LLM；**Embedding 迁移：全量重建 + 进度 + 降级** |
 | **LLM 抽象** | OpenAI 兼容统一接口，配置即可切换 OpenAI / DeepSeek / 通义 / GLM / 本地模型等 |
-| **运营后台** | 登录（JWT + RBAC）、概览 Dashboard、知识库 CRUD + 版本/回滚 + 批量导入 + 待审核、对话记录（工具调用/引用/trace）、AI 配置、渠道配置、转人工工单、账号权限 + 操作日志 |
-| **转人工兜底** | 建工单 + 企微/邮件通知 + 告知客户 + 后台跟进 |
+| **运营后台** | 登录（JWT + RBAC）、概览 Dashboard、知识库 CRUD + 版本/回滚 + 批量导入 + 待审核、对话记录（工具调用/引用/trace）、AI 配置、渠道配置、转人工工单（认领/退回）、账号权限 + 操作日志 |
+| **坐席工作台** | **独立站（`/agent`，移动优先，手机+电脑实时接待）**：收件箱（待认领/我的/全部）、**乐观锁抢单认领**、接管对话、实时回复、快捷回复、亮/暗主题、PWA；转人工通知深链直达会话；复用后台账号与 `/ws/admin` 总线 |
+| **转人工兜底** | 建工单 + 企微/邮件通知（深链坐席站）+ 告知客户 + **认领 → 接管 → 结束自动 resolve** 闭环 |
 | **生产基本面** | 限流、成本熔断、内容安全（可开关）、语义缓存（可开关）、结构化日志 + trace_id、Prometheus 指标、健康检查、异步任务队列（ARQ）、数据留存清理、可选 Langfuse |
 
 ---
@@ -31,14 +32,15 @@
  │ (Preact)  │            │        → AgentRunner（工具循环）         │
  ├──────────┤   Webhook   │   ┌────────┬────────┬────────┬───────┐  │
  │ 企业微信  │◀──────────▶│   ▼上下文  ▼ToolUse ▼RAG混合 ▼LLM抽象 │  │
- ├──────────┤            │            转人工(通知)                  │
- │ 飞书/钉钉 │(适配器扩展) │   管理后台 API（JWT + RBAC）             │
- └──────────┘            └───────┬──────────────┬──────────────────┘
-   React 后台 (Antd) ◀───────────┘              │
+ ├──────────┤            │        转人工(通知深链→坐席站)            │
+ │ 飞书/钉钉 │(适配器扩展) │   管理后台 API（JWT + RBAC）· /ws/admin   │
+ └──────────┘            └──┬──────────────┬──────────────┬────────┘
+   React 后台 (Antd) ◀───────┘              │              │
+   坐席工作台 (React SPA, /agent) ◀──────────┘（收件箱/认领/接管/回复）
    ARQ Worker ───▶ PostgreSQL(pgvector) · Redis · MinIO · (Langfuse)
 ```
 
-**技术栈**：Python 3.12 · FastAPI · PostgreSQL 16 + pgvector · Redis · ARQ · MinIO · React + TS + Ant Design · Preact（widget）· Alembic · JWT/bcrypt。
+**技术栈**：Python 3.12 · FastAPI · PostgreSQL 16 + pgvector · Redis · ARQ · MinIO · React + TS + Ant Design（admin）· React + TS（agent 坐席站）· Preact（widget）· Alembic · JWT/bcrypt。
 
 ---
 
@@ -66,11 +68,13 @@ make bootstrap
 make dev-backend   # API + WebSocket  → http://localhost:8000
 make dev-worker    # 异步任务 worker
 make dev-admin     # 运营后台          → http://localhost:5173
+make dev-agent     # 坐席工作台        → http://localhost:5176（可选）
 ```
 
 - 对话窗口（独立页）：<http://localhost:8000/chat>
 - API 文档（Swagger）：<http://localhost:8000/docs>
 - 运营后台：<http://localhost:5173>（默认账号见上）
+- 坐席工作台：<http://localhost:5176>（dev 独立起；生产由后端挂在 `/agent`。用同一套后台账号登录）
 - 指标：<http://localhost:8000/metrics> · 健康：<http://localhost:8000/health>
 
 ### 一键全栈（Docker）
@@ -92,6 +96,19 @@ make stack-up          # 构建并启动 backend + worker + admin + 依赖
 ```
 
 右下角即出现客服按钮。也可用独立页 `/chat` 或 `<iframe>` 接入。
+
+---
+
+## 🎧 坐席工作台（实时接待）
+
+面向客服坐席的**独立站**，与运营后台分离——运营后台是"坐在电脑前管数据"，坐席工作台是"手机/电脑上秒回客户"。用**同一套后台账号**登录，复用后台的 `/ws/admin` 实时总线。
+
+- **访问地址**：生产环境由后端静态挂载在 **`{APP_BASE_URL}/agent/`**（如 `https://chat.example.com/agent/`）；本地开发 `make dev-agent` 起在 `:5176`。
+- **接待闭环**：客户触发转人工 → 生成工单 → 通知（企微/邮件）带**深链直达**该会话 → 坐席在收件箱**认领**（乐观锁抢单，他人再点提示"已被 XX 认领"）→ **接管对话** → 实时回复 → **结束并完成**（自动 resolve 工单）。
+- **收件箱三视图**：待认领（未被认领的 escalated 会话）/ 我的（我认领或我接管的）/ 全部；未读角标 + 标题闪动。
+- 移动优先（手机单列、桌面双栏）、亮/暗主题、PWA 可"添加到主屏幕"。
+
+> 部署无需额外反代规则：坐席站是后端 `/agent` 下的静态资源，`/api/admin` 与 `/ws/admin` 也在后端——对话域名的反代把 `/`、`/api`、`/ws` 都转发到 backend 即自动可用（见 `deploy/nginx.conf` / `deploy/Caddyfile`）。若要放到独立域名，配 `AGENT_CONSOLE_URL`（通知深链会改用它）。
 
 ---
 
@@ -154,7 +171,8 @@ ai-customer-service/
 │   └── tests/
 ├── widget/                   # 可嵌入对话窗口（Preact）
 ├── admin/                    # 运营后台（React + TS + Antd）
-├── deploy/                   # postgres 初始化、nginx 示例
+├── agent/                    # 坐席工作台（React + TS，移动优先；后端挂 /agent）
+├── deploy/                   # postgres 初始化、nginx/Caddy 示例、发版脚本
 ├── docker-compose.yml        # 依赖 + 全栈（--profile app）
 └── Makefile
 ```
@@ -172,7 +190,7 @@ ai-customer-service/
 
 ## 🧭 演进到 SaaS（以后再做）
 
-数据模型已带 `tenant_id`（单一隐式租户），渠道/Provider/配置均按租户可扩展。未来增量加：租户解析 + PostgreSQL RLS、平台后台、计费订阅、完整坐席工作台、白标。详见需求文档第十九章。
+数据模型已带 `tenant_id`（单一隐式租户），渠道/Provider/配置均按租户可扩展。未来增量加：租户解析 + PostgreSQL RLS（已落地，默认关闭）、平台后台、计费订阅、白标。坐席工作台已作为独立站落地（见上）。详见需求文档第十九章。
 
 ---
 

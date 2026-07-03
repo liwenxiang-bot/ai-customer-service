@@ -10,6 +10,15 @@ RUN pnpm install --no-frozen-lockfile
 COPY widget/ ./
 RUN pnpm build
 
+# ---- Stage 1b: build the agent console SPA (坐席工作台) ----
+FROM node:20-alpine AS agent-build
+WORKDIR /agent
+RUN npm i -g pnpm@10
+COPY agent/package.json agent/pnpm-lock.yaml* ./
+RUN pnpm install --no-frozen-lockfile
+COPY agent/ ./
+RUN pnpm build
+
 # ---- Stage 2: python runtime (backend + worker share this image) ----
 FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
@@ -25,8 +34,10 @@ COPY backend/requirements.txt .
 RUN pip install -r requirements.txt
 
 COPY backend/ /app/
-# main.py serves the widget from /widget/dist (../../widget/dist relative to app/).
+# main.py serves the widget from /widget/dist and the agent console from /agent/dist
+# (../../widget/dist and ../../agent/dist relative to app/).
 COPY --from=widget-build /widget/dist /widget/dist
+COPY --from=agent-build /agent/dist /agent/dist
 
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
