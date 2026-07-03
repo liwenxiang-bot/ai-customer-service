@@ -103,12 +103,12 @@ make stack-up          # 构建并启动 backend + worker + admin + 依赖
 
 面向客服坐席的**独立站**，与运营后台分离——运营后台是"坐在电脑前管数据"，坐席工作台是"手机/电脑上秒回客户"。用**同一套后台账号**登录，复用后台的 `/ws/admin` 实时总线。
 
-- **访问地址**：生产环境由后端静态挂载在 **`{APP_BASE_URL}/agent/`**（如 `https://chat.example.com/agent/`）；本地开发 `make dev-agent` 起在 `:5176`。
+- **访问地址**：坐席站是后端挂在 `/agent` 下的独立 SPA。**生产推荐单独二级域名**（如 `https://agent.example.com`），和面向客户的 chat 域名分开；也可直接用 `{APP_BASE_URL}/agent/`。本地开发 `make dev-agent` 起在 `:5176`。
 - **接待闭环**：客户触发转人工 → 生成工单 → 通知（企微/邮件）带**深链直达**该会话 → 坐席在收件箱**认领**（乐观锁抢单，他人再点提示"已被 XX 认领"）→ **接管对话** → 实时回复 → **结束并完成**（自动 resolve 工单）。
 - **收件箱三视图**：待认领（未被认领的 escalated 会话）/ 我的（我认领或我接管的）/ 全部；未读角标 + 标题闪动。
 - 移动优先（手机单列、桌面双栏）、亮/暗主题、PWA 可"添加到主屏幕"。
 
-> 部署无需额外反代规则：坐席站是后端 `/agent` 下的静态资源，`/api/admin` 与 `/ws/admin` 也在后端——对话域名的反代把 `/`、`/api`、`/ws` 都转发到 backend 即自动可用（见 `deploy/nginx.conf` / `deploy/Caddyfile`）。若要放到独立域名，配 `AGENT_CONSOLE_URL`（通知深链会改用它）。
+> **部署**：`deploy/nginx.conf` / `deploy/Caddyfile` 已带 `agent.example.com` 子域名示例（子域名根重写到后端 `/agent`，`/api`、`/ws` 直连后端）。用独立子域名时记得 `.env` 设 `AGENT_CONSOLE_URL=https://agent.example.com`，通知深链才会指向它。若图省事，对话域名的反代已把 `/`、`/api`、`/ws` 转发到 backend，`chat 域名/agent/` 也能直接用。详见 [部署手册](deploy/DEPLOY.md)。
 
 ---
 

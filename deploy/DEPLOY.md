@@ -31,7 +31,8 @@ docker 全栈自托管。架构:终端用户 → Caddy/nginx(HTTPS/WSS)→ backe
    docker compose --profile app ps        # 各服务 healthy
    ```
    > 镜像构建时会自动打包 widget、admin **与坐席工作台(agent)**;坐席站作为静态资源被后端挂在
-   > `/agent`,无需单独容器或反代规则。迁移由 migrate 容器自动执行(含坐席归属列 `0012`)。
+   > `/agent`,不占单独容器(挂独立子域名时需一条反代规则,见第 5 步)。迁移由 migrate 容器自动执行
+   > (含坐席归属列 `0012`)。
 
 3. **反向代理 + HTTPS**:用 `deploy/Caddyfile`(改域名,admin 端口对齐 `ADMIN_PORT`,默认 8080)→
    `sudo systemctl reload caddy`。或用 `deploy/nginx.conf` + `certbot`(文件头部有命令)。
@@ -46,10 +47,23 @@ docker 全栈自托管。架构:终端用户 → Caddy/nginx(HTTPS/WSS)→ backe
 4. **后台初始化**:打开 admin 域名 → 用 `BOOTSTRAP_ADMIN_*` 登录 → 立刻改密 →「AI 配置」确认
    对话/Embedding 模型与 Key、把 `vector_min_sim` 设为 **0.5**、打开「上下文扩展」→「渠道配置」加 widget 域名白名单。
 
-5. **坐席工作台**:客服坐席访问 **`https://chat.example.com/agent/`**(= 对话域名下的 `/agent`),
-   用同一套后台账号登录即可接待。手机浏览器打开可「添加到主屏幕」当 App 用。反代无需额外配置——
-   `/agent` 静态资源、`/api/admin`、`/ws/admin` 都在 backend,对话域名的现有转发规则已覆盖
-   (务必确认 `/ws/` 的 WebSocket 升级头没丢,否则实时消息退化,见下方 ⚠️)。
+5. **坐席工作台**:坐席站是后端挂在 `/agent` 下的独立 SPA,坐席用同一套后台账号登录。三种接入,
+   **推荐独立子域名**:
+
+   | 方式 | 入口 | 反代 | 何时用 |
+   |------|------|------|--------|
+   | **独立子域名(推荐)** | `https://agent.example.com` | `deploy/` 示例里的 `agent.example.com` 块 + `certbot -d agent.example.com` | 生产首选:和客户域名分开、手机 PWA 干净、好加访问控制 |
+   | 对话域名子路径 | `https://chat.example.com/agent/` | 零改动(chat 域名已转发到 backend) | 想马上用、不介意挂在客户域名下 |
+   | 后台域名子路径 | `https://admin.example.com/agent/` | admin 块加一条 `location /agent { proxy_pass …:8000; }` | 想统一在 admin 域名 |
+
+   独立子域名做法:① DNS 加 `agent.example.com` A 记录 → 服务器 IP;② 用 `deploy/Caddyfile` /
+   `deploy/nginx.conf` 里的 `agent.example.com` 块(把子域名根重写到后端 `/agent`,`/api`、`/ws`
+   直连后端);③ `certbot --nginx -d agent.example.com`(Caddy 自动证书);④ **`.env` 设
+   `AGENT_CONSOLE_URL=https://agent.example.com` 后 `make release`**——否则转人工通知里的深链仍指向
+   `{APP_BASE_URL}/agent`。手机浏览器打开可「添加到主屏幕」当 App 用。
+
+   > ⚠️ 坐席站实时消息走 `/ws/admin`,子域名的 `/ws/` 块务必带 WebSocket 升级头(`proxy_http_version
+   > 1.1` + `Upgrade`/`Connection`),否则消息不实时、「正在输入」失效——同下方 ⚠️。
 
 ---
 
