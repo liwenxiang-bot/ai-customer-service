@@ -95,6 +95,8 @@ export const conversationApi = {
 // ---- Handoff ----
 export const handoffApi = {
   tickets: (params: any) => api.get("/handoff/tickets", { params }).then((r) => r.data),
+  claim: (id: string) => api.post(`/handoff/tickets/${id}/claim`).then((r) => r.data),
+  unclaim: (id: string) => api.post(`/handoff/tickets/${id}/unclaim`).then((r) => r.data),
   resolve: (id: string, note: string) => api.post(`/handoff/tickets/${id}/resolve`, { note }).then((r) => r.data),
   resend: (id: string) => api.post(`/handoff/tickets/${id}/resend`).then((r) => r.data),
   update: (id: string, body: any) => api.post(`/handoff/tickets/${id}/update`, body).then((r) => r.data),

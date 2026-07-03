@@ -29,6 +29,7 @@ configure_logging()
 log = get_logger("app")
 
 _WIDGET_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "widget", "dist")
+_AGENT_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "agent", "dist")
 
 
 @asynccontextmanager
@@ -115,6 +116,10 @@ async def metrics():
 # ---- Embeddable widget assets + standalone chat page ----
 if os.path.isdir(_WIDGET_DIST):
     app.mount("/embed", StaticFiles(directory=_WIDGET_DIST), name="embed")
+
+# ---- Agent console SPA（坐席站，hash 路由，深链 /agent/#/s/{id} 无需后端 fallback）----
+if os.path.isdir(_AGENT_DIST):
+    app.mount("/agent", StaticFiles(directory=_AGENT_DIST, html=True), name="agent")
 
 
 @app.get("/chat", response_class=HTMLResponse, tags=["chat"])

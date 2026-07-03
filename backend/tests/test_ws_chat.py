@@ -11,6 +11,11 @@ messages ascending with client_msg_id echoed on user messages. Connection deps
 (tenant/channel/rate limit) and the LLM turn are faked at the module boundary so no
 external service is needed; the history test uses the dev Postgres and skips when it's
 not running (or when RLS blocks the fixture).
+
+Transaction boundaries (also DB-backed, skip when Postgres is down): handle_turn commits
+the user message in its own first transaction, so an AI-half failure/cancel no longer
+loses it, and _persist_stopped_turn only re-writes the user message when the cancel beat
+that first commit (judged by client_msg_id, falling back to the session tail).
 """
 
 import asyncio
@@ -22,9 +27,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, WebSocketDisconnect
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 import app.api.chat.ws as ws_mod
 from app.agent.events import AgentEvent
+from app.channels.base import InboundMessage
 from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
 from app.models.enums import MessageRole, SessionStatus
@@ -284,6 +291,27 @@ def test_disallowed_origin_rejected_with_4403(monkeypatch):
     assert exc_info.value.code == 4403
 
 
+# ----------------------------------------------------- attachments sanitize (untrusted)
+def test_sanitize_attachments_rejects_malformed():
+    """客户端 attachments 不可信：非数组整体丢为 []，数组内非对象元素被剔除，
+    避免畸形数据落库后坐席端反复崩溃。合法的 dict 列表原样保留。"""
+    from app.api.chat.ws import _sanitize_attachments
+
+    # Non-array shapes → [].
+    assert _sanitize_attachments(None) == []
+    assert _sanitize_attachments("http://x/a.png") == []
+    assert _sanitize_attachments(42) == []
+    assert _sanitize_attachments({"url": "x"}) == []  # a bare object, not a list
+
+    # Array with non-object elements → those are dropped, objects kept.
+    good = {"url": "http://x/a.png", "name": "a.png"}
+    assert _sanitize_attachments([good, "junk", 1, None, {"url": "b"}]) == [good, {"url": "b"}]
+
+    # A clean list is unchanged.
+    assert _sanitize_attachments([good]) == [good]
+    assert _sanitize_attachments([]) == []
+
+
 # --------------------------------------------------------- client_msg_id bookkeeping
 def test_record_client_msg_id_dedupes_and_bounds():
     from app.services.conversation import _record_client_msg_id
@@ -306,6 +334,8 @@ async def _db_up() -> bool:
 
         from app.db.session import engine
 
+        # Drop pooled connections bound to a previous test's (closed) event loop.
+        await engine.dispose(close=False)
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
@@ -374,3 +404,190 @@ async def test_send_history_returns_latest_window_ascending():
             if obj:
                 await db.delete(obj)
             await db.commit()
+
+
+# ------------------------------------------- transaction boundaries (early user commit)
+async def _delete_session(sid: str) -> None:
+    from app.db.session import session_scope
+
+    async with session_scope() as db:
+        obj = await db.get(Session, uuid.UUID(sid))
+        if obj:
+            await db.delete(obj)
+        await db.commit()
+
+
+async def _transcript(sid: str) -> list[tuple[str, str]]:
+    from app.db.session import session_scope
+
+    async with session_scope() as db:
+        rows = (
+            await db.execute(
+                select(DBMessage)
+                .where(DBMessage.session_id == uuid.UUID(sid))
+                .order_by(DBMessage.seq.asc())
+            )
+        ).scalars().all()
+        return [(m.role, m.content) for m in rows]
+
+
+@pytest.mark.asyncio
+async def test_user_message_survives_ai_half_failure(monkeypatch):
+    """handle_turn 第一事务先提交用户消息（含 session 创建、seq、client_msg_id 记录）；
+    第二事务（AI 半段）开始前抛错并回滚时，用户消息不得随之丢失。"""
+    if not await _db_up():
+        pytest.skip("postgres not available")
+
+    import app.services.conversation as conv
+    from app.db.session import session_scope
+    from app.db.tenant_context import DEFAULT_TENANT_ID, set_current_tenant
+
+    set_current_tenant(DEFAULT_TENANT_ID)
+
+    # RLS 是 fail-closed 的：不能写 fixture 的环境直接跳过（与 history 测试一致）。
+    try:
+        async with session_scope() as db:
+            probe = Session(
+                channel_type="web", channel_key="default", end_user_id="txn-probe",
+                status=SessionStatus.ACTIVE, last_activity_at=datetime.now(UTC),
+            )
+            db.add(probe)
+            await db.flush()
+            await db.delete(probe)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"cannot write fixtures (RLS enforced?): {exc}")
+
+    class Boom(RuntimeError):
+        pass
+
+    async def exploding_check_input(ai_config, text):
+        # check_input 是第一事务 commit 之后 AI 半段的第一步——在这里抛错等价于
+        # “第二事务开始前断线/崩溃”。
+        raise Boom("ai half crashed")
+
+    monkeypatch.setattr(conv, "check_input", exploding_check_input)
+
+    inbound = InboundMessage(
+        channel_type="web", channel_key="default", end_user_id="txn-test",
+        text="事务边界测试消息",
+    )
+    with pytest.raises(Boom):
+        # 与 WS 路径一致：异常让 session_scope 回滚当前（第二）事务。
+        async with session_scope() as db:
+            async for _ in conv.handle_turn(db, inbound, "c-txn-1"):
+                pass
+
+    # handle_turn 在第一事务提交前把已解析的 session id 回写到 inbound 上。
+    sid = inbound.session_id
+    assert sid, "handle_turn 应回写已提交的 session id"
+    try:
+        async with session_scope() as db:
+            session = await db.get(Session, uuid.UUID(sid))
+            assert session is not None  # session 创建随第一事务提交
+            # 用户消息已落库；回滚的 AI 半段没有留下任何 assistant 行。
+            assert await _transcript(sid) == [(MessageRole.USER, "事务边界测试消息")]
+            # 幂等记录（client_msg_id → message id）也随第一事务提交。
+            pairs = (session.meta or {}).get("client_msg_ids", [])
+            assert any(p and p[0] == "c-txn-1" for p in pairs)
+    finally:
+        await _delete_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_persist_stopped_turn_does_not_rewrite_committed_user_message():
+    """用户消息已随 handle_turn 第一事务提交时，stop 补写只追加部分回答（按
+    client_msg_id 判断）；只有取消抢在第一事务提交之前才连用户消息一起补写。"""
+    if not await _db_up():
+        pytest.skip("postgres not available")
+
+    from app.db.session import session_scope
+    from app.db.tenant_context import DEFAULT_TENANT_ID, set_current_tenant
+
+    set_current_tenant(DEFAULT_TENANT_ID)
+    try:
+        # 造出“第一事务已提交、AI 半段被取消回滚”后的库内状态。
+        async with session_scope() as db:
+            session = Session(
+                channel_type="web", channel_key="default", end_user_id="stop-test",
+                status=SessionStatus.ACTIVE, last_activity_at=datetime.now(UTC),
+                message_count=1,
+            )
+            db.add(session)
+            await db.flush()
+            user_msg = DBMessage(tenant_id=session.tenant_id, session_id=session.id, seq=1,
+                                 role=MessageRole.USER, content="退货政策")
+            db.add(user_msg)
+            await db.flush()
+            session.meta = {"client_msg_ids": [["c-s1", str(user_msg.id)]]}
+            await db.commit()
+            sid = str(session.id)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"cannot seed fixture (RLS enforced?): {exc}")
+
+    def inbound(text: str) -> InboundMessage:
+        return InboundMessage(channel_type="web", channel_key="default",
+                              end_user_id="stop-test", text=text, session_id=sid)
+
+    try:
+        # client_msg_id 已入库 → 用户消息不重复写，只补部分回答。
+        rsid, msg_id = await ws_mod._persist_stopped_turn(inbound("退货政策"), "部分回答", "c-s1")
+        assert rsid == sid and msg_id is not None
+        assert await _transcript(sid) == [
+            (MessageRole.USER, "退货政策"),
+            (MessageRole.ASSISTANT, "部分回答"),
+        ]
+
+        # 取消抢在第一事务提交前（新 client_msg_id 未入库）→ 用户消息一并补写。
+        rsid2, _ = await ws_mod._persist_stopped_turn(inbound("发票怎么开"), "发票部分", "c-s2")
+        assert rsid2 == sid
+        assert await _transcript(sid) == [
+            (MessageRole.USER, "退货政策"),
+            (MessageRole.ASSISTANT, "部分回答"),
+            (MessageRole.USER, "发票怎么开"),
+            (MessageRole.ASSISTANT, "发票部分"),
+        ]
+    finally:
+        await _delete_session(sid)
+
+
+@pytest.mark.asyncio
+async def test_persist_stopped_turn_tail_check_without_client_msg_id():
+    """不带 client_msg_id 的旧客户端：以会话尾部（最新一行是同文本的用户消息）判断
+    第一事务是否已提交，同样不得重复写用户消息。"""
+    if not await _db_up():
+        pytest.skip("postgres not available")
+
+    from app.db.session import session_scope
+    from app.db.tenant_context import DEFAULT_TENANT_ID, set_current_tenant
+
+    set_current_tenant(DEFAULT_TENANT_ID)
+    try:
+        async with session_scope() as db:
+            session = Session(
+                channel_type="web", channel_key="default", end_user_id="stop-tail",
+                status=SessionStatus.ACTIVE, last_activity_at=datetime.now(UTC),
+                message_count=1,
+            )
+            db.add(session)
+            await db.flush()
+            db.add(DBMessage(tenant_id=session.tenant_id, session_id=session.id, seq=1,
+                             role=MessageRole.USER, content="人工客服"))
+            await db.commit()
+            sid = str(session.id)
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"cannot seed fixture (RLS enforced?): {exc}")
+
+    try:
+        rsid, _ = await ws_mod._persist_stopped_turn(
+            InboundMessage(channel_type="web", channel_key="default",
+                           end_user_id="stop-tail", text="人工客服", session_id=sid),
+            "好的，为你转接",
+            "",
+        )
+        assert rsid == sid
+        assert await _transcript(sid) == [
+            (MessageRole.USER, "人工客服"),
+            (MessageRole.ASSISTANT, "好的，为你转接"),
+        ]
+    finally:
+        await _delete_session(sid)

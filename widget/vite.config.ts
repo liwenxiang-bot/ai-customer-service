@@ -8,7 +8,7 @@ export default defineConfig({
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
-  // 体积优化：去掉产物里的 license 注释（依赖仅 preact/marked，均为 MIT）
+  // 体积优化：去掉产物里的 license 注释（依赖仅 preact，MIT）
   esbuild: { legalComments: "none" },
   build: {
     outDir: "dist",

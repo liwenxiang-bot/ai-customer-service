@@ -42,15 +42,35 @@ class DummyTool(Tool):
         return "ok"
 
 
+class _FakeResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar_one(self):
+        return self._value
+
+
 class FakeDB:
-    def __init__(self):
+    """Minimal AsyncSession stand-in.
+
+    next_seq (shared seq allocator) issues an atomic ``UPDATE ... RETURNING`` via
+    db.execute, so emulate it by bumping the session's counter in place and returning
+    the new value from scalar_one().
+    """
+
+    def __init__(self, session=None):
         self.added: list[object] = []
+        self.session = session
 
     def add(self, obj: object) -> None:
         self.added.append(obj)
 
     async def flush(self) -> None:
         return None
+
+    async def execute(self, _stmt):
+        self.session.message_count += 1
+        return _FakeResult(self.session.message_count)
 
 
 def _registry() -> ToolRegistry:
@@ -99,7 +119,8 @@ async def _noop_record_turn_cost(db, session, usage, cost) -> None:
 
 async def _run(runner: AgentRunner):
     events = []
-    async for ev in runner.run_turn(FakeDB(), _session(), "trace-image"):
+    session = _session()
+    async for ev in runner.run_turn(FakeDB(session), session, "trace-image"):
         events.append(ev)
     return events
 

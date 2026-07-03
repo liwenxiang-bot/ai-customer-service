@@ -22,6 +22,24 @@ from app.services.takeover import publish_admin_event
 log = get_logger("handoff")
 
 
+def agent_console_link(session_id) -> str:
+    """Deep link into the agent console for a session (契约 C: /agent/#/s/{session_id}).
+
+    Prefers the dedicated AGENT_CONSOLE_URL override; otherwise builds from the public
+    app_base_url, where the backend serves the console under /agent. HashRouter deep
+    link — no backend fallback route needed.
+    """
+    base = (settings.agent_console_url or "").rstrip("/")
+    if base:
+        return f"{base}/#/s/{session_id}"
+    return f"{settings.app_base_url.rstrip('/')}/agent/#/s/{session_id}"
+
+
+def _admin_console_link(session_id) -> str:
+    base = (settings.admin_base_url or settings.app_base_url).rstrip("/")
+    return f"{base}/conversations?session={session_id}"
+
+
 async def create_handoff(
     db: AsyncSession,
     session: Session,
@@ -48,14 +66,13 @@ async def create_handoff(
 
     # Notify the operator. Best-effort: failure is recorded, not fatal.
     title = "🔔 转人工提醒"
-    base = (settings.admin_base_url or settings.app_base_url).rstrip("/")
-    link = f"{base}/conversations?session={session.id}"
     body = (
         f"> 渠道：{session.channel_type}\n"
         f"> 用户：{session.end_user_display or session.end_user_id or '匿名'}\n"
         f"> 原因：{reason_detail or reason}\n\n"
         f"**对话摘要**：{summary[:500]}\n\n"
-        f"[点此在后台查看]({link})"
+        f"[点此接待（坐席站）]({agent_console_link(session.id)})"
+        f" ｜ [后台查看]({_admin_console_link(session.id)})"
     )
     delivered, err = await notify_operator(db, title, body)
     ticket.notified = delivered
@@ -87,15 +104,14 @@ async def resolve_handoff(
 
 async def resend_handoff_notify(db: AsyncSession, ticket: HandoffTicket) -> tuple[bool, str]:
     """Re-send the operator notification for an existing ticket (manual retry)."""
-    base = (settings.admin_base_url or settings.app_base_url).rstrip("/")
-    link = f"{base}/conversations?session={ticket.session_id}"
     title = "🔔 转人工提醒（重发）"
     body = (
         f"> 渠道：{ticket.channel_type}\n"
         f"> 用户：{ticket.end_user_id or '匿名'}\n"
         f"> 原因：{ticket.reason_detail or ticket.reason}\n\n"
         f"**对话摘要**：{ticket.conversation_summary[:500]}\n\n"
-        f"[点此在后台查看]({link})"
+        f"[点此接待（坐席站）]({agent_console_link(ticket.session_id)})"
+        f" ｜ [后台查看]({_admin_console_link(ticket.session_id)})"
     )
     delivered, err = await notify_operator(db, title, body)
     ticket.notified = delivered

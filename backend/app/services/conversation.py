@@ -3,6 +3,12 @@
 Given a normalized InboundMessage it: resolves config, enforces the cost circuit
 breaker, gets/creates the session, persists the user message, runs the AgentRunner,
 and yields AgentEvents. Channels render those events; they never touch the agent core.
+
+Transactions: one turn spans TWO transactions on the caller's db session. #1 commits
+the user message (with session creation, seq and client_msg_id bookkeeping) before the
+AI half starts; #2 covers everything the AI half writes (assistant message, usage,
+escalation, semantic cache). A disconnect / user stop that cancels the turn therefore
+only rolls back #2 — the customer's message is never lost with it.
 """
 
 from __future__ import annotations
@@ -11,7 +17,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.events import AgentEvent
@@ -84,6 +90,28 @@ def _record_client_msg_id(session: Session, client_msg_id: str, message_id: str)
     session.meta = {**(session.meta or {}), "client_msg_ids": pairs[-200:]}
 
 
+async def next_seq(db: AsyncSession, session: Session) -> int:
+    """Allocate the next per-session message seq atomically.
+
+    seq must be monotonic and unique within a session, but concurrent writers exist:
+    an operator reply can land while an AI turn (started before takeover) is still
+    streaming, and duplicate widget tabs share one session. A Python-level
+    `message_count += 1` flushes `SET message_count = <literal>`, so two writers both
+    read N and both write N+1 → duplicate seq, count under-counted. Push the increment
+    into a single atomic UPDATE ... RETURNING so Postgres serializes it; the ORM object
+    is synced to the returned value for callers that read session.message_count.
+    """
+    result = await db.execute(
+        update(Session)
+        .where(Session.id == session.id)
+        .values(message_count=Session.message_count + 1)
+        .returning(Session.message_count)
+    )
+    seq = result.scalar_one()
+    session.message_count = seq
+    return seq
+
+
 async def _persist_user_message(
     db: AsyncSession,
     session: Session,
@@ -91,7 +119,7 @@ async def _persist_user_message(
     attachments: list | None = None,
     client_msg_id: str = "",
 ) -> DBMessage:
-    session.message_count += 1
+    seq = await next_seq(db, session)
     session.last_activity_at = datetime.now(UTC)
     if not session.title:
         session.title = (text or "[附件]")[:80]
@@ -100,7 +128,7 @@ async def _persist_user_message(
     msg = DBMessage(
         tenant_id=session.tenant_id,
         session_id=session.id,
-        seq=session.message_count,
+        seq=seq,
         role=MessageRole.USER,
         content=text,
         attachments=attachments or [],
@@ -115,11 +143,11 @@ async def _persist_user_message(
 async def _persist_assistant_text(
     db: AsyncSession, session: Session, content: str, citations: list, cache_hit: bool = False
 ) -> DBMessage:
-    session.message_count += 1
+    seq = await next_seq(db, session)
     msg = DBMessage(
         tenant_id=session.tenant_id,
         session_id=session.id,
-        seq=session.message_count,
+        seq=seq,
         role=MessageRole.ASSISTANT,
         content=content,
         citations=citations or [],
@@ -140,13 +168,25 @@ async def handle_turn(
     session, _ = await get_or_create_session(db, inbound)
 
     await _persist_user_message(db, session, inbound.text, inbound.attachments, client_msg_id)
+    # ---- Transaction #1: make the user message durable BEFORE the AI half runs ----
+    # Everything above (session creation, seq, client_msg_id bookkeeping, usage "new
+    # conversation" tick) commits here so that a mid-turn cancel/disconnect only rolls
+    # back the AI transaction below — the customer's message survives (all channels:
+    # WS, REST and WeChat share this generator, so the behavior is identical).
+    # The resolved session id is written back onto `inbound` first: cancellation
+    # handlers (ws._persist_stopped_turn) must resume THIS session instead of creating
+    # a fresh one, and no event has been yielded yet at this point. The ORM objects
+    # stay usable after commit (expire_on_commit=False) and the tenant GUC is re-pinned
+    # on the next transaction's BEGIN (db.session._pin_tenant_on_begin).
+    inbound.session_id = str(session.id)
+    await db.commit()
 
     # ---- Input content safety (optional) ----
     safe, notice = await check_input(ai_config, inbound.text)
     if not safe:
         yield AgentEvent(kind="text", text=notice)
         yield AgentEvent(kind="done", text=notice, data={"message_id": None, "blocked": True})
-        await db.commit()
+        await db.commit()  # nothing written since #1; kept so future writes here commit
         return
 
     # ---- Cost circuit breaker ----
@@ -154,13 +194,15 @@ async def handle_turn(
         notice = "当前服务咨询量较大，智能客服暂时繁忙，请稍后再试，或回复「人工」由同事跟进。"
         yield AgentEvent(kind="text", text=notice)
         yield AgentEvent(kind="done", text=notice, data={"message_id": None, "capped": True})
-        await db.commit()
+        await db.commit()  # nothing written since #1; kept so future writes here commit
         log.warning("turn_rejected_cost_capped", session_id=str(session.id))
         return
 
     # ---- Semantic cache: short-circuit repeated FAQs (optional) ----
     # Attachment turns depend on uploaded content, so a text-only semantic-cache hit would
     # be stale or outright wrong for prompts like "这个是啥".
+    # Cache reads/writes belong to transaction #2: the hit_count bump and the cached
+    # assistant message roll back together if this half of the turn is cancelled.
     cached = None
     if inbound.text and not inbound.attachments:
         cached = await semantic_cache.lookup(db, ai_config, inbound.text)
@@ -174,7 +216,7 @@ async def handle_turn(
             data={"message_id": None, "session_id": str(session.id),
                   "citations": cached["citations"], "cache_hit": True},
         )
-        await db.commit()
+        await db.commit()  # transaction #2 (cache-hit turn: assistant message + hit_count)
         return
 
     provider = get_provider(to_llm_settings(ai_config))
@@ -198,11 +240,14 @@ async def handle_turn(
     if escalated:
         await mark_escalation(db, session)
 
-    # Cache successful, grounded, non-escalated answers for future hits.
+    # Cache successful, grounded, non-escalated answers for future hits. Deliberately
+    # still inside transaction #2: a cancelled turn must not cache an answer whose
+    # assistant message was rolled back. (The summarize task enqueued by the runner is
+    # queue-based and reads committed data in its own session — no tx coupling needed.)
     if not escalated and not degraded and final_citations and final_text:
         await semantic_cache.store(db, ai_config, inbound.text, final_text, final_citations)
 
-    await db.commit()
+    await db.commit()  # transaction #2: assistant message, usage/cost, escalation, cache
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:

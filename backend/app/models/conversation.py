@@ -57,6 +57,15 @@ class Session(Base, TimestampMixin, TenantMixin):
     satisfaction_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1–5
     satisfaction_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # Live-takeover attribution — promoted out of session.meta to dedicated columns so
+    # start_takeover no longer read-modify-writes the whole JSONB blob (which raced the
+    # client_msg_id bookkeeping and lost updates). Set when an operator takes over,
+    # cleared on release. takeover_by_id backs queue-counts "接待中（我的）" filtering.
+    takeover_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
+    takeover_by_name: Mapped[str | None] = mapped_column(String(120), nullable=True, default="")
+
     messages: Mapped[list[Message]] = relationship(
         back_populates="session", cascade="all, delete-orphan",
         order_by="Message.seq",

@@ -64,6 +64,8 @@ function Composer({ canned, sending, onSend, onTyping }: {
   );
 }
 
+const AGENT_NOTICE_KEY = "acs_agent_console_notice_closed"; // 顶部坐席站上线提示的关闭状态
+
 /** 坐席工作台 — a two-pane live console for handling conversations that need a human:
  *  left = auto-refreshing queue (待人工 / 接管中), right = chat + takeover controls. */
 export function Workbench() {
@@ -79,6 +81,7 @@ export function Workbench() {
   const narrow = screens.lg === false;
 
   const [filter, setFilter] = useState<string>("pending");
+  const [agentNoticeClosed, setAgentNoticeClosed] = useState(() => localStorage.getItem(AGENT_NOTICE_KEY) === "1");
   const [list, setList] = useState<any[]>([]);
   const [listError, setListError] = useState<string | null>(null); // 队列拉取失败提示（保留旧数据）
   const [counts, setCounts] = useState<any>({ waiting: 0, takeover: 0, all: 0 });
@@ -236,6 +239,15 @@ export function Workbench() {
     return <Tag color={m.color}>{m.label}</Tag>;
   };
 
+  // 认领徽标：待人工队列每项附 ticket（无工单或已解决则不显示；其他队列无此字段自然跳过）
+  const metaTagStyle = { fontSize: 10, lineHeight: "16px", padding: "0 5px", marginRight: 4 } as const;
+  const ticketBadge = (t: any) => {
+    if (!t || t.status === "resolved") return null;
+    if (!t.assignee_id) return <Tag bordered={false} color="gold" style={metaTagStyle}>待认领</Tag>;
+    if (t.assignee_id === user?.id) return <Tag bordered={false} color="green" style={metaTagStyle}>我认领的</Tag>;
+    return <Tag bordered={false} color="default" style={metaTagStyle}>已被 {t.assignee_name || "同事"} 认领</Tag>;
+  };
+
   return (
     // Fill the padded content area exactly (viewport − 64px header − 48px acs-content padding)
     // so the panels end on the 24px bottom gap like every other page, not at the edge.
@@ -245,6 +257,15 @@ export function Workbench() {
       <style>{`.acs-queue-item:focus-visible { outline: 2px solid ${token.colorPrimary}; outline-offset: -2px; }`}</style>
       <div className="acs-page-title">坐席工作台</div>
       <div className="acs-page-sub">实时接待需要人工处理的会话：接管后可直接与客户对话，AI 自动让位。</div>
+
+      {!agentNoticeClosed && (
+        <Alert
+          type="info" showIcon closable
+          style={{ marginBottom: 12, flexShrink: 0 }}
+          message={<>全新独立坐席工作台已上线（手机可用）：<a href="/agent/" target="_blank" rel="noreferrer">/agent/</a></>}
+          onClose={() => { localStorage.setItem(AGENT_NOTICE_KEY, "1"); setAgentNoticeClosed(true); }}
+        />
+      )}
 
       <div style={{ display: "flex", flexDirection: narrow ? "column" : "row", gap: 14, flex: 1, minHeight: 0 }}>
         {/* ---- queue ----（窄屏限高 240px 内部滚动，宽屏固定 300px 侧栏） */}
@@ -292,7 +313,8 @@ export function Workbench() {
                     {it.title || "（无内容）"}
                   </div>
                   <div style={{ color: token.colorTextTertiary, fontSize: 11, marginTop: 3 }}>
-                    <Tag bordered={false} style={{ fontSize: 10, lineHeight: "16px", padding: "0 5px", marginRight: 4 }}>{statusMeta(CHANNEL_TYPE, it.channel_type).label}</Tag>
+                    <Tag bordered={false} style={metaTagStyle}>{statusMeta(CHANNEL_TYPE, it.channel_type).label}</Tag>
+                    {ticketBadge(it.ticket)}
                     {fmtShort(it.last_activity_at)}
                   </div>
                 </div>
