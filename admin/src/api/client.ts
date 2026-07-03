@@ -88,6 +88,23 @@ api.interceptors.response.use(
 );
 
 export function apiError(e: unknown): string {
-  const err = e as AxiosError<{ detail?: string }>;
-  return err.response?.data?.detail || err.message || "请求失败";
+  const err = e as AxiosError<{ detail?: unknown }>;
+  const detail = err.response?.data?.detail;
+  // FastAPI 422 校验错误的 detail 是对象数组：直接塞给 message.error 会因
+  // 「Objects are not valid as a React child」静默不显示，这里拼成中文可读句
+  if (Array.isArray(detail)) {
+    const first: any = detail[0] ?? {};
+    const loc = Array.isArray(first.loc) ? first.loc.filter((p: any) => p !== "body").join(".") : "";
+    const msg = first.msg || "参数不合法";
+    return `参数校验失败${loc ? `（${loc}）` : ""}：${msg}，请修正后重试`;
+  }
+  if (typeof detail === "string" && detail) return detail;
+  // 结构化 detail（如查重 409 的 {message, item_id}）：通用调用方只展示 message
+  if (detail && typeof detail === "object" && typeof (detail as any).message === "string") {
+    return (detail as any).message;
+  }
+  if (detail != null) return JSON.stringify(detail);
+  if (err.code === "ECONNABORTED" || /timeout/i.test(err.message || "")) return "请求超时，请稍后重试";
+  if (err.message === "Network Error") return "网络异常，请检查网络连接后重试";
+  return err.message || "请求失败";
 }

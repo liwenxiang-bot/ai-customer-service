@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import {
   Button, Card, Form, Input, InputNumber, Switch, Space, Divider, Progress,
-  Alert, Row, Col, App as AntApp, Tag,
+  Alert, Row, Col, App as AntApp, Tag, Popconfirm, Typography,
 } from "antd";
-import { ThunderboltOutlined } from "@ant-design/icons";
-import { aiConfigApi } from "../api";
+import { SyncOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { aiConfigApi, knowledgeApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, isAdmin } from "../auth";
 import { usePolling } from "../hooks/usePolling";
@@ -12,7 +12,7 @@ import { usePolling } from "../hooks/usePolling";
 export function AIConfig() {
   const { user } = useAuth();
   const admin = isAdmin(user?.role);
-  const { message } = AntApp.useApp();
+  const { message, modal } = AntApp.useApp();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [rebuild, setRebuild] = useState<any>(null);
@@ -35,19 +35,40 @@ export function AIConfig() {
   // 仅在重建进行中时以 2s 轮询进度；页面隐藏自动暂停（usePolling 内置），空闲时不发请求。
   usePolling(fetchRebuild, 2000, { enabled: rebuilding });
 
-  const save = async () => {
-    const v = await form.validateFields();
+  const doSave = async (values: any) => {
     setLoading(true);
     try {
-      const res = await aiConfigApi.update(v);
-      if (res.rebuild) message.warning("Embedding 模型已变更，正在后台全量重建向量…");
-      else message.success("已保存");
+      const res = await aiConfigApi.update(values);
+      if (res.rebuild) {
+        message.warning("Embedding 模型已变更，正在后台全量重建向量…");
+        fetchRebuild();
+      } else {
+        message.success("已保存");
+      }
       load();
-    } catch (e) {
-      message.error(apiError(e));
+    } catch (e: any) {
+      // Embedding 模型/维度变更被后端 409 拦截：弹确认框展示预检数字，确认后带 confirm 重发。
+      const detail = e?.response?.status === 409 ? e?.response?.data?.detail : null;
+      if (detail?.code === "embedding_rebuild_confirm") {
+        modal.confirm({
+          title: "确认更换 Embedding 模型 / 维度？",
+          content: `将触发全量重建：清空并重算 ${detail.items} 个条目 / ${detail.chunks} 个分块的向量，期间向量检索降级为关键词检索。`,
+          okText: "确认重建",
+          okButtonProps: { danger: true },
+          cancelText: "取消",
+          onOk: () => doSave({ ...values, confirm_rebuild: true }),
+        });
+      } else {
+        message.error(apiError(e));
+      }
     } finally {
       setLoading(false);
     }
+  };
+
+  const save = async () => {
+    const v = await form.validateFields();
+    await doSave(v);
   };
 
   const testLLM = async () => {
@@ -61,8 +82,19 @@ export function AIConfig() {
 
   const doRebuild = async () => {
     try {
-      await aiConfigApi.rebuild();
+      await knowledgeApi.rebuildAll();
       message.info("已触发向量重建，进度见上方");
+      fetchRebuild();
+    } catch (e) {
+      message.error(apiError(e));
+    }
+  };
+
+  // 重建"完成但有缺口"时的定点补救：只重嵌缺向量的条目，不动已就绪的。
+  const reembedPending = async () => {
+    try {
+      const r = await knowledgeApi.reembedPending();
+      message.info(`已重新排队 ${r.queued} 个待补条目`);
       fetchRebuild();
     } catch (e) {
       message.error(apiError(e));
@@ -82,8 +114,25 @@ export function AIConfig() {
         />
       )}
       {rebuild?.status === "failed" && (
-        <Alert type="error" showIcon style={{ marginBottom: 16 }} message={`上次向量重建失败：${rebuild.error}`}
-          action={admin && <Button size="small" danger onClick={doRebuild}>重试重建</Button>} />
+        <Alert
+          type="error" showIcon style={{ marginBottom: 16 }}
+          message={`上次向量重建失败：${rebuild.error}`}
+          description={
+            <Progress
+              percent={Math.round((rebuild.progress || 0) * 100)} status="exception"
+              format={() => `${rebuild.processed ?? 0}/${rebuild.total ?? 0} 分块`}
+            />
+          }
+          action={admin && <Button size="small" danger onClick={doRebuild}>重试重建</Button>}
+        />
+      )}
+      {rebuild?.status === "completed" && rebuild.error && (
+        <Alert
+          type="warning" showIcon style={{ marginBottom: 16 }}
+          message="上次向量重建完成，但部分分块缺向量"
+          description={rebuild.error}
+          action={admin && <Button size="small" onClick={reembedPending}>补齐缺失向量</Button>}
+        />
       )}
 
       <Form form={form} layout="vertical" disabled={!admin}>
@@ -116,6 +165,24 @@ export function AIConfig() {
                 <Form.Item name="embedding_model" label="模型"><Input placeholder="text-embedding-3-small" /></Form.Item>
                 <Form.Item name="embedding_dim" label="维度"><InputNumber min={64} max={4096} /></Form.Item>
               </Space>
+              {admin && (
+                <div style={{ marginTop: 8 }}>
+                  <Popconfirm
+                    title="全量重建向量？"
+                    description="按当前分块参数与嵌入模型重切、重嵌全部条目，期间向量检索降级为关键词检索。"
+                    okText="开始重建"
+                    cancelText="取消"
+                    onConfirm={doRebuild}
+                  >
+                    <Button icon={<SyncOutlined />} disabled={rebuilding}>全量重建向量</Button>
+                  </Popconfirm>
+                  <div style={{ marginTop: 4 }}>
+                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                      修改分块大小 / 重叠或嵌入模型后，用于批量重算存量条目的向量。
+                    </Typography.Text>
+                  </div>
+                </div>
+              )}
             </Card>
 
             <Card title="Rerank（重排）" style={{ marginTop: 16 }}>

@@ -14,7 +14,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -90,10 +90,13 @@ async def run_rebuild(db: AsyncSession, job_id: str) -> None:
     try:
         if job.from_dim and job.to_dim and job.from_dim != job.to_dim:
             await _alter_vector_dim(db, job.to_dim)
-        else:
-            # Same dim, new model → just clear and rebuild content vectors.
-            await db.execute(update(KnowledgeChunk).values(status=ChunkStatus.STALE))
-            await db.commit()
+        # Either path invalidates every stored vector, so mark all chunks STALE. The
+        # dim-change branch must not skip this: _alter_vector_dim NULLs the vectors but
+        # used to leave status='ready' — if the rebuild was then interrupted (worker
+        # restart, arq timeout), those ready+NULL rows were invisible to the closing
+        # audit, reembed-pending and the straggler cron (fake-ready recall gap).
+        await db.execute(update(KnowledgeChunk).values(status=ChunkStatus.STALE))
+        await db.commit()
 
         item_ids = (
             await db.execute(
@@ -110,19 +113,25 @@ async def run_rebuild(db: AsyncSession, job_id: str) -> None:
         # embedding-API latency overlaps instead of summing. The job session stays owned by
         # this coroutine, which advances progress as workers finish.
         sem = asyncio.Semaphore(max(1, settings.embedding_rebuild_concurrency))
+        failed_items = 0
 
         async def _one(iid) -> int:
-            async with sem, session_scope() as s:
-                return await reembed_item(s, str(iid))  # commits its own session
+            # Failures are caught here (not at the as_completed loop) so the log line
+            # can carry the item_id — otherwise a failed item can only be found by a
+            # full re-run instead of a targeted per-item reembed.
+            nonlocal failed_items
+            try:
+                async with sem, session_scope() as s:
+                    return await reembed_item(s, str(iid))  # commits its own session
+            except Exception as exc:  # noqa: BLE001 — one item failing must not abort the rebuild
+                failed_items += 1
+                log.warning("rebuild_item_failed", item_id=str(iid), error=str(exc))
+                return 0
 
         processed = 0
         tasks = [asyncio.create_task(_one(i)) for i in item_ids]
         for fut in asyncio.as_completed(tasks):
-            try:
-                n = await fut
-            except Exception as exc:  # noqa: BLE001 — one item failing must not abort the rebuild
-                log.warning("rebuild_item_failed", error=str(exc))
-                n = 0
+            n = await fut
             processed += max(n, 1)
             job.processed_chunks = processed
             job.progress = min(processed / job.total_chunks, 0.99) if job.total_chunks else 1.0
@@ -133,10 +142,15 @@ async def run_rebuild(db: AsyncSession, job_id: str) -> None:
         # swallowed inside reembed_item, which stores unembedded PENDING chunks and
         # returns normally. Any chunk left not-ready is an invisible recall gap unless
         # we surface it here.
+        # `embedding IS NULL` widens the net beyond status: a rebuild interrupted between
+        # the vector-clearing DDL and the STALE flip can leave ready+NULL rows.
         not_ready = (
             await db.execute(
                 select(func.count(KnowledgeChunk.id)).where(
-                    KnowledgeChunk.status != ChunkStatus.READY
+                    or_(
+                        KnowledgeChunk.status != ChunkStatus.READY,
+                        KnowledgeChunk.embedding.is_(None),
+                    )
                 )
             )
         ).scalar_one()
@@ -151,8 +165,13 @@ async def run_rebuild(db: AsyncSession, job_id: str) -> None:
         job.finished_at = datetime.now(UTC)
         await db.commit()
         if not_ready:
-            log.warning("rebuild_completed_with_gaps", job_id=job_id, not_ready_chunks=not_ready)
-        log.info("rebuild_completed", job_id=job_id, items=len(item_ids))
+            log.warning(
+                "rebuild_completed_with_gaps",
+                job_id=job_id,
+                not_ready_chunks=not_ready,
+                failed_items=failed_items,
+            )
+        log.info("rebuild_completed", job_id=job_id, items=len(item_ids), failed_items=failed_items)
     except Exception as exc:  # noqa: BLE001
         log.error("rebuild_failed", job_id=job_id, error=str(exc))
         job.status = JobStatus.FAILED

@@ -26,6 +26,15 @@ from app.services.audit import write_audit
 log = get_logger("knowledge")
 
 
+# Cap the content copy stored in the audit detail: it is the last recoverable copy
+# after a delete (versions CASCADE away with the item), but one giant document must
+# not bloat the audit table.
+_AUDIT_CONTENT_MAX = 50_000
+
+# Fields update_item applies from `data`; also drives the changed_fields audit entry.
+_UPDATABLE_FIELDS = ("title", "content", "category", "tags", "status", "effective_from", "expires_at")
+
+
 async def _snapshot_version(db: AsyncSession, item: KnowledgeItem, actor, note: str) -> None:
     db.add(
         KnowledgeVersion(
@@ -36,6 +45,9 @@ async def _snapshot_version(db: AsyncSession, item: KnowledgeItem, actor, note: 
             content=item.content,
             category=item.category,
             tags=item.tags,
+            status=item.status,
+            effective_from=item.effective_from,
+            expires_at=item.expires_at,
             editor_id=getattr(actor, "id", None),
             editor_email=getattr(actor, "email", ""),
             change_note=note,
@@ -51,6 +63,10 @@ async def create_item(db: AsyncSession, data: dict, actor=None) -> KnowledgeItem
         tags=data.get("tags", []),
         status=data.get("status", KnowledgeStatus.PUBLISHED),
         source=data.get("source", "manual"),
+        # Validity window arrives on import rows; the admin API sets it on the flushed
+        # row instead, so absent keys simply stay None here.
+        effective_from=data.get("effective_from"),
+        expires_at=data.get("expires_at"),
         version=1,
     )
     db.add(item)
@@ -63,18 +79,24 @@ async def create_item(db: AsyncSession, data: dict, actor=None) -> KnowledgeItem
 
 
 async def update_item(db: AsyncSession, item: KnowledgeItem, data: dict, actor=None) -> KnowledgeItem:
-    content_changed = (
-        data.get("content", item.content) != item.content
-        or data.get("title", item.title) != item.title
-    )
+    changed_fields = [
+        f for f in _UPDATABLE_FIELDS if f in data and getattr(item, f) != data[f]
+    ]
+    if not changed_fields:
+        # No-op edit (e.g. bulk status-set hitting items already in that status):
+        # don't bump the version, flood the snapshot table, or re-embed.
+        return item
+    content_changed = "content" in changed_fields or "title" in changed_fields
     # Snapshot the pre-edit state, then bump version.
     await _snapshot_version(db, item, actor, data.get("change_note", "edited"))
     item.version += 1
-    for field in ("title", "content", "category", "tags", "status"):
-        if field in data:
-            setattr(item, field, data[field])
+    for field in changed_fields:
+        setattr(item, field, data[field])
     await db.flush()
-    await write_audit(db, actor, "knowledge.update", "knowledge_item", str(item.id), {"version": item.version})
+    await write_audit(
+        db, actor, "knowledge.update", "knowledge_item", str(item.id),
+        {"version": item.version, "changed_fields": changed_fields},
+    )
     await _purge_answer_cache(db)
     if content_changed:
         await _enqueue_embed(db, item.id)
@@ -82,7 +104,19 @@ async def update_item(db: AsyncSession, item: KnowledgeItem, data: dict, actor=N
 
 
 async def delete_item(db: AsyncSession, item: KnowledgeItem, actor=None) -> None:
-    await write_audit(db, actor, "knowledge.delete", "knowledge_item", str(item.id), {"title": item.title})
+    # Full snapshot into the audit detail — versions are CASCADE-deleted with the item,
+    # so this is the only copy left for manually recovering a bad delete.
+    await write_audit(
+        db, actor, "knowledge.delete", "knowledge_item", str(item.id),
+        {
+            "title": item.title,
+            "content": item.content[:_AUDIT_CONTENT_MAX],
+            "content_truncated": len(item.content) > _AUDIT_CONTENT_MAX,
+            "category": item.category,
+            "tags": item.tags,
+            "version": item.version,
+        },
+    )
     await db.delete(item)
     await db.flush()
     await _purge_answer_cache(db)
@@ -92,12 +126,13 @@ async def rollback_to_version(db: AsyncSession, item: KnowledgeItem, version_id:
     ver = await db.get(KnowledgeVersion, uuid.UUID(version_id))
     if not ver or ver.item_id != item.id:
         return None
-    await update_item(
-        db, item,
-        {"title": ver.title, "content": ver.content, "category": ver.category,
-         "tags": ver.tags, "change_note": f"rollback to v{ver.version}"},
-        actor,
-    )
+    data = {"title": ver.title, "content": ver.content, "category": ver.category,
+            "tags": ver.tags, "change_note": f"rollback to v{ver.version}"}
+    if ver.status is not None:
+        # Snapshots taken before migration 0016 never recorded status/window (status is
+        # NULL there); keep the item's current values for those instead of blanking.
+        data.update(status=ver.status, effective_from=ver.effective_from, expires_at=ver.expires_at)
+    await update_item(db, item, data, actor)
     return item
 
 
@@ -172,17 +207,24 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
     return len(pieces)
 
 
-async def test_retrieval(db: AsyncSession, query: str) -> list[dict]:
-    """Used by the editor's 'test retrieval' feature."""
+async def test_retrieval(db: AsyncSession, query: str) -> dict:
+    """Used by the editor's 'test retrieval' feature.
+
+    fusion (RRF, ≈0.01–0.05) and rerank (≈0–1) scores live on different scales; the
+    batch-wide score_kind lets the UI label which one it is showing. None ⇔ no results.
+    """
     from app.rag.retrieval import hybrid_search
 
     ai_config = await get_active_ai_config(db)
     results = await hybrid_search(db, ai_config, query)
-    return [
-        {"item_id": r.item_id, "chunk_id": r.chunk_id, "title": r.title,
-         "snippet": r.content[:300], "score": r.score}
-        for r in results
-    ]
+    return {
+        "score_kind": results[0].score_kind if results else None,
+        "results": [
+            {"item_id": r.item_id, "chunk_id": r.chunk_id, "title": r.title,
+             "snippet": r.content[:300], "score": r.score}
+            for r in results
+        ],
+    }
 
 
 async def count_chunks(db: AsyncSession) -> int:
@@ -198,7 +240,9 @@ async def chunk_coverage(db: AsyncSession, item_ids: list) -> dict[str, tuple[in
         await db.execute(
             text(
                 "SELECT item_id::text, count(*) AS total, "
-                "count(*) FILTER (WHERE status = 'ready') AS ready "
+                # embedding IS NOT NULL guards against status drift (a crashed job that
+                # marked ready before writing the vector) — ready must mean retrievable.
+                "count(*) FILTER (WHERE status = 'ready' AND embedding IS NOT NULL) AS ready "
                 "FROM knowledge_chunks WHERE item_id = ANY(:ids) GROUP BY item_id"
             ),
             {"ids": [str(i) for i in item_ids]},
@@ -245,7 +289,8 @@ async def items_needing_embedding(db: AsyncSession, min_age_minutes: int = 0) ->
                   AND i.updated_at < now() - make_interval(mins => :age)
                   AND (NOT EXISTS (SELECT 1 FROM knowledge_chunks c WHERE c.item_id = i.id)
                        OR EXISTS (SELECT 1 FROM knowledge_chunks c
-                                  WHERE c.item_id = i.id AND c.status <> 'ready'))
+                                  WHERE c.item_id = i.id
+                                    AND (c.status <> 'ready' OR c.embedding IS NULL)))
                 """
             ),
             {"age": min_age_minutes},

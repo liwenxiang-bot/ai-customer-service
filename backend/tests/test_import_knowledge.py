@@ -1,8 +1,11 @@
-"""Unit: batch import hygiene — encoding detection, HTML stripping, dedup, row isolation."""
+"""Unit: batch import hygiene — encoding detection, header aliases, HTML stripping,
+dedup, validity columns, dry-run, row isolation."""
+
+from datetime import UTC, datetime
 
 import pytest
 
-from app.models.knowledge import KnowledgeItem
+from app.models.knowledge import KnowledgeItem, KnowledgeVersion
 from app.services.import_knowledge import (
     _clean_content,
     _content_fingerprint,
@@ -119,10 +122,10 @@ def test_decode_lossy_fallback():
 
 
 def test_html_content_is_stripped():
-    row = parse_rows(
+    rows, _warnings = parse_rows(
         "title,content\nt,<p>七天内可退货</p><p>需保留&nbsp;原始包装</p>\n", "csv"
-    )[0]
-    assert row["content"] == "七天内可退货\n需保留 原始包装"
+    )
+    assert rows[0]["content"] == "七天内可退货\n需保留 原始包装"
 
 
 def test_html_script_and_attrs_dropped():
@@ -260,3 +263,157 @@ async def test_json_import_cleans_and_dedupes():
     assert result["skipped_duplicates"] == 1
     items = [o for o in db.added if isinstance(o, KnowledgeItem)]
     assert items[0].content == "正文&内容\n第二段"
+
+
+# ----------------------------------------------------------------- header aliases (K27)
+
+
+async def test_qa_headers_map_to_title_content():
+    csv_data = "question,answer\n如何退货,七天内可申请退货\n"
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 1
+    item = next(o for o in db.added if isinstance(o, KnowledgeItem))
+    assert item.title == "如何退货"
+    assert item.content == "七天内可申请退货"
+
+
+async def test_chinese_qa_headers_with_padding_and_case():
+    # Headers survive strip+lower normalisation; 问题/答案 map onto title/content.
+    csv_data = " 问题 , 答案 ,Category\n运费谁承担,质量问题商家承担运费,售后\n"
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 1
+    item = next(o for o in db.added if isinstance(o, KnowledgeItem))
+    assert item.title == "运费谁承担"
+    assert item.content == "质量问题商家承担运费"
+    assert item.category == "售后"
+
+
+async def test_unrecognized_headers_fail_with_single_error():
+    csv_data = "id,name\n1,甲\n2,乙\n3,丙\n"
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 0
+    assert result["total"] == 0
+    assert len(result["errors"]) == 1  # one targeted error, not one per row
+    assert "未识别的列名" in result["errors"][0]
+    assert "支持的表头" in result["errors"][0]
+    assert db.added == []
+
+
+async def test_unknown_extra_column_warns_but_imports():
+    csv_data = "title,content,priority\nA,内容A,high\n"
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 1
+    assert any("priority" in w for w in result["warnings"])
+
+
+# ----------------------------------------------------------------- validity columns (K29)
+
+
+async def test_validity_columns_imported_and_snapshotted():
+    csv_data = (
+        "title,content,effective_from,expires_at\n"
+        "618大促,活动期间全场9折,2026-06-01,2026-06-20T23:59:59+08:00\n"
+    )
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 1
+    item = next(o for o in db.added if isinstance(o, KnowledgeItem))
+    assert item.effective_from == datetime(2026, 6, 1, tzinfo=UTC)  # naive input → UTC
+    assert item.expires_at is not None and item.expires_at.tzinfo is not None
+    # The version snapshot records status + window (migration 0016).
+    ver = next(o for o in db.added if isinstance(o, KnowledgeVersion))
+    assert ver.status == "published"
+    assert ver.effective_from == item.effective_from
+    assert ver.expires_at == item.expires_at
+
+
+async def test_bad_validity_date_fails_that_row_only():
+    csv_data = (
+        "title,content,expires_at\n"
+        "好行,内容一,2026-12-31\n"
+        "坏行,内容二,2026/06/31\n"
+    )
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 1
+    assert result["failed"] == 1
+    assert "第2行" in result["errors"][0] and "无法解析" in result["errors"][0]
+    assert result["failed_rows"][0]["raw"]["expires_at"] == "2026/06/31"
+
+
+async def test_inverted_validity_window_fails_row():
+    csv_data = "title,content,effective_from,expires_at\nA,内容A,2026-06-20,2026-06-01\n"
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 0
+    assert "失效时间必须晚于生效时间" in result["errors"][0]
+
+
+# ----------------------------------------------------------------- dry run (K54)
+
+
+async def test_dry_run_previews_without_writing():
+    db = FakeSession(existing=[("退货政策", "旧版内容")])  # row 1 dupes the DB by title
+    result = await import_knowledge(db, CSV.encode("utf-8"), "csv", dry_run=True)
+    assert result["dry_run"] is True
+    assert result["would_create"] == 1
+    assert result["would_skip"] == 1
+    assert result["encoding"] == "utf-8-sig"
+    assert len(result["preview"]) == 2
+    assert result["preview"][0]["title"] == "退货政策"
+    assert db.added == []  # nothing persisted, nothing committed
+    assert db.commits == 0
+
+
+async def test_dry_run_reports_parse_failure():
+    db = FakeSession()
+    result = await import_knowledge(db, b"id,name\n1,x\n", "csv", dry_run=True)
+    assert result["dry_run"] is True
+    assert result["would_create"] == 0
+    assert "未识别的列名" in result["errors"][0]
+    assert result["preview"] == []
+    assert db.commits == 0
+
+
+# ----------------------------------------------------------------- failed rows (K28)
+
+
+async def test_status_column_round_trip():
+    # /knowledge/export emits a status column; re-importing it must respect draft,
+    # default blanks to published, and reject junk with a per-row error.
+    csv_data = (
+        "title,content,status\n"
+        "草稿条目,内容一,draft\n"
+        "坏状态,内容二,publish\n"
+        "默认条目,内容三,\n"
+    )
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 2
+    assert result["failed"] == 1
+    assert "状态「publish」无效" in result["errors"][0]
+    statuses = {o.title: o.status for o in db.added if isinstance(o, KnowledgeItem)}
+    assert statuses["草稿条目"] == "draft"
+    assert statuses["默认条目"] == "published"
+
+
+async def test_failed_rows_echo_raw_values_for_reimport():
+    csv_data = "title,content\n好行,内容一\n坏行,\n"
+    db = FakeSession()
+    result = await import_knowledge(db, csv_data.encode("utf-8"), "csv")
+    assert result["created"] == 1
+    assert result["failed"] == 1
+    assert result["failed_rows"] == [
+        {
+            "row_no": 2,
+            "raw": {
+                "title": "坏行", "content": "", "category": "", "tags": "",
+                "status": "", "effective_from": "", "expires_at": "",
+            },
+            "reason": "content 为空，已跳过",
+        }
+    ]

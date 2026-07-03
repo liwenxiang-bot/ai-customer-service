@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_admin
@@ -16,6 +17,8 @@ from app.db.session import get_db
 from app.llm.base import LLMSettings
 from app.llm.factory import get_provider
 from app.models.admin import AdminUser
+from app.models.enums import KnowledgeStatus
+from app.models.knowledge import KnowledgeChunk, KnowledgeItem
 from app.services.ai_config import get_active_ai_config, merged_retrieval
 from app.services.audit import write_audit
 from app.services.embedding_rebuild import latest_job, start_rebuild
@@ -77,6 +80,9 @@ class AIConfigUpdate(BaseModel):
     retrieval: dict | None = None
     content_safety_enabled: bool | None = None
     semantic_cache_enabled: bool | None = None
+    # Required acknowledgement when the embedding model/dim changes (triggers a full,
+    # disruptive vector rebuild) — without it the update is rejected with a 409 precheck.
+    confirm_rebuild: bool = False
 
 
 def _maybe_secret(current: str | None, incoming: str | None) -> str | None:
@@ -94,6 +100,35 @@ async def update_config(
     old_embed_model, old_embed_dim = cfg.embedding_model, cfg.embedding_dim
 
     data = body.model_dump(exclude_unset=True)
+    confirm_rebuild = data.pop("confirm_rebuild", False)
+
+    # Precheck before mutating anything: an embedding model/dim change clears every
+    # stored vector and triggers a full rebuild (vector search degrades meanwhile), so
+    # it must be an explicit two-step — 409 carries the blast radius for the UI to show.
+    new_embed_model = data.get("embedding_model", old_embed_model)
+    new_embed_dim = data.get("embedding_dim", old_embed_dim)
+    if (new_embed_model != old_embed_model or new_embed_dim != old_embed_dim) and not confirm_rebuild:
+        items = (
+            await db.execute(
+                select(func.count(KnowledgeItem.id)).where(
+                    KnowledgeItem.status != KnowledgeStatus.ARCHIVED
+                )
+            )
+        ).scalar_one()
+        chunks = (await db.execute(select(func.count(KnowledgeChunk.id)))).scalar_one()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "embedding_rebuild_confirm",
+                "items": items,
+                "chunks": chunks,
+                "message": (
+                    f"检测到 Embedding 模型/维度变更：将清空并重建 {items} 个条目 / "
+                    f"{chunks} 个分块的向量，期间向量检索降级为关键词检索。"
+                    "确认无误后请带 confirm_rebuild=true 重新提交。"
+                ),
+            },
+        )
 
     # Secrets handled specially.
     if "llm_api_key" in data:

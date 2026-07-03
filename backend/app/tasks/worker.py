@@ -63,12 +63,22 @@ async def cleanup_expired(ctx, _tenant: str | None = None) -> int:
     return total
 
 
+# Per-round requeue ceiling for the straggler cron: each requeue deletes and rebuilds the
+# item's chunks, so an unbounded round during a persistent embedding outage keeps churning
+# the whole broken set every 10 minutes (DB write amplification, burned API quota).
+# Leftovers are picked up by the next round once the earlier ones succeed.
+_STRAGGLER_REQUEUE_CAP = 50
+
+
 async def reembed_stragglers(ctx, _tenant: str | None = None) -> int:
     """Cron, cross-tenant: requeue items whose chunks are stuck pending/missing.
 
     Self-heals the ways an item silently drops out of vector retrieval: an embedding
     outage left pending chunks, the enqueue was lost to a Redis blip, or a worker died
-    mid-job. The age guard skips items whose embed job is likely still in flight."""
+    mid-job. The age guard skips items whose embed job is likely still in flight.
+    Skips tenants with no usable embedding credentials (requeueing would only churn
+    chunks without ever producing vectors) and caps each round's requeues."""
+    from app.services.ai_config import get_active_ai_config, to_embedding_settings
     from app.services.knowledge import items_needing_embedding
     from app.tasks.queue import enqueue
 
@@ -79,10 +89,29 @@ async def reembed_stragglers(ctx, _tenant: str | None = None) -> int:
     for tid in tids:
         with tenant_scope(tid):
             async with session_scope() as db:
+                cfg = await get_active_ai_config(db)
+                if not to_embedding_settings(cfg).api_key:
+                    log.warning(
+                        "reembed_stragglers_skipped",
+                        tenant=str(tid),
+                        reason="embedding_api_key_missing",
+                    )
+                    continue
                 ids = await items_needing_embedding(db, min_age_minutes=15)
+            budget = _STRAGGLER_REQUEUE_CAP - total
+            if len(ids) > budget:
+                log.warning(
+                    "reembed_stragglers_capped",
+                    tenant=str(tid),
+                    pending=len(ids),
+                    cap=_STRAGGLER_REQUEUE_CAP,
+                )
+                ids = ids[:budget]
             for iid in ids:
                 await enqueue("embed_item", iid, _tenant=str(tid))
             total += len(ids)
+            if total >= _STRAGGLER_REQUEUE_CAP:
+                break
     if total:
         log.info("reembed_stragglers_requeued", items=total)
     return total

@@ -5,16 +5,18 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select, union
+from sqlalchemy import func, or_, select, text, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_operator
+from app.core.strings import escape_like
 from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.conversation import HandoffTicket, Message, Session
@@ -55,13 +57,13 @@ def _filtered_sessions(
             Session.status.in_([SessionStatus.ESCALATED, SessionStatus.HUMAN_TAKEOVER])
         )
     if q:
-        like = f"%{q}%"
+        like = f"%{escape_like(q)}%"
         stmt = stmt.where(
             or_(
-                Session.title.ilike(like),
-                Session.end_user_display.ilike(like),
+                Session.title.ilike(like, escape="\\"),
+                Session.end_user_display.ilike(like, escape="\\"),
                 select(Message.id)
-                .where(Message.session_id == Session.id, Message.content.ilike(like))
+                .where(Message.session_id == Session.id, Message.content.ilike(like, escape="\\"))
                 .exists(),
             )
         )
@@ -323,15 +325,52 @@ class AddToKnowledgeIn(BaseModel):
     title: str
     content: str
     category: str = ""
+    message_id: str = ""
 
 
 @router.post("/{session_id}/to-knowledge")
 async def to_knowledge(
-    session_id: str, body: AddToKnowledgeIn, db: AsyncSession = Depends(get_db),
+    session_id: str, body: AddToKnowledgeIn, request: Request,
+    db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_operator),
 ):
+    session = await _get_session_or_404(db, session_id)
+    # 内容查重：同一条高频好答案常被不同管理员从不同会话各点一次「加入知识库」，
+    # 不拦会静默产生近重复条目挤占 top_k。规范化口径与 import_knowledge 的
+    # _content_fingerprint / review_approve 的查重 SQL 一致（去全部空白后比对）。
+    norm_content = re.sub(r"\s+", "", body.content)
+    dup = (
+        await db.execute(
+            text(
+                "SELECT id::text, title FROM knowledge_items "
+                "WHERE status <> 'archived' "
+                "  AND :norm <> '' AND regexp_replace(content, '\\s+', '', 'g') = :norm "
+                "LIMIT 1"
+            ),
+            {"norm": norm_content},
+        )
+    ).first()
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"知识库已有相同内容的条目：{dup[1] or dup[0]}，请直接编辑该条目，或修改内容后再添加",
+                "item_id": dup[0],
+                "title": dup[1],
+            },
+        )
     item = await ksvc.create_item(
         db, {"title": body.title, "content": body.content, "category": body.category}, user
+    )
+    # 来源回溯：记下会话/消息 id，事后能核实「这条答案当时的上下文」。
+    provenance = {"session_id": str(session.id)}
+    if body.message_id:
+        provenance["message_id"] = body.message_id
+    item.extra = provenance
+    await write_audit(
+        db, user, "conversation.to_knowledge", "knowledge_item", str(item.id),
+        {"title": item.title, **provenance},
+        ip=request.client.host if request.client else "",
     )
     await db.commit()
     return {"ok": True, "item_id": str(item.id)}
