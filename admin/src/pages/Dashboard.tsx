@@ -16,6 +16,7 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
 import { useNavigate } from "react-router-dom";
 import { dashboardApi, conversationApi } from "../api";
 import { apiError } from "../api/client";
+import { useAuth, agentConsoleUrl } from "../auth";
 import { fmtShort } from "../utils/time";
 import { CHANNEL_TYPE, SESSION_STATUS, statusMeta } from "../utils/status";
 
@@ -28,6 +29,8 @@ const DAY_OPTIONS = [
 
 export function Dashboard() {
   const nav = useNavigate();
+  const { user } = useAuth();
+  const openAgentConsole = () => window.open(agentConsoleUrl(user), "_blank", "noopener,noreferrer");
   const { token } = theme.useToken();
   const [days, setDays] = useState(14);
   const [data, setData] = useState<any>(null);
@@ -136,9 +139,9 @@ export function Dashboard() {
       </Row>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        {/* backlog → workbench */}
+        {/* backlog → 坐席工作台（独立站，新标签打开） */}
         <Col xs={24} lg={8}>
-          <Card size="small" title="待处理" extra={<Button type="link" size="small" onClick={() => nav("/workbench")}>去工作台 <RightOutlined /></Button>}>
+          <Card size="small" title="待处理" extra={<Button type="link" size="small" onClick={openAgentConsole}>去工作台 <RightOutlined /></Button>}>
             <Space size="large">
               <Statistic title="待人工" value={backlog.pending_human ?? 0} valueStyle={{ color: backlog.pending_human ? "#DC2626" : undefined, fontSize: 26 }} />
               <Statistic title="接管中" value={backlog.in_takeover ?? 0} valueStyle={{ color: backlog.in_takeover ? "#16A34A" : undefined, fontSize: 26 }} />
@@ -163,7 +166,7 @@ export function Dashboard() {
         <Col xs={24} lg={8}>
           <Card size="small" title="快捷入口">
             <Space wrap>
-              <Button icon={<CustomerServiceOutlined />} onClick={() => nav("/workbench")}>坐席工作台</Button>
+              <Button icon={<CustomerServiceOutlined />} onClick={openAgentConsole}>坐席工作台</Button>
               <Button icon={<BookOutlined />} onClick={() => nav("/knowledge")}>新增知识</Button>
               <Button icon={<ImportOutlined />} onClick={() => nav("/knowledge")}>批量导入</Button>
               <Button icon={<RobotOutlined />} onClick={() => nav("/ai-config")}>AI 配置</Button>

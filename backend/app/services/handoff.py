@@ -22,17 +22,21 @@ from app.services.takeover import publish_admin_event
 log = get_logger("handoff")
 
 
-def agent_console_link(session_id) -> str:
-    """Deep link into the agent console for a session (契约 C: /agent/#/s/{session_id}).
+def agent_console_base() -> str:
+    """Resolved base URL of the agent console (坐席工作台).
 
-    Prefers the dedicated AGENT_CONSOLE_URL override; otherwise builds from the public
-    app_base_url, where the backend serves the console under /agent. HashRouter deep
-    link — no backend fallback route needed.
+    Prefers the dedicated AGENT_CONSOLE_URL override (独立子域名部署); otherwise the
+    backend serves the console under {app_base_url}/agent. Shared by deep links and by
+    the admin /me response so the admin's console entry always points to the right place.
     """
     base = (settings.agent_console_url or "").rstrip("/")
-    if base:
-        return f"{base}/#/s/{session_id}"
-    return f"{settings.app_base_url.rstrip('/')}/agent/#/s/{session_id}"
+    return base or f"{settings.app_base_url.rstrip('/')}/agent"
+
+
+def agent_console_link(session_id) -> str:
+    """Deep link into the agent console for a session (契约 C: …/#/s/{session_id}).
+    HashRouter deep link — no backend fallback route needed."""
+    return f"{agent_console_base()}/#/s/{session_id}"
 
 
 def _admin_console_link(session_id) -> str:

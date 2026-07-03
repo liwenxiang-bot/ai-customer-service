@@ -8,6 +8,7 @@ interface User {
   name: string;
   role: "admin" | "operator" | "readonly";
   is_super_admin?: boolean;
+  agent_console_url?: string; // 独立坐席工作台地址（后端按 AGENT_CONSOLE_URL 解析）
 }
 
 interface AuthCtx {
@@ -75,4 +76,16 @@ export function isAdmin(role?: string) {
 }
 export function isSuperAdmin(user?: { is_super_admin?: boolean } | null) {
   return !!user?.is_super_admin;
+}
+
+// ---- 坐席工作台（独立站）入口 ----
+// 后端 /me 返回 agent_console_url（AGENT_CONSOLE_URL 或 {APP_BASE_URL}/agent）。admin 与
+// 坐席站可能不同域，必须用后端给的绝对地址；未取到时回退相对 /agent 兜底。
+type WithAgentUrl = { agent_console_url?: string } | null | undefined;
+export function agentConsoleUrl(user: WithAgentUrl): string {
+  return user?.agent_console_url || "/agent";
+}
+/** 坐席站会话深链（HashRouter /s/:id）：从工单/概览一键跳进某会话接管。 */
+export function agentSessionLink(user: WithAgentUrl, sessionId: string): string {
+  return `${agentConsoleUrl(user)}/#/s/${sessionId}`;
 }
