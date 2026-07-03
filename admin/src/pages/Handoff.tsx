@@ -40,6 +40,19 @@ export function Handoff() {
     catch (e) { message.error(apiError(e)); }
   };
 
+  // 认领冲突（409 = 已被他人认领）用 warning 提示，成功/失败都刷新拿最新受理人
+  const claim = async (id: string) => {
+    try { await handoffApi.claim(id); message.success("已认领"); }
+    catch (e: any) {
+      if (e?.response?.status === 409) message.warning(apiError(e));
+      else message.error(apiError(e));
+    }
+    load();
+  };
+  const isAssigned = (r: any) => !!(r.assignee_id || r.assignee_name || r.assignee_email);
+  const isMine = (r: any) =>
+    !!user && (r.assignee_id === user.id || (!r.assignee_id && !!r.assignee_email && r.assignee_email === user.email));
+
   const columns = [
     {
       title: "优先级", dataIndex: "priority", width: 96,
@@ -52,7 +65,7 @@ export function Handoff() {
     { title: "渠道", dataIndex: "channel_type", width: 100, render: (c: string) => { const m = statusMeta(CHANNEL_TYPE, c); return <Tag color={m.color}>{m.label}</Tag>; } },
     { title: "原因", dataIndex: "reason", width: 110, render: (r: string) => statusMeta(HANDOFF_REASON, r).label },
     { title: "摘要", dataIndex: "conversation_summary", ellipsis: true },
-    { title: "受理人", dataIndex: "assignee_email", width: 150, ellipsis: true, render: (e: string) => e || <Typography.Text type="secondary">未分配</Typography.Text> },
+    { title: "受理人", dataIndex: "assignee_name", width: 150, ellipsis: true, render: (n: string, r: any) => n || r.assignee_email || <Typography.Text type="secondary">未分配</Typography.Text> },
     { title: "通知", dataIndex: "notified", width: 80, render: (n: boolean, r: any) => n ? <Tag color="green">已通知</Tag> : <Tag color="default" title={r.notify_error}>未送达</Tag> },
     { title: "状态", dataIndex: "status", width: 84, render: (s: string) => { const m = statusMeta(HANDOFF_STATUS, s); return <Tag color={m.color}>{m.label}</Tag>; } },
     {
@@ -60,8 +73,11 @@ export function Handoff() {
         <Space size="small" wrap>
           <Button type="link" size="small" style={{ padding: 0 }} onClick={() => nav(`/workbench?session=${r.session_id}`)}>去接管</Button>
           <Button type="link" size="small" style={{ padding: 0 }} onClick={() => nav(`/conversations?session=${r.session_id}`)}>查看对话</Button>
-          {editable && r.assignee_email !== user?.email && (
-            <Button type="link" size="small" style={{ padding: 0 }} onClick={() => act(() => handoffApi.update(r.id, { assignee: "me" }), "已认领")}>认领</Button>
+          {editable && r.status === "open" && !isAssigned(r) && (
+            <Button type="link" size="small" style={{ padding: 0 }} onClick={() => claim(r.id)}>认领</Button>
+          )}
+          {editable && r.status !== "resolved" && isMine(r) && (
+            <Button type="link" size="small" style={{ padding: 0 }} onClick={() => act(() => handoffApi.unclaim(r.id), "已退回")}>退回</Button>
           )}
           {editable && !r.notified && (
             <Button type="link" size="small" style={{ padding: 0 }} onClick={async () => {

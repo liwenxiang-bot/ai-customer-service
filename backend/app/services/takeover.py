@@ -16,13 +16,14 @@ import json
 import uuid
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis
+from app.models.conversation import HandoffTicket, Session
 from app.models.conversation import Message as DBMessage
-from app.models.conversation import Session
-from app.models.enums import MessageRole, SessionStatus
+from app.models.enums import HandoffStatus, MessageRole, SessionStatus
 
 log = get_logger("takeover")
 
@@ -70,8 +71,14 @@ async def publish(session_id: str, payload: dict) -> None:
         log.warning("takeover_publish_failed", error=str(exc))
 
 
-async def start_takeover(db: AsyncSession, session: Session) -> None:
+async def start_takeover(db: AsyncSession, session: Session, operator=None) -> None:
     session.status = SessionStatus.HUMAN_TAKEOVER
+    if operator is not None:
+        # Attribute the takeover so queue-counts can answer "接待中（我的）". Written to
+        # dedicated columns (not session.meta) so this doesn't read-modify-write the whole
+        # JSONB blob and lose the concurrent client_msg_id bookkeeping.
+        session.takeover_by_id = operator.id
+        session.takeover_by_name = operator.name or operator.email
     await db.flush()
     await get_redis().set(_flag_key(str(session.id)), "1", ex=_TTL)
     await publish(str(session.id), {"type": "human_takeover", "message": "人工客服已接入，正在为你服务~"})
@@ -79,8 +86,38 @@ async def start_takeover(db: AsyncSession, session: Session) -> None:
     log.info("takeover_started", session_id=str(session.id))
 
 
-async def end_takeover(db: AsyncSession, session: Session, resume_ai: bool = True) -> None:
+async def end_takeover(
+    db: AsyncSession, session: Session, resume_ai: bool = True, operator=None
+) -> list[str]:
+    """End the takeover. When the operator closes the conversation for good
+    (resume_ai=False), auto-resolve the session's open/in_progress handoff tickets so
+    they don't linger in the queue. Returns the resolved ticket ids (for audit)."""
     session.status = SessionStatus.ACTIVE if resume_ai else SessionStatus.HUMAN_HANDLED
+    # Clear the takeover attribution so the session drops out of "接待中（我的）".
+    session.takeover_by_id = None
+    session.takeover_by_name = ""
+    resolved_ids: list[str] = []
+    if not resume_ai:
+        tickets = (
+            await db.execute(
+                select(HandoffTicket)
+                .where(
+                    HandoffTicket.session_id == session.id,
+                    HandoffTicket.status.in_(
+                        [HandoffStatus.OPEN, HandoffStatus.IN_PROGRESS]
+                    ),
+                )
+                .with_for_update()
+            )
+        ).scalars().all()
+        now = datetime.now(UTC)
+        for t in tickets:
+            t.status = HandoffStatus.RESOLVED
+            t.resolution_note = "坐席结束会话"
+            t.resolved_at = now
+            if operator is not None and t.assignee_id is None:
+                t.assignee_id = operator.id
+            resolved_ids.append(str(t.id))
     await db.flush()
     await get_redis().delete(_flag_key(str(session.id)))
     await publish(
@@ -91,17 +128,29 @@ async def end_takeover(db: AsyncSession, session: Session, resume_ai: bool = Tru
         },
     )
     await publish_admin_event({"type": "queue", "event": "released", "session_id": str(session.id)})
-    log.info("takeover_ended", session_id=str(session.id), resume_ai=resume_ai)
+    log.info(
+        "takeover_ended",
+        session_id=str(session.id),
+        resume_ai=resume_ai,
+        resolved_tickets=len(resolved_ids),
+    )
+    return resolved_ids
 
 
 async def operator_reply(db: AsyncSession, session: Session, content: str) -> DBMessage:
     """Persist an operator message and push it live to the customer."""
-    session.message_count += 1
+    # Atomic per-session seq: an operator reply can race an AI turn that started before
+    # takeover but is still streaming, so a Python-level `message_count += 1` would
+    # collide (duplicate seq / undercount). next_seq pushes the increment into Postgres.
+    # Imported lazily to avoid a circular import (conversation → agent → handoff → takeover).
+    from app.services.conversation import next_seq
+
+    seq = await next_seq(db, session)
     session.last_activity_at = datetime.now(UTC)
     msg = DBMessage(
         tenant_id=session.tenant_id,
         session_id=session.id,
-        seq=session.message_count,
+        seq=seq,
         role=MessageRole.ASSISTANT,
         content=content,
         model="human",  # marks this bubble as a human agent (not the AI)
@@ -133,12 +182,14 @@ async def persist_customer_message(
     session = await db.get(Session, sid)
     if not session:
         return None
-    session.message_count += 1
+    from app.services.conversation import next_seq  # lazy: avoid circular import
+
+    seq = await next_seq(db, session)
     session.last_activity_at = datetime.now(UTC)
     msg = DBMessage(
         tenant_id=session.tenant_id,
         session_id=session.id,
-        seq=session.message_count,
+        seq=seq,
         role=MessageRole.USER,
         content=text,
         attachments=attachments or [],

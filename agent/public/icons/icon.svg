@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 坐席工作台图标：耳机 + 对话气泡，满铺品牌色底，内容收在中心安全区（maskable） -->
+  <rect width="512" height="512" fill="#0f766e"/>
+  <!-- 对话气泡衬底 -->
+  <path d="M256 128c-77 0-140 54-140 121 0 38 20 72 52 94v49c0 8 9 13 16 8l52-33c7 2 13 2 20 2 77 0 140-54 140-120s-63-121-140-121z"
+        fill="#ffffff" opacity="0.14"/>
+  <!-- 头梁 -->
+  <path d="M158 300v-32c0-54 44-98 98-98s98 44 98 98v32"
+        fill="none" stroke="#ffffff" stroke-width="32" stroke-linecap="round"/>
+  <!-- 左右耳罩 -->
+  <rect x="130" y="288" width="54" height="86" rx="25" fill="#ffffff"/>
+  <rect x="328" y="288" width="54" height="86" rx="25" fill="#ffffff"/>
+  <!-- 麦克风臂 + 话筒 -->
+  <path d="M355 374c-4 26-31 42-64 42h-19" fill="none" stroke="#ffffff" stroke-width="20" stroke-linecap="round"/>
+  <circle cx="262" cy="416" r="16" fill="#ffffff"/>
+</svg>

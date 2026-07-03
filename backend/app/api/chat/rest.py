@@ -25,6 +25,7 @@ from app.core import storage
 from app.core.ratelimit import check_chat_limits
 from app.db.session import get_db
 from app.models.conversation import Message as DBMessage
+from app.models.conversation import Session
 from app.models.enums import ChannelType, MessageRole
 from app.services.channel import (
     is_origin_allowed,
@@ -143,6 +144,59 @@ class MessageIn(BaseModel):
         return self
 
 
+async def _duplicate_turn_reply(
+    db: AsyncSession, session_id: str | None, client_msg_id: str
+) -> dict | None:
+    """Idempotency for the HTTP fallback — WS parity with ws._client_msg_seen.
+
+    When this session already persisted a user message under this client_msg_id (client
+    retry after a lost response; handle_turn commits that bookkeeping in its first
+    transaction), the turn must NOT run again. Replay the answer the first run produced —
+    but only the answer that belongs to THIS turn: a turn is exactly `user(seq N) +
+    assistant(seq N+1)`, so we accept the assistant message at seq == user_msg.seq + 1
+    only (tool calls are inlined on that assistant row's tool_calls, not separate seqs).
+    If no such row exists (the first run was stopped without output / died mid-answer),
+    this turn simply has no answer — return an empty reply, still without rerunning.
+    Anchoring to seq+1 avoids replaying a *different* later turn's assistant answer as if
+    it were the reply to this one.
+    """
+    if not client_msg_id or not session_id:
+        return None
+    try:
+        sid = uuid.UUID(session_id)
+    except (ValueError, TypeError):
+        return None
+    session = await db.get(Session, sid)
+    pairs = (session.meta or {}).get("client_msg_ids", []) if session else []
+    msg_id = next((p[1] for p in pairs if p and p[0] == client_msg_id), None)
+    if msg_id is None:
+        return None
+    try:
+        user_msg = await db.get(DBMessage, uuid.UUID(msg_id))
+    except (ValueError, TypeError):
+        user_msg = None
+    reply = None
+    if user_msg is not None:
+        reply = (
+            await db.execute(
+                select(DBMessage)
+                .where(
+                    DBMessage.session_id == sid,
+                    DBMessage.role == MessageRole.ASSISTANT,
+                    DBMessage.seq == user_msg.seq + 1,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    return {
+        "reply": reply.content if reply else "",
+        "message_id": str(reply.id) if reply else None,
+        "session_id": str(sid),
+        "citations": (reply.citations if reply else None) or [],
+        "escalation": None,
+    }
+
+
 @router.post("/message")
 async def chat_message(
     body: MessageIn,
@@ -154,6 +208,13 @@ async def chat_message(
     channel = await resolve_active_web_channel(db, body.channel_key)
     if channel is None or not is_origin_allowed(channel, origin or ""):
         raise HTTPException(status_code=403, detail="origin not allowed")
+
+    # ---- Idempotency: a resend of an already-persisted client_msg_id never reruns ----
+    # (checked before the rate limiter, mirroring the WS path, so a legitimate retry
+    # can't be refused for the turn it already paid for).
+    duplicate = await _duplicate_turn_reply(db, body.session_id, body.client_msg_id)
+    if duplicate is not None:
+        return duplicate
 
     end_user_id = body.uid or f"anon-{uuid.uuid4().hex[:12]}"
     decision = await check_chat_limits(

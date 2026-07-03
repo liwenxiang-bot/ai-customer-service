@@ -255,11 +255,15 @@ class AgentRunner:
         self, db, session, content, tool_trace, citations, trace_id, usage, cost,
         latency_ms, degraded,
     ) -> DBMessage:
-        session.message_count += 1
+        # Imported lazily: app.services.conversation imports this module, so a top-level
+        # import would be circular.
+        from app.services.conversation import next_seq
+
+        seq = await next_seq(db, session)
         msg = DBMessage(
             tenant_id=session.tenant_id,
             session_id=session.id,
-            seq=session.message_count,
+            seq=seq,
             role=MessageRole.ASSISTANT,
             content=content,
             tool_calls=tool_trace,

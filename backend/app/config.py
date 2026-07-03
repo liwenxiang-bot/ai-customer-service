@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     # Admin frontend base URL — used in handoff notification deep-links.
     # If empty, falls back to app_base_url.
     admin_base_url: str = ""
+    # Agent console (坐席站) public base URL override — handoff notification deep-links
+    # point to {base}/#/s/{session_id}. When empty the link is built from app_base_url
+    # (the backend serves the console at /agent when agent/dist is deployed).
+    agent_console_url: str = ""
 
     # ---- Postgres ----
     postgres_user: str = "acs"

@@ -11,16 +11,17 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_operator
 from app.db.session import get_db
 from app.models.admin import AdminUser
-from app.models.conversation import Message, Session
-from app.models.enums import SessionStatus
+from app.models.conversation import HandoffTicket, Message, Session
+from app.models.enums import HandoffStatus, SessionStatus
 from app.services import knowledge as ksvc
 from app.services import takeover as tk
+from app.services.audit import write_audit
 
 router = APIRouter(prefix="/conversations", tags=["admin-conversations"])
 
@@ -113,34 +114,74 @@ async def list_conversations(
             .limit(page_size)
         )
     ).scalars().all()
-    return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "items": [
-            {
-                "id": str(s.id),
-                "channel_type": s.channel_type,
-                "end_user_id": s.end_user_id,
-                "end_user_display": s.end_user_display,
-                "title": s.title,
-                "status": s.status,
-                "escalated": s.escalated,
-                "message_count": s.message_count,
-                "last_activity_at": s.last_activity_at.isoformat() if s.last_activity_at else None,
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-            }
-            for s in rows
-        ],
-    }
+
+    # Queue views (转人工待接待/需要人工) also need the ticket + claimer, so agents can
+    # see who grabbed what: latest non-resolved ticket per session, or null.
+    tickets_by_session: dict = {}
+    if (pending_human or attention) and rows:
+        trows = (
+            await db.execute(
+                select(HandoffTicket, AdminUser.name, AdminUser.email)
+                .outerjoin(AdminUser, AdminUser.id == HandoffTicket.assignee_id)
+                .where(
+                    HandoffTicket.session_id.in_([s.id for s in rows]),
+                    HandoffTicket.status != HandoffStatus.RESOLVED,
+                )
+                .order_by(HandoffTicket.session_id, HandoffTicket.created_at.desc())
+            )
+        ).all()
+        for t, name, email in trows:
+            if t.session_id not in tickets_by_session:  # first = newest per session
+                tickets_by_session[t.session_id] = {
+                    "id": str(t.id),
+                    "status": t.status,
+                    "assignee_id": str(t.assignee_id) if t.assignee_id else None,
+                    "assignee_name": (name or email) if t.assignee_id and email else None,
+                }
+
+    items = []
+    for s in rows:
+        item = {
+            "id": str(s.id),
+            "channel_type": s.channel_type,
+            "end_user_id": s.end_user_id,
+            "end_user_display": s.end_user_display,
+            "title": s.title,
+            "status": s.status,
+            "escalated": s.escalated,
+            "message_count": s.message_count,
+            "last_activity_at": s.last_activity_at.isoformat() if s.last_activity_at else None,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        }
+        if pending_human or attention:
+            item["ticket"] = tickets_by_session.get(s.id)
+            # 坐席站「我的」tab 用它把"未认领即接管"的会话纳入列表，与角标计数口径一致。
+            item["takeover_by_id"] = str(s.takeover_by_id) if s.takeover_by_id else None
+        items.append(item)
+    return {"total": total, "page": page, "page_size": page_size, "items": items}
 
 
 @router.get("/queue-counts")
 async def queue_counts(
     db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)
 ):
-    """Counts for the workbench tabs: waiting (escalated) and in-takeover."""
+    """Counts for the workbench tabs: waiting (escalated), in-takeover, and mine
+    (工单认领给我的 + 我接管中的会话，按会话去重)."""
+    # 已被认领（in_progress 工单）的会话不再算「待认领」——它已归属某个坐席，
+    # 应只出现在其「我的」里。否则坐席认领后该会话仍留在待认领队列、计数不变，令人困惑。
+    claimed_sessions = select(HandoffTicket.session_id).where(
+        HandoffTicket.status == HandoffStatus.IN_PROGRESS
+    )
+    escalated_count = func.count(Session.id)
     waiting = (
+        await db.execute(
+            select(escalated_count).where(
+                Session.status == SessionStatus.ESCALATED,
+                Session.id.notin_(claimed_sessions),
+            )
+        )
+    ).scalar_one()
+    escalated_total = (
         await db.execute(
             select(func.count(Session.id)).where(Session.status == SessionStatus.ESCALATED)
         )
@@ -150,7 +191,23 @@ async def queue_counts(
             select(func.count(Session.id)).where(Session.status == SessionStatus.HUMAN_TAKEOVER)
         )
     ).scalar_one()
-    return {"waiting": waiting, "takeover": takeover, "all": waiting + takeover}
+    my_ticket_sessions = select(HandoffTicket.session_id.label("sid")).where(
+        HandoffTicket.assignee_id == user.id,
+        HandoffTicket.status == HandoffStatus.IN_PROGRESS,
+    )
+    my_takeover_sessions = select(Session.id.label("sid")).where(
+        Session.status == SessionStatus.HUMAN_TAKEOVER,
+        Session.takeover_by_id == user.id,
+    )
+    mine = (
+        await db.execute(
+            select(func.count()).select_from(
+                union(my_ticket_sessions, my_takeover_sessions).subquery()
+            )
+        )
+    ).scalar_one()
+    # 「全部」= 需要人工的完整队列（所有 escalated + 所有 takeover），是待认领的超集。
+    return {"waiting": waiting, "mine": mine, "takeover": takeover, "all": escalated_total + takeover}
 
 
 @router.get("/export")
@@ -298,7 +355,7 @@ async def takeover(
 ):
     """Operator takes over: AI pauses, operator chats live with the customer."""
     session = await _get_session_or_404(db, session_id)
-    await tk.start_takeover(db, session)
+    await tk.start_takeover(db, session, operator=user)
     await db.commit()
     return {"ok": True, "status": session.status}
 
@@ -331,8 +388,14 @@ async def release(
     session_id: str, body: ReleaseIn, db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_operator),
 ):
-    """End takeover. resume_ai=True → AI resumes; False → mark session human-handled."""
+    """End takeover. resume_ai=True → AI resumes; False → mark session human-handled
+    and auto-resolve the session's open/in_progress handoff tickets."""
     session = await _get_session_or_404(db, session_id)
-    await tk.end_takeover(db, session, resume_ai=body.resume_ai)
+    resolved = await tk.end_takeover(db, session, resume_ai=body.resume_ai, operator=user)
+    if resolved:
+        await write_audit(
+            db, user, "handoff.auto_resolve", "session", session_id,
+            {"tickets": resolved, "note": "坐席结束会话"},
+        )
     await db.commit()
-    return {"ok": True, "status": session.status}
+    return {"ok": True, "status": session.status, "resolved_tickets": resolved}

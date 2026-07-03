@@ -81,6 +81,19 @@ def _client_msg_id(payload: dict) -> str:
     return str(payload.get("client_msg_id") or "")[:64]
 
 
+def _sanitize_attachments(raw) -> list[dict]:
+    """Coerce client-supplied attachments to list[dict], dropping anything malformed.
+
+    The payload is untrusted: a non-array (string/number/object) or elements that aren't
+    JSON objects would otherwise land in the DB verbatim and then crash the operator
+    workbench that reads them back (it expects {url, name, ...} per attachment). Reject the
+    whole field to [] when it isn't an array, and filter out non-object elements otherwise.
+    """
+    if not isinstance(raw, list):
+        return []
+    return [a for a in raw if isinstance(a, dict)]
+
+
 async def _client_msg_seen(session_id: str, client_msg_id: str) -> bool:
     """True when this session already persisted a user message with this client_msg_id
     (client retry after a lost ACK) — the turn must not run again."""
@@ -185,7 +198,9 @@ async def chat_ws(
     async def process_turn(payload: dict) -> None:
         nonlocal session_id, gen_task, gen_state
         text = (payload.get("text") or "").strip()
-        attachments = payload.get("attachments") or []
+        # Untrusted: reject malformed attachments (non-array / non-object items) so they
+        # can't reach the DB and later crash the operator workbench that reads them back.
+        attachments = _sanitize_attachments(payload.get("attachments"))
         client_msg_id = _client_msg_id(payload)
 
         # ---- Idempotency: a resend of an already-persisted message must not rerun ----
@@ -247,9 +262,11 @@ async def chat_ws(
                 # emit a second (stopped) message_end.
                 session_id = state.get("session_id") or session_id
             else:
-                # User-initiated stop: the cancel rolled back the turn's transaction, so
-                # re-persist the user message + whatever already streamed, then close the
-                # turn on the wire like a normal end (plus stopped=true).
+                # User-initiated stop: the cancel only rolled back the turn's AI
+                # transaction (handle_turn commits the user message first, in its own
+                # transaction), so persist whatever already streamed — the user message
+                # is re-written only if the cancel beat that first commit — then close
+                # the turn on the wire like a normal end (plus stopped=true).
                 sid, msg_id = await _persist_stopped_turn(inbound, state["partial"], client_msg_id)
                 session_id = sid or session_id
                 await send(
@@ -267,6 +284,10 @@ async def chat_ws(
                 )
         elif task.exception() is not None:
             log.warning("ws_turn_error", error=str(task.exception()))
+            # The user message is likely already committed (handle_turn's first
+            # transaction writes the session id back onto `inbound`) — adopt that
+            # session so follow-up messages join it instead of orphaning it.
+            session_id = inbound.session_id or session_id
             await send({"type": "error", "message": "连接出现异常"})
         else:
             # Adopt the (possibly newly created) session id for the rest of the connection.
@@ -316,7 +337,13 @@ async def chat_ws(
                 # forget). Only meaningful once a human is in the loop; the client throttles
                 # and only sends while escalated, so this stays off the AI hot path.
                 if session_id:
-                    await publish(session_id, {"type": "customer_typing"})
+                    # session_id lets the operator workbench (watching several sessions)
+                    # drop typing pushes that don't belong to the one on screen — same as
+                    # human_message / customer_message.
+                    await publish(
+                        session_id,
+                        {"type": "customer_typing", "session_id": session_id},
+                    )
                 continue
 
             if mtype == "history":
@@ -367,7 +394,9 @@ async def chat_ws(
                 continue  # unknown message types are silently ignored (protocol contract)
 
             text = (payload.get("text") or "").strip()
-            attachments = payload.get("attachments") or []
+            # Same sanitize as process_turn: a frame carrying only malformed attachments
+            # (and no text) is empty once cleaned, so drop it instead of enqueuing it.
+            attachments = _sanitize_attachments(payload.get("attachments"))
             if not text and not attachments:
                 continue
 
@@ -476,7 +505,34 @@ async def _run_turn(send, inbound: InboundMessage, state: dict, client_msg_id: s
             # Close the generator deterministically (esp. on cancel) while the DB
             # session is still open, so its finalization never outlives the scope.
             await gen.aclose()
-    return resolved_sid
+    # Blocked/capped done events carry no session_id, but the session + user message
+    # are already committed (transaction #1 wrote the id back onto `inbound`) — adopt
+    # it so follow-up turns resume that session instead of orphaning it.
+    return resolved_sid or inbound.session_id or ""
+
+
+async def _user_message_persisted(db, session: Session, text: str, client_msg_id: str) -> bool:
+    """Did handle_turn's first transaction already commit this turn's user message?
+
+    Preferred check: the client_msg_id bookkeeping (session.meta) committed with it.
+    Without an id (older clients), fall back to the session tail — that first
+    transaction leaves the user message as the newest row, so a matching USER tail
+    means it was committed before the cancel landed.
+    """
+    if client_msg_id:
+        return any(
+            p and p[0] == client_msg_id
+            for p in (session.meta or {}).get("client_msg_ids", [])
+        )
+    row = (
+        await db.execute(
+            select(DBMessage)
+            .where(DBMessage.session_id == session.id)
+            .order_by(DBMessage.seq.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return row is not None and row.role == MessageRole.USER and row.content == text
 
 
 async def _persist_stopped_turn(
@@ -484,13 +540,18 @@ async def _persist_stopped_turn(
 ) -> tuple[str, str | None]:
     """Persist a user-stopped turn in a fresh transaction; return (session_id, message_id).
 
-    Cancelling the generation task rolled back the whole turn (session_scope rolls back
-    on error), so re-persist the user message plus whatever text already streamed — the
-    transcript then matches exactly what the customer saw when they hit stop.
+    handle_turn commits the user message in its own first transaction (and writes the
+    resolved session id back onto `inbound`), so a cancel normally only rolls back the
+    AI half — here we just append whatever text already streamed. The user message is
+    re-written ONLY when the cancel beat that first commit (session row missing, or no
+    persisted message matches this client_msg_id / the session tail) — never twice.
     """
     async with session_scope() as db:
-        session, _ = await get_or_create_session(db, inbound)
-        await _persist_user_message(db, session, inbound.text, inbound.attachments, client_msg_id)
+        session, created = await get_or_create_session(db, inbound)
+        if created or not await _user_message_persisted(db, session, inbound.text, client_msg_id):
+            await _persist_user_message(
+                db, session, inbound.text, inbound.attachments, client_msg_id
+            )
         msg_id: str | None = None
         if partial:
             msg = await _persist_assistant_text(db, session, partial, [])
