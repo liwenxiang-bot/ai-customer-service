@@ -6,10 +6,12 @@ the adapters are the only translation layer and must map events faithfully.
 
 import base64
 
+import pytest
+
 from app.agent.events import AgentEvent
 from app.channels.web import web_adapter
 from app.channels.wechat import inbound_from_wechat
-from app.channels.wechat_crypto import WXBizMsgCrypt, parse_message_xml
+from app.channels.wechat_crypto import WeChatCryptoError, WXBizMsgCrypt, parse_message_xml
 
 
 # ----------------------------------------------------------------- web
@@ -63,11 +65,8 @@ def test_wechat_bad_signature_rejected():
     import xml.etree.ElementTree as ET
 
     encrypt = ET.fromstring(full).find("Encrypt").text
-    try:
+    with pytest.raises(WeChatCryptoError):
         c.decrypt_message(encrypt, "wrongsig", "1700000000", "n")
-        assert False, "should have raised"
-    except Exception:
-        pass
 
 
 def test_wechat_inbound_only_text():

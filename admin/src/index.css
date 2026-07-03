@@ -30,6 +30,9 @@ body {
 .acs-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
 
 .acs-content { padding: 24px; }
+/* Narrow screens: tighter page padding (matches the sider's lg auto-collapse). */
+@media (max-width: 992px) { .acs-content { padding: 16px; } }
+@media (max-width: 576px) { .acs-content { padding: 12px; } }
 
 /* Dark mode: the few hand-set text colors above need readable values on dark. */
 [data-theme="dark"] body { color: rgba(255, 255, 255, 0.85); }

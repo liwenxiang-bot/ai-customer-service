@@ -31,6 +31,10 @@ export function buildStyles(themeColor: string): string {
 .acs-launcher:active { transform: scale(.97); }
 .acs-launcher:focus-visible { outline: 3px solid var(--acs-primary-soft); outline-offset: 3px; }
 .acs-launcher svg { width: 27px; height: 27px; }
+/* 未读角标：面板收起期间收到消息时点亮，打开即清零 */
+.acs-badge { position:absolute; top:-3px; right:-3px; min-width:19px; height:19px; padding:0 5px; border-radius:99px;
+  background:#dc2626; color:#fff; font-size:11px; font-weight:650; line-height:19px; text-align:center;
+  box-shadow:0 0 0 2px #fff; }
 /* one gentle attention pulse ring */
 .acs-launcher::after {
   content: ""; position: absolute; inset: 0; border-radius: 50%;
@@ -61,8 +65,8 @@ export function buildStyles(themeColor: string): string {
   border-radius: 0; box-shadow: none; border: none; margin: 0; animation: none;
 }
 
-/* theme tokens */
-.acs-light { --acs-bg:#fff; --acs-border:#ebedf1; --acs-text:#1b1f27; --acs-sub:#8b93a3;
+/* theme tokens（--acs-sub 需在白底与气泡底 #f4f5f8 上均 ≥4.5:1，满足 WCAG AA） */
+.acs-light { --acs-bg:#fff; --acs-border:#ebedf1; --acs-text:#1b1f27; --acs-sub:#667082;
   --acs-bot-bubble:#f4f5f8; --acs-user-bubble:var(--acs-primary); --acs-input-bg:#fff; --acs-composer-bg:#fff; }
 .acs-dark { --acs-bg:#14161c; --acs-border:#2a2f3b; --acs-text:#e7e9ee; --acs-sub:#9aa3b2;
   --acs-bot-bubble:#222732; --acs-user-bubble:var(--acs-primary); --acs-input-bg:#1c1f28; --acs-composer-bg:#171a21; }
@@ -82,6 +86,9 @@ export function buildStyles(themeColor: string): string {
   box-shadow:0 0 0 0 rgba(61,220,132,.6); animation: acs-presence 2s ease-out infinite;
 }
 .acs-status.offline::before { background:#cbd2dc; animation:none; }
+.acs-status .acs-status-retry { background:none; border:none; padding:0; width:auto; height:auto; display:inline;
+  color:inherit; font:inherit; opacity:1; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-weight:550; }
+.acs-status .acs-status-retry:hover { background:none; }
 @keyframes acs-presence { 0%{box-shadow:0 0 0 0 rgba(61,220,132,.55);} 70%,100%{box-shadow:0 0 0 6px transparent;} }
 .acs-header button { background:rgba(255,255,255,.0); border:none; color:var(--acs-on-primary); cursor:pointer; opacity:.85;
   width:30px; height:30px; border-radius:8px; font-size:15px; display:flex; align-items:center; justify-content:center; transition:background .15s, opacity .15s; }
@@ -90,8 +97,11 @@ export function buildStyles(themeColor: string): string {
 .acs-header button svg { width:17px; height:17px; }
 
 /* ----------------------------------------------------------------- messages */
+/* 消息区外层：给「回到底部」悬浮钮与反馈回执提供定位锚点 */
+.acs-body { flex:1; min-height:0; position:relative; display:flex; flex-direction:column; }
+/* 不用 scroll-behavior:smooth——流式期间高频程序化滚动叠加平滑动画会追不上内容 */
 .acs-messages { flex:1; min-height:0; overflow-y:auto; padding:18px 16px 8px; background:var(--acs-bg);
-  display:flex; flex-direction:column; gap:14px; scroll-behavior:smooth; }
+  display:flex; flex-direction:column; gap:14px; }
 .acs-messages::-webkit-scrollbar { width:7px; }
 .acs-messages::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--acs-sub) 35%, transparent); border-radius:99px; }
 .acs-msg { display:flex; flex-direction:column; max-width:86%; animation: acs-rise .3s cubic-bezier(.2,.7,.2,1) both; }
@@ -126,9 +136,10 @@ export function buildStyles(themeColor: string): string {
 .acs-cite { font-size:11px; color:var(--acs-sub); background:var(--acs-bot-bubble); border:1px solid var(--acs-border);
   border-radius:99px; padding:3px 9px; line-height:1.4; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* feedback — quiet, reveals on hover (desktop); subtle but tappable on touch */
+/* feedback — quiet, reveals on hover/keyboard focus (desktop); subtle but tappable on touch */
 .acs-fb { display:flex; gap:4px; margin-top:6px; opacity:0; transition:opacity .18s ease; }
-.acs-msg.assistant:hover .acs-fb { opacity:1; }
+.acs-msg.assistant:hover .acs-fb,
+.acs-msg.assistant:focus-within .acs-fb { opacity:1; }
 .acs-fb button { background:transparent; border:none; cursor:pointer; color:var(--acs-sub);
   width:26px; height:26px; border-radius:7px; display:flex; align-items:center; justify-content:center; transition:background .15s, color .15s, transform .12s; }
 .acs-fb button svg { width:15px; height:15px; }
@@ -138,8 +149,24 @@ export function buildStyles(themeColor: string): string {
 .acs-fb button:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
 @media (hover:none) { .acs-fb { opacity:.55; } }  /* touch: keep visible but understated */
 
-/* human-agent handoff identity */
-.acs-human-label { font-size:11.5px; color:#0f9d6e; font-weight:600; margin-bottom:4px; display:flex; align-items:center; gap:5px; letter-spacing:.2px; }
+/* 👎 后的可选原因输入 */
+.acs-fb-note { display:flex; gap:6px; margin-top:6px; align-items:center; }
+.acs-fb-note input { width:190px; max-width:100%; border:1px solid var(--acs-border); border-radius:9px; padding:5px 9px;
+  font-size:12px; background:var(--acs-input-bg); color:var(--acs-text); outline:none; }
+.acs-fb-note input::placeholder { color:var(--acs-sub); }
+.acs-fb-note input:focus { border-color:var(--acs-primary); }
+.acs-fb-note button { background:none; border:none; padding:2px 4px; border-radius:6px; font-size:12px;
+  color:var(--acs-primary); cursor:pointer; font-weight:550; }
+.acs-fb-note button:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
+.acs-fb-note .acs-fb-note-skip { color:var(--acs-sub); }
+/* 反馈回执轻提示 */
+.acs-fb-ack { position:absolute; bottom:52px; left:50%; transform:translateX(-50%); pointer-events:none;
+  background:color-mix(in srgb, #0b0e13 78%, transparent); color:#fff; font-size:12px; padding:6px 12px;
+  border-radius:99px; animation: acs-fade .2s ease both; }
+
+/* human-agent handoff identity（浅色用深绿保证白底 ≥4.5:1；深色底亮绿即达标） */
+.acs-human-label { font-size:11.5px; color:#0b7a56; font-weight:600; margin-bottom:4px; display:flex; align-items:center; gap:5px; letter-spacing:.2px; }
+.acs-dark .acs-human-label { color:#0f9d6e; }
 .acs-human-label svg { width:13px; height:13px; }
 .acs-escalation { font-size:12.5px; background:color-mix(in srgb, #f59e0b 12%, var(--acs-bg)); color:#9a6207;
   border:1px solid color-mix(in srgb, #f59e0b 28%, transparent); border-radius:12px; padding:9px 12px; line-height:1.5; }
@@ -147,10 +174,13 @@ export function buildStyles(themeColor: string): string {
 
 /* sent-status / retry */
 .acs-msg-meta { font-size:10.5px; color:var(--acs-sub); margin-top:4px; }
-.acs-retry { color:#dc2626; cursor:pointer; font-weight:500; }
+.acs-retry { background:none; border:none; padding:0; font:inherit; color:#dc2626; cursor:pointer; font-weight:500; }
+.acs-retry:disabled { opacity:.45; cursor:not-allowed; }  /* busy 期间禁用，等当前回复结束 */
+.acs-retry:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; border-radius:4px; }
+.acs-dark .acs-retry { color:#f87171; }  /* #dc2626 在深色底不足 4.5:1 */
 
 /* per-message time (mono, tabular) + day separator */
-.acs-time { margin-top:3px; padding:0 3px; font-size:10.5px; color:var(--acs-sub); opacity:.8; letter-spacing:.2px;
+.acs-time { margin-top:3px; padding:0 3px; font-size:10.5px; color:var(--acs-sub); letter-spacing:.2px;
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
 .acs-date-sep { align-self:center; margin:6px 0 2px; }
 .acs-date-sep span { font-size:11px; color:var(--acs-sub); background:var(--acs-bot-bubble);
@@ -159,7 +189,16 @@ export function buildStyles(themeColor: string): string {
 /* centered system status line:  ——— 人工客服已接入 ——— */
 .acs-system { align-self:stretch; display:flex; align-items:center; gap:10px; margin:8px 6px; }
 .acs-system::before, .acs-system::after { content:""; flex:1; height:1px; background:var(--acs-border); }
-.acs-system span { font-size:11.5px; color:var(--acs-text); opacity:.55; white-space:nowrap; letter-spacing:.2px; }
+.acs-system span { font-size:11.5px; color:var(--acs-text); opacity:.7; white-space:nowrap; letter-spacing:.2px; }
+
+/* 「回到底部」悬浮钮（用户上翻时出现；上翻期间有新消息则点亮提示） */
+.acs-jump { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px;
+  background:var(--acs-bg); color:var(--acs-text); border:1px solid var(--acs-border); border-radius:99px;
+  padding:6px 12px; font-size:12px; cursor:pointer; box-shadow:0 8px 20px -8px rgba(17,24,39,.35); }
+.acs-jump:hover { background:var(--acs-bot-bubble); }
+.acs-jump:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
+.acs-jump svg { width:14px; height:14px; }
+.acs-jump-new { color:var(--acs-primary); font-weight:600; }
 
 /* ----------------------------------------------------------------- composer */
 .acs-input { border-top:1px solid var(--acs-border); padding:11px 12px; background:var(--acs-composer-bg);
@@ -189,7 +228,10 @@ export function buildStyles(themeColor: string): string {
 /* ----------------------------------------------------------------- attachments in bubbles */
 .acs-atts { display:flex; flex-wrap:wrap; gap:8px; margin-top:7px; }
 .acs-msg.user .acs-atts { justify-content:flex-end; }
-.acs-att-img { width:150px; max-width:62%; border-radius:12px; border:1px solid var(--acs-border); cursor:pointer; display:block; object-fit:cover; }
+/* 图片附件放大入口用原生 button 包裹，保证键盘可达 */
+.acs-att-imgbtn { background:none; border:none; padding:0; cursor:pointer; width:150px; max-width:62%; border-radius:12px; display:block; }
+.acs-att-imgbtn:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:2px; }
+.acs-att-img { width:100%; border-radius:12px; border:1px solid var(--acs-border); display:block; object-fit:cover; }
 .acs-att-file { display:flex; align-items:center; gap:8px; text-decoration:none; background:var(--acs-bot-bubble); color:var(--acs-text);
   border:1px solid var(--acs-border); border-radius:12px; padding:9px 12px; font-size:13px; max-width:240px; }
 .acs-att-file svg { width:18px; height:18px; flex-shrink:0; color:var(--acs-primary); }
@@ -217,8 +259,9 @@ export function buildStyles(themeColor: string): string {
 .acs-pend img { width:30px; height:30px; border-radius:6px; object-fit:cover; flex-shrink:0; }
 .acs-pend > svg { width:22px; height:22px; flex-shrink:0; color:var(--acs-sub); }  /* file placeholder icon */
 .acs-pend-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.acs-pend-x { cursor:pointer; color:var(--acs-sub); display:flex; }
+.acs-pend-x { background:none; border:none; padding:0; cursor:pointer; color:var(--acs-sub); display:flex; border-radius:4px; }
 .acs-pend-x:hover { color:#dc2626; }
+.acs-pend-x:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
 .acs-pend-x svg { width:14px; height:14px; }
 .acs-pend.uploading { opacity:.55; }
 
@@ -248,7 +291,8 @@ export function buildStyles(themeColor: string): string {
 .acs-rate-submit { background:var(--acs-primary); color:var(--acs-on-primary); font-weight:600; }
 .acs-rate-actions button:hover { opacity:.88; }
 .acs-ended { text-align:center; font-size:12.5px; color:var(--acs-sub); padding:12px; }
-.acs-ended a { color:var(--acs-primary); cursor:pointer; font-weight:500; }
+.acs-ended button { background:none; border:none; padding:0; font:inherit; color:var(--acs-primary); cursor:pointer; font-weight:500; }
+.acs-ended button:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; border-radius:4px; }
 
 /* ----------------------------------------------------------------- responsive */
 @media (max-width:480px) {
@@ -259,10 +303,9 @@ export function buildStyles(themeColor: string): string {
 
 /* ----------------------------------------------------------------- a11y */
 @media (prefers-reduced-motion: reduce) {
-  .acs-msg, .acs-panel, .acs-rate-overlay { animation: none; }
+  .acs-msg, .acs-panel, .acs-rate-overlay, .acs-fb-ack { animation: none; }
   .acs-launcher::after, .acs-header .acs-status::before, .acs-dots span { animation: none; }
   .acs-launcher, .acs-send, .acs-fb button { transition: none; }
-  .acs-messages { scroll-behavior: auto; }
 }
 `;
 }

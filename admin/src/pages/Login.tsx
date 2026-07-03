@@ -7,12 +7,8 @@ import { apiError, tenantStore } from "../api/client";
 
 const REMEMBER_KEY = "acs_login_remember";
 
-// Lightweight local persistence for the "remember me" convenience on trusted machines.
-// (base64 is obfuscation, not encryption — leave unchecked on shared computers.)
-const enc = (s: string) => btoa(unescape(encodeURIComponent(s)));
-const dec = (s: string) => {
-  try { return decodeURIComponent(escape(atob(s))); } catch { return ""; }
-};
+// "记住邮箱" only persists email + tenant slug locally; the password is never stored —
+// saving credentials is the browser password manager's job (autoComplete hints below).
 
 export function Login() {
   const { login } = useAuth();
@@ -22,13 +18,15 @@ export function Login() {
   const [showTenant, setShowTenant] = useState(false);
   const [form] = Form.useForm();
 
-  // Pre-fill from a previously remembered login.
+  // Pre-fill from a previously remembered login (email/tenant only).
   useEffect(() => {
     const saved = localStorage.getItem(REMEMBER_KEY);
     if (saved) {
       try {
         const { email, password, tenant } = JSON.parse(saved);
-        form.setFieldsValue({ email, password: dec(password || ""), tenant: tenant || tenantStore.slug, remember: true });
+        // 向后兼容：旧版本曾把 base64 密码一并存入本地，这里只回填邮箱并顺手清掉密码字段。
+        if (password) localStorage.setItem(REMEMBER_KEY, JSON.stringify({ email, tenant: tenant || "" }));
+        form.setFieldsValue({ email, tenant: tenant || tenantStore.slug, remember: true });
         if (tenant || tenantStore.slug) setShowTenant(true);
       } catch { /* ignore corrupt value */ }
     } else if (tenantStore.slug) {
@@ -42,7 +40,7 @@ export function Login() {
     try {
       await login(v.email, v.password, v.tenant);
       if (v.remember) {
-        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ email: v.email, password: enc(v.password), tenant: v.tenant || "" }));
+        localStorage.setItem(REMEMBER_KEY, JSON.stringify({ email: v.email, tenant: v.tenant || "" }));
       } else {
         localStorage.removeItem(REMEMBER_KEY);
       }
@@ -79,7 +77,7 @@ export function Login() {
 
           <div className="acs-login-row">
             <Form.Item name="remember" valuePropName="checked" noStyle>
-              <Checkbox>记住登录</Checkbox>
+              <Checkbox>记住邮箱</Checkbox>
             </Form.Item>
             {!showTenant && (
               <span className="acs-login-link" onClick={() => setShowTenant(true)}>指定租户登录</span>

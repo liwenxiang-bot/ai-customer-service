@@ -68,8 +68,28 @@ async def _channel_runtime(db: AsyncSession, inbound: InboundMessage) -> tuple[s
     return row.system_prompt_override, bool(row.settings.get("image_understanding_enabled", False))
 
 
+def _record_client_msg_id(session: Session, client_msg_id: str, message_id: str) -> None:
+    """Remember client_msg_id → message id on the session (bounded, newest last).
+
+    The widget sends a client-generated id with each user message so it can match its
+    optimistic bubble to the persisted row (ACK, history merge) and so retries can be
+    deduplicated server-side. Message rows have no free-form JSON column to spare, so
+    the mapping lives in `session.meta` — an ordered list of [client_msg_id, message_id]
+    pairs (JSONB objects don't preserve key order); reassigned so SQLAlchemy sees the change.
+    """
+    pairs = [
+        p for p in (session.meta or {}).get("client_msg_ids", []) if p and p[0] != client_msg_id
+    ]
+    pairs.append([client_msg_id, message_id])
+    session.meta = {**(session.meta or {}), "client_msg_ids": pairs[-200:]}
+
+
 async def _persist_user_message(
-    db: AsyncSession, session: Session, text: str, attachments: list | None = None
+    db: AsyncSession,
+    session: Session,
+    text: str,
+    attachments: list | None = None,
+    client_msg_id: str = "",
 ) -> DBMessage:
     session.message_count += 1
     session.last_activity_at = datetime.now(UTC)
@@ -87,6 +107,8 @@ async def _persist_user_message(
     )
     db.add(msg)
     await db.flush()
+    if client_msg_id:
+        _record_client_msg_id(session, client_msg_id, str(msg.id))
     return msg
 
 
@@ -109,7 +131,7 @@ async def _persist_assistant_text(
 
 
 async def handle_turn(
-    db: AsyncSession, inbound: InboundMessage
+    db: AsyncSession, inbound: InboundMessage, client_msg_id: str = ""
 ) -> AsyncGenerator[AgentEvent, None]:
     trace_id = uuid.uuid4().hex
     set_trace_id(trace_id)
@@ -117,7 +139,7 @@ async def handle_turn(
     ai_config = await get_active_ai_config(db)
     session, _ = await get_or_create_session(db, inbound)
 
-    await _persist_user_message(db, session, inbound.text, inbound.attachments)
+    await _persist_user_message(db, session, inbound.text, inbound.attachments, client_msg_id)
 
     # ---- Input content safety (optional) ----
     safe, notice = await check_input(ai_config, inbound.text)

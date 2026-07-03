@@ -16,7 +16,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -126,12 +126,21 @@ async def chat_media(key: str):
 
 
 class MessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=8000)
+    # Attachment-only messages are valid (parity with the WS path), so text may be empty
+    # as long as attachments aren't — the validator rejects both-empty with a 422.
+    text: str = Field("", max_length=8000)
     uid: str = ""
     session_id: str | None = None
     channel_key: str = "default"
     display: str = ""
     attachments: list[dict] = []
+    client_msg_id: str = Field("", max_length=64)
+
+    @model_validator(mode="after")
+    def _text_or_attachments(self) -> MessageIn:
+        if not self.text.strip() and not self.attachments:
+            raise ValueError("消息内容与附件不能同时为空")
+        return self
 
 
 @router.post("/message")
@@ -166,7 +175,7 @@ async def chat_message(
 
     text_parts: list[str] = []
     final: dict = {}
-    async for ev in handle_turn(db, inbound):
+    async for ev in handle_turn(db, inbound, body.client_msg_id):
         if ev.kind == "text":
             text_parts.append(ev.text)
         elif ev.kind == "done":

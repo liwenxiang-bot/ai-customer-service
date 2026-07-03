@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Card, Col, Row, Statistic, Spin, Empty, Button, Progress, List, Tag, Space, theme } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Card, Col, Row, Statistic, Spin, Empty, Button, Progress, List, Tag, Space, theme, Segmented, Result, Alert, Tooltip as AntdTooltip } from "antd";
 import {
   MessageOutlined,
   UserOutlined,
@@ -15,24 +15,84 @@ import {
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useNavigate } from "react-router-dom";
 import { dashboardApi, conversationApi } from "../api";
+import { apiError } from "../api/client";
 import { fmtShort } from "../utils/time";
+import { CHANNEL_TYPE, SESSION_STATUS, statusMeta } from "../utils/status";
+
+const DAY_OPTIONS = [
+  { label: "近 7 天", value: 7 },
+  { label: "近 14 天", value: 14 },
+  { label: "近 30 天", value: 30 },
+  { label: "近 90 天", value: 90 },
+];
 
 export function Dashboard() {
   const nav = useNavigate();
   const { token } = theme.useToken();
+  const [days, setDays] = useState(14);
   const [data, setData] = useState<any>(null);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
   const [trend, setTrend] = useState<any[]>([]);
+  const [trendError, setTrendError] = useState<string | null>(null);
   const [recent, setRecent] = useState<any[]>([]);
+  const [recentError, setRecentError] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<any>(null);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+
+  const loadOverview = () => {
+    setOverviewError(null);
+    dashboardApi.overview().then(setData).catch((e) => setOverviewError(apiError(e)));
+  };
+  const loadRecent = () => {
+    setRecentError(null);
+    conversationApi.list({ page_size: 6 }).then((d) => setRecent(d.items)).catch((e) => setRecentError(apiError(e)));
+  };
+  // 判序：快速切换时间窗时，旧窗口的慢响应不得覆盖新窗口的数据/错误态（同 Conversations 的 loadSeq 模式）
+  const trendSeq = useRef(0);
+  const loadTrend = (d: number) => {
+    const seq = ++trendSeq.current;
+    setTrendError(null);
+    dashboardApi.trend(d)
+      .then((r) => { if (seq === trendSeq.current) setTrend(r.trend); })
+      .catch((e) => { if (seq === trendSeq.current) setTrendError(apiError(e)); });
+  };
+  const analyticsSeq = useRef(0);
+  const loadAnalytics = (d: number) => {
+    const seq = ++analyticsSeq.current;
+    setAnalyticsError(null);
+    dashboardApi.analytics(d)
+      .then((r) => { if (seq === analyticsSeq.current) setAnalytics(r); })
+      .catch((e) => { if (seq === analyticsSeq.current) setAnalyticsError(apiError(e)); });
+  };
 
   useEffect(() => {
-    dashboardApi.overview().then(setData);
-    dashboardApi.trend(14).then((d) => setTrend(d.trend));
-    dashboardApi.analytics(14).then(setAnalytics);
-    conversationApi.list({ page_size: 6 }).then((d) => setRecent(d.items));
+    loadOverview();
+    loadRecent();
   }, []);
+  useEffect(() => {
+    loadTrend(days);
+    loadAnalytics(days);
+  }, [days]);
 
-  if (!data) return <Spin />;
+  if (overviewError) {
+    return (
+      <div className="acs-dash">
+        <Result
+          status="error"
+          title="概览数据加载失败"
+          subTitle={overviewError}
+          extra={<Button type="primary" onClick={loadOverview}>重试</Button>}
+        />
+      </div>
+    );
+  }
+  if (!data) {
+    return (
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 320 }}>
+        <Spin />
+      </div>
+    );
+  }
   const t = data.today;
   const backlog = data.backlog || {};
   const kb = data.knowledge || {};
@@ -43,14 +103,19 @@ export function Dashboard() {
     { title: "今日用户", value: t.users, icon: <UserOutlined />, color: "#0ea5e9", bg: "rgba(14,165,233,.10)" },
     { title: "平均响应(ms)", value: t.avg_latency_ms, icon: <ThunderboltOutlined />, color: "#f59e0b", bg: "rgba(245,158,11,.13)" },
     { title: "转人工率", value: (t.escalation_rate * 100).toFixed(1) + "%", icon: <CustomerServiceOutlined />, color: "#ef4444", bg: "rgba(239,68,68,.10)" },
-    { title: "满意度", value: data.satisfaction == null ? "—" : (data.satisfaction * 100).toFixed(0) + "%", icon: <LikeOutlined />, color: "#10b981", bg: "rgba(16,185,129,.10)" },
+    { title: "有帮助率", tip: "访客对 AI 回答点「有帮助」的占比（有帮助 / 有帮助+没帮助，累计）", value: data.satisfaction == null ? "—" : (data.satisfaction * 100).toFixed(0) + "%", icon: <LikeOutlined />, color: "#10b981", bg: "rgba(16,185,129,.10)" },
     { title: "今日成本($)", value: t.cost_usd, icon: <DollarOutlined />, color: "#8b5cf6", bg: "rgba(139,92,246,.10)" },
   ];
 
   return (
     <div className="acs-dash">
-      <div className="acs-page-title">概览</div>
-      <div className="acs-page-sub">今日核心指标、待处理事项与近 14 天趋势一览。</div>
+      <div className="acs-page-head">
+        <div>
+          <div className="acs-page-title">概览</div>
+          <div className="acs-page-sub">今日核心指标、待处理事项与近 {days} 天趋势一览。</div>
+        </div>
+        <Segmented options={DAY_OPTIONS} value={days} onChange={(v) => setDays(v as number)} />
+      </div>
 
       <Row gutter={[16, 16]}>
         {cards.map((c) => (
@@ -59,7 +124,9 @@ export function Dashboard() {
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <div className="acs-kpi-ic" style={{ background: c.bg, color: c.color }}>{c.icon}</div>
                 <div style={{ minWidth: 0 }}>
-                  <div className="acs-kpi-label" style={{ color: token.colorTextSecondary }}>{c.title}</div>
+                  <div className="acs-kpi-label" style={{ color: token.colorTextSecondary }}>
+                    {c.tip ? <AntdTooltip title={c.tip}><span style={{ cursor: "help" }}>{c.title}</span></AntdTooltip> : c.title}
+                  </div>
                   <div className="acs-kpi-value" style={{ color: token.colorText }}>{c.value}</div>
                 </div>
               </div>
@@ -85,7 +152,7 @@ export function Dashboard() {
             <Space size="large" align="start" style={{ width: "100%", justifyContent: "space-between" }}>
               <Statistic title="知识条目" value={kb.items ?? 0} valueStyle={{ fontSize: 26 }} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, color: "#5b6573", marginBottom: 6 }}>已向量化 {kb.chunks_ready ?? 0}/{kb.chunks_total ?? 0} 分块</div>
+                <div style={{ fontSize: 13, color: token.colorTextSecondary, marginBottom: 6 }}>已向量化 {kb.chunks_ready ?? 0}/{kb.chunks_total ?? 0} 分块</div>
                 <Progress percent={vecPct} size="small" status={vecPct < 100 ? "active" : "success"} />
               </div>
             </Space>
@@ -107,8 +174,10 @@ export function Dashboard() {
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col xs={24} lg={15}>
-          <Card size="small" title="近 14 天趋势">
-            {trend.length === 0 ? (
+          <Card size="small" title={`近 ${days} 天趋势`}>
+            {trendError ? (
+              <Alert type="error" showIcon message={trendError} action={<Button size="small" onClick={() => loadTrend(days)}>重试</Button>} />
+            ) : trend.length === 0 ? (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" />
             ) : (
               <ResponsiveContainer width="100%" height={280}>
@@ -129,32 +198,52 @@ export function Dashboard() {
         {/* recent conversations */}
         <Col xs={24} lg={9}>
           <Card size="small" title="最近会话" extra={<Button type="link" size="small" onClick={() => nav("/conversations")}>全部 <RightOutlined /></Button>}>
-            <List
-              size="small"
-              className="acs-clickable-list"
-              dataSource={recent}
-              locale={{ emptyText: "暂无会话" }}
-              renderItem={(it: any) => (
-                <List.Item
-                  onClick={() => nav(`/conversations?session=${it.id}`)}
-                >
-                  <List.Item.Meta
-                    title={<span style={{ fontSize: 13 }}>{it.title || it.end_user_display || it.end_user_id || "匿名"}</span>}
-                    description={<span style={{ fontSize: 12 }}>{fmtShort(it.last_activity_at)} · {it.channel_type}</span>}
-                  />
-                  {it.escalated ? <Tag color="red">待人工</Tag> : it.status === "human_takeover" ? <Tag color="green">接管中</Tag> : null}
-                </List.Item>
-              )}
-            />
+            {recentError ? (
+              <Alert type="error" showIcon message={recentError} action={<Button size="small" onClick={loadRecent}>重试</Button>} />
+            ) : (
+              <List
+                size="small"
+                className="acs-clickable-list"
+                dataSource={recent}
+                locale={{ emptyText: "暂无会话" }}
+                renderItem={(it: any) => (
+                  <List.Item
+                    onClick={() => nav(`/conversations?session=${it.id}`)}
+                  >
+                    <List.Item.Meta
+                      title={<span style={{ fontSize: 13 }}>{it.title || it.end_user_display || it.end_user_id || "匿名"}</span>}
+                      description={<span style={{ fontSize: 12 }}>{fmtShort(it.last_activity_at)} · {statusMeta(CHANNEL_TYPE, it.channel_type).label}</span>}
+                    />
+                    {it.escalated
+                      ? <Tag color={SESSION_STATUS.escalated.color}>{SESSION_STATUS.escalated.label}</Tag>
+                      : it.status === "human_takeover"
+                        ? <Tag color={SESSION_STATUS.human_takeover.color}>{SESSION_STATUS.human_takeover.label}</Tag>
+                        : null}
+                  </List.Item>
+                )}
+              />
+            )}
           </Card>
         </Col>
       </Row>
 
-      {analytics && (
+      {analyticsError && (
+        <Card size="small" title="运营分析" style={{ marginTop: 16 }}>
+          <Alert type="error" showIcon message={analyticsError} action={<Button size="small" onClick={() => loadAnalytics(days)}>重试</Button>} />
+        </Card>
+      )}
+      {!analyticsError && analytics && (
         <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
           {/* CSAT 满意度评分 */}
           <Col xs={24} lg={8}>
-            <Card size="small" title={`满意度评分（近 ${analytics.days} 天）`}>
+            <Card
+              size="small"
+              title={
+                <AntdTooltip title="会话结束后访客提交的 1–5 星服务评价">
+                  <span style={{ cursor: "help" }}>{`满意度评分（近 ${analytics.days} 天）`}</span>
+                </AntdTooltip>
+              }
+            >
               {analytics.csat.rated ? (
                 <>
                   <Space size="large" style={{ marginBottom: 8 }}>
@@ -185,7 +274,7 @@ export function Dashboard() {
                 value={analytics.knowledge.grounding_rate == null ? "—" : (analytics.knowledge.grounding_rate * 100).toFixed(0) + "%"}
                 valueStyle={{ color: "#0F766E", fontSize: 24 }}
               />
-              <div style={{ fontSize: 12, color: "#5b6573", margin: "4px 0 8px" }}>Top 引用知识</div>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary, margin: "4px 0 8px" }}>Top 引用知识</div>
               <List
                 size="small"
                 dataSource={(analytics.knowledge.top_items || []).slice(0, 5)}
@@ -205,7 +294,7 @@ export function Dashboard() {
           {/* 成本分解 */}
           <Col xs={24} lg={8}>
             <Card size="small" title={`成本分解（近 ${analytics.days} 天）`}>
-              <div style={{ fontSize: 12, color: "#5b6573", marginBottom: 4 }}>按模型</div>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary, marginBottom: 4 }}>按模型</div>
               <List
                 size="small"
                 dataSource={analytics.cost.by_model || []}
@@ -217,10 +306,10 @@ export function Dashboard() {
                   </List.Item>
                 )}
               />
-              <div style={{ fontSize: 12, color: "#5b6573", margin: "8px 0 4px" }}>按渠道</div>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary, margin: "8px 0 4px" }}>按渠道</div>
               <Space wrap>
                 {(analytics.cost.by_channel || []).length === 0
-                  ? <span style={{ fontSize: 12, color: "#999" }}>暂无</span>
+                  ? <span style={{ fontSize: 12, color: token.colorTextTertiary }}>暂无</span>
                   : analytics.cost.by_channel.map((c: any) => <Tag key={c.channel}>{c.channel}: ${c.cost_usd}</Tag>)}
               </Space>
             </Card>

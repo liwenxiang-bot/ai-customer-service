@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Button, Card, Drawer, Form, Input, Select, Space, Table, Tag, Tabs, Modal,
   Upload, Tooltip, List, Popconfirm, App as AntApp, Badge, Alert, Progress, theme,
@@ -13,10 +13,9 @@ import { knowledgeApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 import { useDebounce } from "../hooks/useDebounce";
+import { usePolling } from "../hooks/usePolling";
 import { fmtTime } from "../utils/time";
-
-const STATUS_COLORS: any = { published: "green", draft: "orange", archived: "default" };
-const SOURCE_LABELS: any = { manual: "手动", import: "导入", auto_distilled: "自动沉淀" };
+import { KNOWLEDGE_STATUS, KNOWLEDGE_SOURCE, CHUNK_STATUS, statusMeta } from "../utils/status";
 
 export function Knowledge() {
   const { user } = useAuth();
@@ -25,9 +24,10 @@ export function Knowledge() {
   const [tab, setTab] = useState("items");
   const [reviewCount, setReviewCount] = useState(0);
 
+  // 挂载时拉一次徽标数；之后由 ReviewTab 加载/审核时通过 onCount 上报，避免切 Tab 重复请求
   useEffect(() => {
     knowledgeApi.reviewList("pending").then((d) => setReviewCount(d.candidates.length)).catch(() => {});
-  }, [tab]);
+  }, []);
 
   return (
     <div>
@@ -41,7 +41,7 @@ export function Knowledge() {
           {
             key: "review",
             label: <Badge count={reviewCount} size="small" offset={[10, 0]}>待审核</Badge>,
-            children: <ReviewTab editable={editable} onChange={() => knowledgeApi.reviewList("pending").then((d) => setReviewCount(d.candidates.length))} />,
+            children: <ReviewTab editable={editable} onCount={setReviewCount} />,
           },
         ]}
       />
@@ -54,7 +54,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
   const { token } = theme.useToken();
   const [data, setData] = useState<any>({ items: [], total: 0 });
   const [loading, setLoading] = useState(false);
-  const [params, setParams] = useState<any>({ q: "", status: "", category: "", tag: "", page: 1, page_size: 10 });
+  const [params, setParams] = useState<any>({ q: "", status: "", category: "", tag: "", source: "", page: 1, page_size: 10 });
   const [drawer, setDrawer] = useState<any>(null); // editing item or {} for new
   const [form] = Form.useForm();
   const [testOpen, setTestOpen] = useState(false);
@@ -74,24 +74,46 @@ function ItemsTab({ editable }: { editable: boolean }) {
     knowledgeApi.tags().then((d) => setAllTags(d.tags)).catch(() => {});
     knowledgeApi.embeddingStatus().then(setVec).catch(() => {});
   };
+  // 递增序号防过期响应：快速切换筛选/翻页时，只有最新一次请求的结果才落地。
+  const loadSeq = useRef(0);
   const load = () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
-    knowledgeApi.list(params).then(setData).finally(() => setLoading(false));
-    loadMeta();
+    knowledgeApi.list(params)
+      .then((d) => { if (seq === loadSeq.current) setData(d); })
+      .catch((e) => { if (seq === loadSeq.current) message.error(apiError(e)); })
+      .finally(() => { if (seq === loadSeq.current) setLoading(false); });
   };
-  useEffect(load, [JSON.stringify(params)]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [params.q, params.status, params.category, params.tag, params.source, params.page, params.page_size]);
+  // 分类/标签/向量化进度变化不频繁：只在挂载和写操作后刷新，翻页/搜索不重复拉
+  useEffect(loadMeta, []);
+  // 后台嵌入进行中时轮询进度条，完成即自动停止；空闲零请求
+  const embedding = !!vec && (vec.ready_chunks < vec.total_chunks || vec.rebuild?.status === "running");
+  usePolling(() => { knowledgeApi.embeddingStatus().then(setVec).catch(() => {}); }, 5000, { enabled: embedding });
+  const reloadAll = () => { load(); loadMeta(); };
 
   const bulkDelete = async () => {
-    await Promise.all(selected.map((id) => knowledgeApi.remove(String(id))));
-    message.success(`已删除 ${selected.length} 条`);
-    setSelected([]);
-    load();
+    try {
+      const results = await Promise.allSettled(selected.map((id) => knowledgeApi.remove(String(id))));
+      const failedIds = selected.filter((_, i) => results[i].status === "rejected");
+      if (failedIds.length) message.warning(`删除成功 ${selected.length - failedIds.length} 条，失败 ${failedIds.length} 条，失败条目已保留选中`);
+      else message.success(`已删除 ${selected.length} 条`);
+      setSelected(failedIds);
+    } finally {
+      reloadAll();
+    }
   };
   const bulkStatus = async (status: string) => {
-    await Promise.all(selected.map((id) => knowledgeApi.update(String(id), { status })));
-    message.success(`已更新 ${selected.length} 条`);
-    setSelected([]);
-    load();
+    try {
+      const results = await Promise.allSettled(selected.map((id) => knowledgeApi.update(String(id), { status })));
+      const failedIds = selected.filter((_, i) => results[i].status === "rejected");
+      if (failedIds.length) message.warning(`更新成功 ${selected.length - failedIds.length} 条，失败 ${failedIds.length} 条，失败条目已保留选中`);
+      else message.success(`已更新 ${selected.length} 条`);
+      setSelected(failedIds);
+    } finally {
+      reloadAll();
+    }
   };
 
   const reembedPending = async () => {
@@ -106,9 +128,13 @@ function ItemsTab({ editable }: { editable: boolean }) {
 
   const openEdit = async (item: any) => {
     if (item?.id) {
-      const full = await knowledgeApi.get(item.id);
-      form.setFieldsValue(full);
-      setDrawer(full);
+      try {
+        const full = await knowledgeApi.get(item.id);
+        form.setFieldsValue(full);
+        setDrawer(full);
+      } catch (e) {
+        message.error(apiError(e));
+      }
     } else {
       form.resetFields();
       form.setFieldsValue({ status: "published", tags: [] });
@@ -123,17 +149,17 @@ function ItemsTab({ editable }: { editable: boolean }) {
       else await knowledgeApi.create(v);
       message.success("已保存，向量将后台异步生成");
       setDrawer(null);
-      load();
+      reloadAll();
     } catch (e) {
       message.error(apiError(e));
     }
   };
 
   const columns = [
-    { title: "标题", dataIndex: "title", render: (t: string, r: any) => t || <span style={{ color: "#aaa" }}>{r.content.slice(0, 30)}…</span> },
+    { title: "标题", dataIndex: "title", render: (t: string, r: any) => t || <span style={{ color: token.colorTextTertiary }}>{r.content.slice(0, 30)}…</span> },
     { title: "分类", dataIndex: "category", width: 120, render: (c: string) => c ? <Tag>{c}</Tag> : "—" },
-    { title: "状态", dataIndex: "status", width: 90, render: (s: string) => <Tag color={STATUS_COLORS[s]}>{s}</Tag> },
-    { title: "来源", dataIndex: "source", width: 100, render: (s: string) => SOURCE_LABELS[s] || s },
+    { title: "状态", dataIndex: "status", width: 90, render: (s: string) => { const m = statusMeta(KNOWLEDGE_STATUS, s); return <Tag color={m.color}>{m.label}</Tag>; } },
+    { title: "来源", dataIndex: "source", width: 100, render: (s: string) => { const m = statusMeta(KNOWLEDGE_SOURCE, s); return <Tag color={m.color}>{m.label}</Tag>; } },
     { title: "版本", dataIndex: "version", width: 70 },
     {
       title: "向量", width: 90, render: (_: any, r: any) => {
@@ -154,7 +180,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
           <a onClick={() => setChunksItem(r)}><PartitionOutlined /> 分片</a>
           <a onClick={() => setVersionsItem(r)}><HistoryOutlined /> 版本</a>
           {editable && (
-            <Popconfirm title="确认删除？" onConfirm={async () => { await knowledgeApi.remove(r.id); message.success("已删除"); load(); }}>
+            <Popconfirm title="确认删除？删除后不可恢复" onConfirm={async () => { try { await knowledgeApi.remove(r.id); message.success("已删除"); } catch (e) { message.error(apiError(e)); } reloadAll(); }}>
               <a style={{ color: "#ef4444" }}>删除</a>
             </Popconfirm>
           )}
@@ -167,7 +193,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
     <Card>
       {vec && (
         <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, color: "#5b6573" }}>向量化 {vec.ready_chunks}/{vec.total_chunks} 分块</span>
+          <span style={{ fontSize: 13, color: token.colorTextSecondary }}>向量化 {vec.ready_chunks}/{vec.total_chunks} 分块</span>
           <Progress
             percent={vec.total_chunks ? Math.round((vec.ready_chunks / vec.total_chunks) * 100) : 100}
             size="small" style={{ width: 180 }}
@@ -194,8 +220,13 @@ function ItemsTab({ editable }: { editable: boolean }) {
         />
         <Select
           allowClear placeholder="状态" style={{ width: 110 }}
-          options={[{ value: "published", label: "已发布" }, { value: "draft", label: "草稿" }, { value: "archived", label: "已归档" }]}
+          options={Object.entries(KNOWLEDGE_STATUS).map(([value, m]) => ({ value, label: m.label }))}
           onChange={(v) => setParams((p: any) => ({ ...p, status: v || "", page: 1 }))}
+        />
+        <Select
+          allowClear placeholder="来源" style={{ width: 120 }}
+          options={Object.entries(KNOWLEDGE_SOURCE).map(([value, m]) => ({ value, label: m.label }))}
+          onChange={(v) => setParams((p: any) => ({ ...p, source: v || "", page: 1 }))}
         />
         <Button icon={<ExperimentOutlined />} onClick={() => setTestOpen(true)}>测试检索</Button>
         {editable && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>批量导入</Button>}
@@ -212,7 +243,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
           <span style={{ fontSize: 13 }}>已选 {selected.length} 项</span>
           <Button size="small" onClick={() => bulkStatus("published")}>发布</Button>
           <Button size="small" onClick={() => bulkStatus("archived")}>归档</Button>
-          <Popconfirm title={`删除选中的 ${selected.length} 条？`} onConfirm={bulkDelete}>
+          <Popconfirm title={`删除选中的 ${selected.length} 条？删除后不可恢复`} onConfirm={bulkDelete}>
             <Button size="small" danger>删除</Button>
           </Popconfirm>
           <a onClick={() => setSelected([])} style={{ fontSize: 12 }}>取消选择</a>
@@ -221,6 +252,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
 
       <Table
         rowKey="id" loading={loading} columns={columns as any} dataSource={data.items} size="small"
+        scroll={{ x: "max-content" }}
         rowSelection={editable ? { selectedRowKeys: selected, onChange: setSelected } : undefined}
         pagination={{
           current: params.page, pageSize: params.page_size, total: data.total,
@@ -244,8 +276,8 @@ function ItemsTab({ editable }: { editable: boolean }) {
               const md = form.getFieldValue("content") || "";
               return md ? (
                 <div style={{ marginTop: -8, marginBottom: 12 }}>
-                  <div style={{ fontSize: 12, color: "#888", marginBottom: 4 }}>Markdown 预览</div>
-                  <div className="acs-md" style={{ border: "1px solid #f0f0f0", borderRadius: 6, padding: "8px 12px", background: "#fafafa", maxHeight: 260, overflow: "auto" }}>
+                  <div style={{ fontSize: 12, color: token.colorTextTertiary, marginBottom: 4 }}>Markdown 预览</div>
+                  <div className="acs-md" style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 6, padding: "8px 12px", background: token.colorFillQuaternary, maxHeight: 260, overflow: "auto" }}>
                     <ReactMarkdown>{md}</ReactMarkdown>
                   </div>
                 </div>
@@ -255,7 +287,7 @@ function ItemsTab({ editable }: { editable: boolean }) {
           <Space style={{ width: "100%" }} size="large">
             <Form.Item name="category" label="分类" style={{ flex: 1 }}><Input placeholder="如 售后" /></Form.Item>
             <Form.Item name="status" label="状态">
-              <Select style={{ width: 140 }} options={[{ value: "published", label: "已发布" }, { value: "draft", label: "草稿" }, { value: "archived", label: "已归档" }]} />
+              <Select style={{ width: 140 }} options={Object.entries(KNOWLEDGE_STATUS).map(([value, m]) => ({ value, label: m.label }))} />
             </Form.Item>
           </Space>
           <Form.Item name="tags" label="标签"><Select mode="tags" placeholder="回车添加标签" /></Form.Item>
@@ -264,22 +296,23 @@ function ItemsTab({ editable }: { editable: boolean }) {
       </Drawer>
 
       <TestRetrievalModal open={testOpen} onClose={() => setTestOpen(false)} />
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onDone={load} />
-      <VersionsModal item={versionsItem} onClose={() => setVersionsItem(null)} onRollback={load} editable={editable} />
-      <ChunksModal item={chunksItem} editable={editable} onClose={() => setChunksItem(null)} onReembedded={load} />
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onDone={reloadAll} />
+      <VersionsModal item={versionsItem} onClose={() => setVersionsItem(null)} onRollback={reloadAll} editable={editable} />
+      <ChunksModal item={chunksItem} editable={editable} onClose={() => setChunksItem(null)} onReembedded={reloadAll} />
     </Card>
   );
 }
 
 function ChunksModal({ item, editable, onClose, onReembedded }: any) {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!item?.id) { setData(null); return; }
     setLoading(true);
-    knowledgeApi.itemChunks(item.id).then(setData).finally(() => setLoading(false));
+    knowledgeApi.itemChunks(item.id).then(setData).catch((e) => message.error(apiError(e))).finally(() => setLoading(false));
   }, [item?.id]);
   const reembed = async () => {
     setBusy(true);
@@ -302,7 +335,7 @@ function ChunksModal({ item, editable, onClose, onReembedded }: any) {
       ] : null}
     >
       {data && (
-        <div style={{ marginBottom: 10, fontSize: 13, color: "#5b6573" }}>
+        <div style={{ marginBottom: 10, fontSize: 13, color: token.colorTextSecondary }}>
           共 {data.chunk_count} 段，已向量化 {data.ready_count}/{data.chunk_count}
           {data.ready_count < data.chunk_count && <Tag color="error" style={{ marginLeft: 8 }}>有分片缺向量</Tag>}
         </div>
@@ -310,14 +343,15 @@ function ChunksModal({ item, editable, onClose, onReembedded }: any) {
       <List
         loading={loading} size="small" dataSource={data?.chunks || []}
         style={{ maxHeight: 460, overflow: "auto" }}
+        pagination={{ pageSize: 20, size: "small", showTotal: (t) => `共 ${t} 段` }}
         locale={{ emptyText: "暂无分片（保存内容后会自动分块）" }}
         renderItem={(c: any) => (
           <List.Item>
             <div style={{ width: "100%" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
-                <span style={{ fontSize: 12, color: "#888" }}>#{c.chunk_index} · {c.token_count} tokens</span>
-                <Tag color={c.status === "ready" ? "green" : c.status === "pending" ? "orange" : "error"}>
-                  {c.embedded ? c.status : "无向量"}
+                <span style={{ fontSize: 12, color: token.colorTextTertiary }}>#{c.chunk_index} · {c.token_count} tokens</span>
+                <Tag color={c.embedded ? statusMeta(CHUNK_STATUS, c.status).color : "error"}>
+                  {c.embedded ? statusMeta(CHUNK_STATUS, c.status).label : "无向量"}
                 </Tag>
               </div>
               <div style={{ fontSize: 13, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{c.content}</div>
@@ -330,6 +364,7 @@ function ChunksModal({ item, editable, onClose, onReembedded }: any) {
 }
 
 function TestRetrievalModal({ open, onClose }: any) {
+  const { message } = AntApp.useApp();
   const [q, setQ] = useState("");
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -338,6 +373,8 @@ function TestRetrievalModal({ open, onClose }: any) {
     try {
       const d = await knowledgeApi.testRetrieval(q);
       setResults(d.results);
+    } catch (e) {
+      message.error(apiError(e));
     } finally {
       setLoading(false);
     }
@@ -401,9 +438,10 @@ function ImportModal({ open, onClose, onDone }: any) {
 
 function VersionsModal({ item, onClose, onRollback, editable }: any) {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   const [versions, setVersions] = useState<any[]>([]);
   useEffect(() => {
-    if (item?.id) knowledgeApi.versions(item.id).then((d) => setVersions(d.versions));
+    if (item?.id) knowledgeApi.versions(item.id).then((d) => setVersions(d.versions)).catch((e) => message.error(apiError(e)));
   }, [item]);
   return (
     <Modal title="版本历史" open={!!item} onCancel={onClose} footer={null} width={640}>
@@ -413,13 +451,15 @@ function VersionsModal({ item, onClose, onRollback, editable }: any) {
           <List.Item
             actions={editable ? [
               <Popconfirm title={`回滚到 v${v.version}？`} onConfirm={async () => {
-                await knowledgeApi.rollback(item.id, v.id); message.success("已回滚"); onRollback(); onClose();
+                try {
+                  await knowledgeApi.rollback(item.id, v.id); message.success("已回滚"); onRollback(); onClose();
+                } catch (e) { message.error(apiError(e)); }
               }}><a>回滚</a></Popconfirm>,
             ] : []}
           >
             <List.Item.Meta
-              title={<span>v{v.version} <Tag>{v.editor_email || "系统"}</Tag> <span style={{ color: "#999", fontSize: 12 }}>{v.change_note}</span></span>}
-              description={<div><b>{v.title}</b><div style={{ color: "#666", fontSize: 12 }}>{v.content?.slice(0, 120)}…</div></div>}
+              title={<span>v{v.version} <Tag>{v.editor_email || "系统"}</Tag> <span style={{ color: token.colorTextTertiary, fontSize: 12 }}>{v.change_note}</span></span>}
+              description={<div><b>{v.title}</b><div style={{ color: token.colorTextSecondary, fontSize: 12 }}>{v.content?.slice(0, 120)}…</div></div>}
             />
           </List.Item>
         )}
@@ -428,10 +468,15 @@ function VersionsModal({ item, onClose, onRollback, editable }: any) {
   );
 }
 
-function ReviewTab({ editable, onChange }: any) {
+function ReviewTab({ editable, onCount }: any) {
   const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
   const [items, setItems] = useState<any[]>([]);
-  const load = () => knowledgeApi.reviewList("pending").then((d) => setItems(d.candidates));
+  // 加载同时上报徽标数，父组件不再按 tab 重复请求
+  const load = () =>
+    knowledgeApi.reviewList("pending")
+      .then((d) => { setItems(d.candidates); onCount?.(d.candidates.length); })
+      .catch((e) => message.error(apiError(e)));
   useEffect(() => { load(); }, []);
 
   return (
@@ -439,13 +484,14 @@ function ReviewTab({ editable, onChange }: any) {
       <Alert style={{ marginBottom: 16 }} type="info" showIcon message="以下是从对话中自动沉淀的候选知识，审核通过后将进入知识库。" />
       <List
         dataSource={items} locale={{ emptyText: "暂无待审核内容" }}
+        pagination={{ pageSize: 10, size: "small", showTotal: (t) => `共 ${t} 条` }}
         renderItem={(c: any) => (
           <List.Item
             actions={editable ? [
-              <Popconfirm title="通过并加入知识库？" onConfirm={async () => { await knowledgeApi.reviewApprove(c.id, {}); message.success("已通过"); load(); onChange(); }}>
+              <Popconfirm title="通过并加入知识库？" onConfirm={async () => { try { await knowledgeApi.reviewApprove(c.id, {}); message.success("已通过"); } catch (e) { message.error(apiError(e)); } load(); }}>
                 <a style={{ color: "#10b981" }}>通过</a>
               </Popconfirm>,
-              <Popconfirm title="拒绝该候选？" onConfirm={async () => { await knowledgeApi.reviewReject(c.id); message.success("已拒绝"); load(); onChange(); }}>
+              <Popconfirm title="拒绝该候选？" onConfirm={async () => { try { await knowledgeApi.reviewReject(c.id); message.success("已拒绝"); } catch (e) { message.error(apiError(e)); } load(); }}>
                 <a style={{ color: "#ef4444" }}>拒绝</a>
               </Popconfirm>,
             ] : []}
@@ -455,7 +501,7 @@ function ReviewTab({ editable, onChange }: any) {
               description={
                 <div>
                   <div style={{ marginBottom: 4 }}>{c.suggested_content}</div>
-                  <div style={{ color: "#999", fontSize: 12, whiteSpace: "pre-wrap" }}>原始片段：{c.raw_excerpt?.slice(0, 160)}…</div>
+                  <div style={{ color: token.colorTextTertiary, fontSize: 12, whiteSpace: "pre-wrap" }}>原始片段：{c.raw_excerpt?.slice(0, 160)}…</div>
                 </div>
               }
             />
