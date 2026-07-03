@@ -43,25 +43,34 @@ async function boot() {
   const channelKey = cfg.channelKey || "default";
   const mode = cfg.mode || "popup";
 
+  // 配置拉取失败重试（退避 5s/10s/20s/40s/60s…最多 8 次）：宿主页加载时后端恰好
+  // 不可用不该让客服按钮永远消失。策略性拒绝（域名未白名单/渠道停用）不重试。
   let branding: WidgetConfig["branding"];
-  try {
-    const resp = await fetch(`${baseUrl}/api/chat/config?channel_key=${encodeURIComponent(channelKey)}`, {
-      headers: { "Content-Type": "application/json" },
-    });
-    const data = await resp.json();
-    if (data.allowed === false) {
-      // Domain not whitelisted — refuse to load on this origin.
-      console.warn("[ACS] widget not allowed on this domain");
-      return;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const resp = await fetch(`${baseUrl}/api/chat/config?channel_key=${encodeURIComponent(channelKey)}`, {
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!resp.ok) throw new Error(`config http ${resp.status}`);
+      const data = await resp.json();
+      if (data.allowed === false) {
+        // Domain not whitelisted — refuse to load on this origin.
+        console.warn("[ACS] widget not allowed on this domain");
+        return;
+      }
+      branding = data.branding;
+      if (branding && (data.branding.enabled === false)) {
+        console.warn("[ACS] widget disabled");
+        return;
+      }
+      break;
+    } catch (e) {
+      if (attempt >= 7) {
+        console.warn("[ACS] failed to load config, giving up", e);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, Math.min(5000 * 2 ** attempt, 60000)));
     }
-    branding = data.branding;
-    if (branding && (data.branding.enabled === false)) {
-      console.warn("[ACS] widget disabled");
-      return;
-    }
-  } catch (e) {
-    console.warn("[ACS] failed to load config", e);
-    return;
   }
 
   const host = document.createElement("div");
