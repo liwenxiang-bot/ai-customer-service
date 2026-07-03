@@ -828,6 +828,15 @@ select {
   border-top: 1px solid var(--line);
   flex-shrink: 0;
 }
+/* ⚡ / 输入框 / 发送 三件套等高对齐：把两个按钮拉到与单行输入框同高（42px =
+   16px 字号 × 1.5 行高 + 8px×2 内边距 + 1px×2 边框）。align-items:flex-end 下三者
+   顶/底都齐平；输入框换行增高时按钮仍锚在底部。 */
+.composer .btn {
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .composer-input {
   flex: 1;
   resize: none;
@@ -837,6 +846,7 @@ select {
   font: inherit;
   /* ≥16px：防止 iOS Safari 点击回复框时自动放大页面（见 .input 说明）。 */
   font-size: 16px;
+  line-height: 1.5;
   outline: none;
   max-height: 120px; /* 与 Session.tsx autoGrow 上限一致 */
   background: var(--panel);
@@ -848,6 +858,7 @@ select {
 }
 .composer-canned {
   padding: 7px;
+  width: 42px; /* 与高度一致，做成正方形图标按钮，和输入框/发送更平衡 */
 }
 .composer-canned-on {
   background: var(--primary-weak);
