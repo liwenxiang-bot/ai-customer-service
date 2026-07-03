@@ -29,6 +29,23 @@ async def set_feedback(
     msg.feedback_note = note or ""
     await db.flush()
 
+    # 👎 is the strongest live "retrieval failed the user" signal. Log it structured —
+    # with whether a retrieval actually backed the answer — so dashboards can split
+    # 漏召回 from chit-chat downvotes and scripts/mine_bad_cases has a cheap audit trail.
+    if kind == FeedbackKind.DOWN:
+        has_retrieval = any(
+            isinstance(tc, dict) and tc.get("name") == "search_knowledge"
+            for tc in (msg.tool_calls or [])
+        )
+        log.info(
+            "feedback_down",
+            message_id=str(msg.id),
+            session_id=str(msg.session_id),
+            has_retrieval=has_retrieval,
+            citation_count=len(msg.citations or []),
+            note=(note or "")[:200],
+        )
+
     # 👍 on a grounded answer → candidate for knowledge distillation (best-effort).
     if kind == FeedbackKind.UP and msg.citations:
         try:

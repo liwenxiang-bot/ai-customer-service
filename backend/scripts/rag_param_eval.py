@@ -2,12 +2,18 @@
 
 Unlike scripts/rag_eval (a tiny smoke set), this synthesizes a *hard* corpus —
 semantically-close clusters (退款时效 vs 退款方式 …) + long multi-section docs + noise —
-so that chunk_size and HNSW ef_construction differences actually surface. It sweeps each
-parameter, prints recall@k / MRR, and cleans up after itself.
+so parameter differences actually surface. Beyond chunk_size and HNSW ef_construction
+(both expensive: re-embed / index rebuild), it sweeps the cheap retrieval-time params
+that gate recall in production — fusion weights, trgm_threshold, vector_min_sim,
+candidate_multiplier, RRF K — and reports vector-only vs keyword-only recall so the
+fusion weights have a direction, not just a score. Every table carries a
+correct-rejection column: recall-only sweeps of a floor like vector_min_sim would
+always conclude "lower is better".
 
 Run:  python -m scripts.rag_param_eval
 Heavy on the embedding API (re-embeds the corpus once per chunk_size). Marked items use
-category='__param_eval__' and are deleted at the end.
+category='__param_eval__'; cleanup (items + index restore) runs in a finally block and
+leftovers from a crashed run are swept on startup.
 """
 
 from __future__ import annotations
@@ -22,11 +28,16 @@ from app.core.logging import configure_logging, get_logger
 from app.db.session import session_scope
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem
 from app.rag.retrieval import hybrid_search
-from app.services.ai_config import get_active_ai_config
+from app.services.ai_config import get_active_ai_config, merged_retrieval
 
 log = get_logger("rag_param_eval")
 TAG = "__param_eval__"
 TOP_K = 3
+
+# Baseline build parameter of ix_chunks_embedding_hnsw — keep in sync with alembic
+# 0015 and embedding_rebuild._alter_vector_dim, or a finished eval run silently
+# downgrades the production index.
+_DEFAULT_EF = 200
 
 # ---- Ambiguous clusters: items a query could easily confuse (the hard part) ----
 CLUSTERS: list[tuple[str, str]] = [
@@ -76,6 +87,17 @@ QUERIES: list[tuple[str, str]] = [
     ("优惠券能不能一起用", "优惠券使用规则"),
 ]
 
+# Off-topic queries the corpus can't answer — retrieval SHOULD return []. Without
+# them every floor-type sweep (vector_min_sim, trgm_threshold) reads "lower = more
+# recall = better", which is exactly the wrong conclusion.
+NEGATIVE_QUERIES: list[str] = [
+    "今天天气怎么样",
+    "帮我写一首关于春天的诗",
+    "世界杯决赛是哪天踢",
+    "附近有什么好吃的火锅店",
+    "如何自学钢琴入门",
+]
+
 # ---- Long multi-section docs (chunk_size sensitivity) + section-targeting queries ----
 _SECTIONS = [
     ("账户安全", "建议开启两步验证，定期更换高强度密码，不要在公共设备保存登录状态，发现异常立即冻结。"),
@@ -117,29 +139,39 @@ async def _chunk_and_store(db: AsyncSession, item: KnowledgeItem, emb, chunk_siz
     from app.rag.chunking import chunk_text
     from app.rag.segment import segment
 
-    txt = f"{item.title}\n{item.content}" if item.title else item.content
-    pieces = chunk_text(txt, chunk_size, overlap)
+    # Ingest rule (mirror of services.knowledge.reembed_item): chunk the bare content so
+    # stored chunks stay citation-accurate; the title is prefixed into the embedding
+    # input AND content_seg so every chunk — not just chunk 0 — keeps its topic anchor
+    # on both retrieval paths.
+    pieces = chunk_text(item.content, chunk_size, overlap)
     await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.item_id == item.id))
-    vectors = await get_embedding_client(emb).embed(pieces) if pieces else []
+    inputs = [f"{item.title}\n{p}" if item.title else p for p in pieces]
+    vectors = await get_embedding_client(emb).embed(inputs) if pieces else []
     for i, (piece, vec) in enumerate(zip(pieces, vectors, strict=False)):
         db.add(KnowledgeChunk(
             tenant_id=item.tenant_id, item_id=item.id, chunk_index=i, content=piece,
-            content_seg=segment(piece), embedding=vec, embedding_model=emb.model,
+            content_seg=segment(f"{item.title}\n{piece}" if item.title else piece),
+            embedding=vec, embedding_model=emb.model,
             embedding_dim=emb.dim, status="ready", token_count=estimate_tokens(piece),
         ))
     await db.flush()
     return len(pieces)
 
 
-async def _metrics(db, cfg) -> tuple[float, float]:
+async def _metrics(db, cfg, top_k: int = TOP_K) -> tuple[float, float, float]:
+    """(recall@top_k, MRR, correct-rejection-rate) under `cfg`."""
     hits, rr = 0, 0.0
     for q, exp in QUERIES:
-        res = await hybrid_search(db, cfg, q, top_k=TOP_K)
+        res = await hybrid_search(db, cfg, q, top_k=top_k)
         rank = next((i + 1 for i, r in enumerate(res) if exp in (r.title or "")), 0)
         if rank:
             hits += 1
             rr += 1.0 / rank
-    return hits / len(QUERIES), rr / len(QUERIES)
+    rejected = 0
+    for q in NEGATIVE_QUERIES:
+        if not await hybrid_search(db, cfg, q, top_k=top_k):
+            rejected += 1
+    return hits / len(QUERIES), rr / len(QUERIES), rejected / len(NEGATIVE_QUERIES)
 
 
 async def _set_ef_construction(db, ef: int) -> float:
@@ -153,6 +185,74 @@ async def _set_ef_construction(db, ef: int) -> float:
     return time.monotonic() - t0
 
 
+async def _sweep_params(
+    db, cfg, header: str, rows: list[tuple[str, dict]], top_k: int = TOP_K
+) -> None:
+    """One table per sweep; each row is (label, retrieval-key overrides). Overrides are
+    in-memory only (never committed) and restored afterwards. Cheap: no re-embedding."""
+    orig = dict(cfg.retrieval or {})
+    print(f"\n--- {header} (top_k={top_k}) ---")
+    print(f"{'value':>20} | {'recall@' + str(top_k):>9} | {'MRR':>6} | {'reject':>7}")
+    print("-" * 54)
+    try:
+        for label, overrides in rows:
+            cfg.retrieval = {**orig, **overrides}
+            rec, mrr, rej = await _metrics(db, cfg, top_k=top_k)
+            print(f"{label:>20} | {rec:>9.0%} | {mrr:>6.3f} | {rej:>7.0%}")
+    finally:
+        cfg.retrieval = orig
+
+
+async def _sweep_rrf_k(db, cfg) -> None:
+    """RRF damping constant K. Not a retrieval config key — patch the module constant.
+    Swept at top_k=5 so the candidate pool (max(5*8, 20) = 40) matches production; the
+    small K end sharpens head ranks but also amplifies a noisy keyword top-1, hence the
+    reject column matters here."""
+    import app.rag.retrieval as retrieval_mod
+
+    if not hasattr(retrieval_mod, "_RRF_K"):
+        print("\n--- RRF K sweep: skipped — retrieval._RRF_K 已不存在（被重构为参数？），改用其新机制扫描。")
+        return
+    orig_k = retrieval_mod._RRF_K
+    print(f"\n--- RRF K sweep (top_k=5, pool≈40, 当前默认 K={orig_k}) ---")
+    print(f"{'K':>6} | {'recall@5':>9} | {'MRR':>6} | {'reject':>7}")
+    print("-" * 40)
+    try:
+        for k in (10, 20, 40, 60):
+            retrieval_mod._RRF_K = k
+            rec, mrr, rej = await _metrics(db, cfg, top_k=5)
+            print(f"{k:>6} | {rec:>9.0%} | {mrr:>6.3f} | {rej:>7.0%}")
+    finally:
+        retrieval_mod._RRF_K = orig_k
+
+
+async def _single_path_report(db, cfg) -> None:
+    """Vector-only vs keyword-only recall@K — the fused number alone can't say which
+    side of the fusion weights is carrying which queries."""
+    from app.rag.retrieval import _embed_query, _keyword_search, _vector_search
+    from app.services.ai_config import to_embedding_settings
+
+    params = merged_retrieval(cfg)
+    emb_cfg = to_embedding_settings(cfg)
+    try:
+        v_hits = k_hits = 0
+        for q, exp in QUERIES:
+            qvec = await _embed_query(emb_cfg, q)
+            if qvec is not None:
+                vrows, _ = await _vector_search(
+                    db, emb_cfg, qvec, TOP_K, float(params["vector_min_sim"])
+                )
+                v_hits += any(exp in (r[2] or "") for r in vrows)
+            krows = await _keyword_search(db, q, TOP_K, float(params["trgm_threshold"]))
+            k_hits += any(exp in (r[2] or "") for r in krows)
+        n = len(QUERIES)
+        print(f"\n--- single-path recall@{TOP_K} ---")
+        print(f"vector-only : {v_hits}/{n} = {v_hits / n:.0%}")
+        print(f"keyword-only: {k_hits}/{n} = {k_hits / n:.0%}")
+    except Exception as exc:  # noqa: BLE001 — private helpers; skip if their shape changed
+        print(f"\nsingle-path report skipped（retrieval 内部接口变了？）: {exc}")
+
+
 # ---------------------------------------------------------------- main
 async def main() -> None:
     configure_logging()
@@ -162,51 +262,89 @@ async def main() -> None:
         emb = to_embedding_settings(cfg)
         overlap = 50  # fixed small overlap so it stays valid across the small chunk_sizes swept
 
-        # seed corpus (unembedded shells first)
-        ids = []
-        for title, content in build_corpus():
-            it = KnowledgeItem(title=title, content=content, category=TAG, status="published")
-            db.add(it)
-            await db.flush()
-            ids.append(it.id)
+        # Residue from a crashed previous run would skew every sweep — clear it first.
+        left = (
+            await db.execute(delete(KnowledgeItem).where(KnowledgeItem.category == TAG))
+        ).rowcount or 0
         await db.commit()
-        print(f"seeded {len(ids)} synthetic items ({len(QUERIES)} labelled queries)\n")
+        if left:
+            print(f"removed {left} leftover {TAG} item(s) from a previous run")
 
-        # ---- sweep chunk_size (re-embed corpus each time) ----
-        print(f"--- chunk_size sweep (overlap={overlap}, top_k={TOP_K}) ---")
-        print(f"{'chunk_size':>11} | {'chunks':>6} | {'recall@' + str(TOP_K):>9} | {'MRR':>6}")
-        print("-" * 44)
-        for cs in (120, 200, 350, 600):
-            total = 0
+        ids: list = []
+        index_touched = False
+        try:
+            # seed corpus (unembedded shells first)
+            for title, content in build_corpus():
+                it = KnowledgeItem(title=title, content=content, category=TAG, status="published")
+                db.add(it)
+                await db.flush()
+                ids.append(it.id)
+            await db.commit()
+            print(f"seeded {len(ids)} synthetic items ({len(QUERIES)} labelled + {len(NEGATIVE_QUERIES)} negative queries)\n")
+
+            # ---- sweep chunk_size (re-embed corpus each time) ----
+            print(f"--- chunk_size sweep (overlap={overlap}, top_k={TOP_K}) ---")
+            print(f"{'chunk_size':>11} | {'chunks':>6} | {'recall@' + str(TOP_K):>9} | {'MRR':>6} | {'reject':>7}")
+            print("-" * 54)
+            for cs in (120, 200, 350, 600):
+                total = 0
+                for iid in ids:
+                    it = await db.get(KnowledgeItem, iid)
+                    total += await _chunk_and_store(db, it, emb, cs, overlap)
+                await db.commit()
+                cfg.retrieval = {**(cfg.retrieval or {}), "chunk_size": cs}
+                rec, mrr, rej = await _metrics(db, cfg)
+                print(f"{cs:>11} | {total:>6} | {rec:>9.0%} | {mrr:>6.3f} | {rej:>7.0%}")
+
+            # restore chunk_size to 600 for the remaining sweeps
             for iid in ids:
                 it = await db.get(KnowledgeItem, iid)
-                total += await _chunk_and_store(db, it, emb, cs, overlap)
+                await _chunk_and_store(db, it, emb, 600, overlap)
             await db.commit()
-            cfg.retrieval = {**(cfg.retrieval or {}), "chunk_size": cs}
-            rec, mrr = await _metrics(db, cfg)
-            print(f"{cs:>11} | {total:>6} | {rec:>9.0%} | {mrr:>6.3f}")
+            cfg.retrieval = {**(cfg.retrieval or {}), "chunk_size": 600}
 
-        # restore chunk_size to 600 for the ef_construction sweep
-        for iid in ids:
-            it = await db.get(KnowledgeItem, iid)
-            await _chunk_and_store(db, it, emb, 600, overlap)
-        await db.commit()
-        cfg.retrieval = {**(cfg.retrieval or {}), "chunk_size": 600}
+            # ---- cheap retrieval-param sweeps (no re-embedding, chunk_size=600) ----
+            await _single_path_report(db, cfg)
+            await _sweep_params(db, cfg, "fusion weights sweep", [
+                (f"v{vw:.1f}/k{kw:.1f}", {"vector_weight": vw, "keyword_weight": kw})
+                for vw, kw in ((0.7, 0.3), (0.6, 0.4), (0.5, 0.5))
+            ])
+            await _sweep_params(db, cfg, "trgm_threshold sweep", [
+                (f"{t:.2f}", {"trgm_threshold": t}) for t in (0.2, 0.3, 0.4, 0.5, 0.6)
+            ])
+            await _sweep_params(db, cfg, "vector_min_sim sweep", [
+                (f"{v:.2f}", {"vector_min_sim": v}) for v in (0.35, 0.45, 0.50, 0.55, 0.60)
+            ])
+            # Pool = max(top_k*mult, 20): at top_k=3 the 20-floor clamps the low end,
+            # so sweep at production top_k=5 (pool 20/40/60).
+            await _sweep_params(db, cfg, "candidate_multiplier sweep", [
+                (str(m), {"candidate_multiplier": m}) for m in (4, 8, 12)
+            ], top_k=5)
+            await _sweep_rrf_k(db, cfg)
 
-        # ---- sweep HNSW ef_construction (index rebuild only) ----
-        print("\n--- HNSW ef_construction sweep (chunk_size=600) ---")
-        print(f"{'ef_construction':>15} | {'build_s':>7} | {'recall@'+str(TOP_K):>9} | {'MRR':>6}")
-        print("-" * 46)
-        for ef in (64, 200, 400):
-            build_s = await _set_ef_construction(db, ef)
-            rec, mrr = await _metrics(db, cfg)
-            print(f"{ef:>15} | {build_s:>7.2f} | {rec:>9.0%} | {mrr:>6.3f}")
-
-        # ---- cleanup: drop synthetic items + restore default index ----
-        await _set_ef_construction(db, 64)  # pgvector default
-        await db.execute(delete(KnowledgeItem).where(KnowledgeItem.id.in_(ids)))
-        await db.commit()
-        print("\ncleaned up synthetic corpus; index restored to default ef_construction.")
+            # ---- sweep HNSW ef_construction (index rebuild only) ----
+            print("\n--- HNSW ef_construction sweep (chunk_size=600) ---")
+            print(f"{'ef_construction':>15} | {'build_s':>7} | {'recall@' + str(TOP_K):>9} | {'MRR':>6} | {'reject':>7}")
+            print("-" * 56)
+            index_touched = True
+            for ef in (64, 200, 400):
+                build_s = await _set_ef_construction(db, ef)
+                rec, mrr, rej = await _metrics(db, cfg)
+                print(f"{ef:>15} | {build_s:>7.2f} | {rec:>9.0%} | {mrr:>6.3f} | {rej:>7.0%}")
+        finally:
+            # rollback first: cleanup must run even when a failure aborted the tx.
+            await db.rollback()
+            try:
+                if index_touched:
+                    await _set_ef_construction(db, _DEFAULT_EF)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("ef_restore_failed", error=str(exc))
+                print(f"!! 未能恢复 HNSW 索引（ef_construction={_DEFAULT_EF}）：{exc} — 请手工重建，否则向量检索退化。")
+            removed = (
+                await db.execute(delete(KnowledgeItem).where(KnowledgeItem.category == TAG))
+            ).rowcount or 0
+            await db.commit()
+            print(f"\ncleaned up {removed} synthetic item(s); index restored to ef_construction={_DEFAULT_EF}.")
 
 
 if __name__ == "__main__":

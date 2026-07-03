@@ -65,9 +65,12 @@ async def _alter_vector_dim(db: AsyncSession, new_dim: int) -> None:
     await db.execute(
         text(f"ALTER TABLE semantic_cache ALTER COLUMN embedding TYPE vector({new_dim}) USING NULL")
     )
+    # Explicit build params (defaults are m=16/ef_construction=64): construction-time
+    # edge quality caps recall at scale and can't be recovered via ef_search. Matches
+    # migration 0015. semantic_cache keeps defaults — a miss only costs one LLM call.
     await db.execute(
         text("CREATE INDEX ix_chunks_embedding_hnsw ON knowledge_chunks "
-             "USING hnsw (embedding vector_cosine_ops)")
+             "USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 200)")
     )
     await db.execute(
         text("CREATE INDEX ix_semcache_embedding_hnsw ON semantic_cache "
@@ -125,10 +128,30 @@ async def run_rebuild(db: AsyncSession, job_id: str) -> None:
             job.progress = min(processed / job.total_chunks, 0.99) if job.total_chunks else 1.0
             await db.commit()
 
+        # Audit the DB instead of trusting the loop: per-item failures are caught above,
+        # but embedding-API failures (rate limits during a full rebuild are common) are
+        # swallowed inside reembed_item, which stores unembedded PENDING chunks and
+        # returns normally. Any chunk left not-ready is an invisible recall gap unless
+        # we surface it here.
+        not_ready = (
+            await db.execute(
+                select(func.count(KnowledgeChunk.id)).where(
+                    KnowledgeChunk.status != ChunkStatus.READY
+                )
+            )
+        ).scalar_one()
         job.status = JobStatus.COMPLETED
         job.progress = 1.0
+        job.error = (
+            f"重建完成，但 {not_ready} 个分块未生成向量（嵌入失败或限流），"
+            "相关内容暂时只能靠关键词检索命中；可调用知识库的 reembed-pending 接口补齐"
+            if not_ready
+            else ""
+        )
         job.finished_at = datetime.now(UTC)
         await db.commit()
+        if not_ready:
+            log.warning("rebuild_completed_with_gaps", job_id=job_id, not_ready_chunks=not_ready)
         log.info("rebuild_completed", job_id=job_id, items=len(item_ids))
     except Exception as exc:  # noqa: BLE001
         log.error("rebuild_failed", job_id=job_id, error=str(exc))
