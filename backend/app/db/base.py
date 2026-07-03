@@ -7,7 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, func
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 from app.config import settings
 from app.db.tenant_context import current_tenant_for_insert
@@ -19,6 +19,15 @@ class Base(DeclarativeBase):
 
 class TimestampMixin:
     """created_at / updated_at, server-managed."""
+
+    @declared_attr.directive
+    def __mapper_args__(cls) -> dict:  # noqa: N805
+        # Fetch onupdate/server defaults via UPDATE .. RETURNING at flush time.
+        # Without this a flushed UPDATE expires `updated_at`, and the next attribute
+        # access (e.g. serializing the row after commit in an API handler) triggers a
+        # sync lazy-load — which raises MissingGreenlet under the async session: the
+        # row is saved but the request 500s.
+        return {"eager_defaults": True}
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
