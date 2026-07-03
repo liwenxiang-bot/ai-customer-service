@@ -117,11 +117,16 @@ Caddy 自动申请并续期证书，无需手动配证书。
 
 ## 6. 坐席工作台（客服实时接待）
 
-客服坐席打开 **`https://chat.yourbiz.com/agent/`**，用后台账号登录即可接待。手机浏览器可「添加到主屏幕」当 App 用。
+坐席站是后端挂在 `/agent` 下的独立 SPA，坐席用后台账号登录。**推荐单独用一个二级域名**（如 `agent.yourbiz.com`），和面向客户的 chat 域名分开——更适合手机 PWA「添加到主屏幕」，也便于单独加访问控制。
 
 - 客户转人工后，工单进坐席站收件箱「待认领」；坐席**认领 → 接管 → 回复 → 结束**，结束时工单自动完结。
 - 若配了转人工通知（企微/SMTP），通知里带**深链**，点一下直达该会话。
-- 无需额外反代规则：`/agent` 静态资源与 `/api/admin`、`/ws/admin` 都在 backend，上面 Caddy 那条 `chat.yourbiz.com → 127.0.0.1:8000` 已覆盖（Caddy 自动透传 WSS）。要放独立域名再配 `.env` 的 `AGENT_CONSOLE_URL`。
+
+**接入方式（三选一）：**
+
+- **独立子域名（推荐）**：DNS 加 `agent.yourbiz.com` → 服务器 IP；用 `deploy/Caddyfile`（或 `deploy/nginx.conf`）里的 `agent.example.com` 块（把子域名根重写到后端 `/agent`，`/api`、`/ws` 直连后端）；`caddy reload`（或 `certbot -d agent.yourbiz.com`）。**最后 `.env` 设 `AGENT_CONSOLE_URL=https://agent.yourbiz.com` 再 `docker compose --profile app up -d --build`**，否则通知深链仍指向 `chat.yourbiz.com/agent`。
+- **对话域名子路径**：`https://chat.yourbiz.com/agent/`——零改动（chat 域名已转发到 backend），但把坐席登录挂在了客户域名下。
+- **后台域名子路径**：`https://admin.yourbiz.com/agent/`——admin 块加一条 `handle /agent* → 127.0.0.1:8000`（Caddy）或 `location /agent { proxy_pass …:8000; }`（nginx）。
 
 ---
 
@@ -130,7 +135,7 @@ Caddy 自动申请并续期证书，无需手动配证书。
 - [ ] `APP_SECRET_KEY` / `JWT_SECRET` 已改强随机；默认管理员密码已改
 - [ ] `POSTGRES_PASSWORD` 已改；`8000/8090` 未对公网暴露
 - [ ] HTTPS/WSS 正常（`https://chat.yourbiz.com/chat` 能流式对话）
-- [ ] 坐席工作台可登录（`https://chat.yourbiz.com/agent/` 用后台账号进得去、收件箱能加载）
+- [ ] 坐席工作台可登录（独立子域名 `https://agent.yourbiz.com`，或 `chat.yourbiz.com/agent/`；用后台账号进得去、收件箱能加载）；用独立子域名时 `AGENT_CONSOLE_URL` 已设并重启
 - [ ] Web 渠道**域名白名单**已填自己的站点
 - [ ] 每日成本上限 `DAILY_COST_CAP_USD` 按预算设；通义「免费额度用完即停」保持**关闭**
 - [ ] 数据库定期备份（`docker compose exec postgres pg_dump ...`）

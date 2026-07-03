@@ -19,6 +19,27 @@ admin.example.com {
     reverse_proxy 127.0.0.1:8090
 }
 
+# ── 坐席工作台（推荐独立子域名）──
+# 坐席站是后端挂在 /agent 下的独立 SPA，用独立子域名和面向客户的 chat 域名分开
+# （更适合手机 PWA、便于单独加访问控制）。子域名根 `/` 重写到后端的 /agent/，
+# /api、/ws 直连后端不加前缀。配好后到 .env 设 AGENT_CONSOLE_URL=https://agent.example.com。
+agent.example.com {
+    # 可选：IP 白名单
+    # @blocked not remote_ip 1.2.3.4 5.6.7.0/24
+    # respond @blocked 403
+
+    handle /api/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+    handle /ws/* {
+        reverse_proxy 127.0.0.1:8000
+    }
+    handle {
+        rewrite * /agent{uri}
+        reverse_proxy 127.0.0.1:8000
+    }
+}
+
 # 也可单域名 + 路径区分（二选一）：
 # example.com {
 #     handle /admin* { reverse_proxy 127.0.0.1:8090 }
