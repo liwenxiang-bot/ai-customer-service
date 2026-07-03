@@ -67,9 +67,15 @@ async def refresh(body: RefreshIn, db: AsyncSession = Depends(get_db)):
 
 @router.get("/me")
 async def me(user: AdminUser = Depends(get_current_user)):
+    # agent_console_url lets the admin link operators to the standalone 坐席工作台 at the
+    # right address (independent subdomain or {app_base_url}/agent) — the admin runs on a
+    # different origin and can't know it otherwise.
+    from app.services.handoff import agent_console_base
+
     return {
         "id": str(user.id), "email": user.email, "name": user.name,
         "role": user.role, "is_super_admin": user.is_super_admin,
+        "agent_console_url": agent_console_base(),
     }
 
 

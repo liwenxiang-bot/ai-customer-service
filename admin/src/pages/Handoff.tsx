@@ -3,7 +3,7 @@ import { Button, Card, Table, Tag, Select, Space, Popconfirm, Badge, Typography,
 import { useNavigate } from "react-router-dom";
 import { handoffApi } from "../api";
 import { apiError } from "../api/client";
-import { useAuth, canEdit } from "../auth";
+import { useAuth, canEdit, agentSessionLink } from "../auth";
 import { CHANNEL_TYPE, HANDOFF_REASON, HANDOFF_STATUS, statusMeta } from "../utils/status";
 
 const PRIO: any = {
@@ -71,7 +71,7 @@ export function Handoff() {
     {
       title: "操作", width: 240, render: (_: any, r: any) => (
         <Space size="small" wrap>
-          <Button type="link" size="small" style={{ padding: 0 }} onClick={() => nav(`/workbench?session=${r.session_id}`)}>去接管</Button>
+          <Button type="link" size="small" style={{ padding: 0 }} onClick={() => window.open(agentSessionLink(user, r.session_id), "_blank", "noopener,noreferrer")}>去接管</Button>
           <Button type="link" size="small" style={{ padding: 0 }} onClick={() => nav(`/conversations?session=${r.session_id}`)}>查看对话</Button>
           {editable && r.status === "open" && !isAssigned(r) && (
             <Button type="link" size="small" style={{ padding: 0 }} onClick={() => claim(r.id)}>认领</Button>

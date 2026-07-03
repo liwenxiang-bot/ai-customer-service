@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useState, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Layout, Menu, Spin, Dropdown, Avatar, Tag, Button, Tooltip, Alert, theme } from "antd";
 import {
@@ -15,15 +15,15 @@ import {
   BulbOutlined,
   ThunderboltOutlined,
   ApartmentOutlined,
+  ExportOutlined,
 } from "@ant-design/icons";
-import { useAuth, isAdmin, isSuperAdmin } from "./auth";
+import { useAuth, isAdmin, isSuperAdmin, agentConsoleUrl } from "./auth";
 import { tenantStore } from "./api/client";
 import { useThemeMode } from "./theme";
 
 // Route-level code splitting: each page loads on demand (pages use named exports).
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
 const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
-const Workbench = lazy(() => import("./pages/Workbench").then((m) => ({ default: m.Workbench })));
 const Knowledge = lazy(() => import("./pages/Knowledge").then((m) => ({ default: m.Knowledge })));
 const AIConfig = lazy(() => import("./pages/AIConfig").then((m) => ({ default: m.AIConfig })));
 const Channels = lazy(() => import("./pages/Channels").then((m) => ({ default: m.Channels })));
@@ -42,9 +42,13 @@ const PageLoading = ({ full }: { full?: boolean }) => (
   </div>
 );
 
+// 坐席工作台已拆成独立站（agent/），后台不再内嵌该页；菜单里保留一个入口，点击在新
+// 标签打开独立站。地址由后端 /me 的 agent_console_url 提供（AGENT_CONSOLE_URL 或
+// {APP_BASE_URL}/agent），admin 与坐席站可能不同域，不能写相对路径。
+const AGENT_MENU_KEY = "__agent_console__";
+
 const MENU = [
   { key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
-  { key: "/workbench", icon: <CustomerServiceOutlined />, label: "坐席工作台" },
   { key: "/conversations", icon: <MessageOutlined />, label: "对话记录" },
   { key: "/knowledge", icon: <BookOutlined />, label: "知识库" },
   { key: "/handoff", icon: <BellOutlined />, label: "转人工工单" },
@@ -65,6 +69,22 @@ function AppLayout() {
   const items = MENU.filter(
     (m) => (!m.adminOnly || isAdmin(user?.role)) && (!m.superOnly || isSuperAdmin(user))
   );
+  // 坐席工作台外链入口（放在「概览」之后）；点击在新标签打开独立站。
+  const agentUrl = agentConsoleUrl(user);
+  const menuItems: { key: string; icon: ReactNode; label: ReactNode }[] = items.map((m) => ({ key: m.key, icon: m.icon, label: m.label }));
+  menuItems.splice(1, 0, {
+    key: AGENT_MENU_KEY,
+    icon: <CustomerServiceOutlined />,
+    label: (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        坐席工作台 <ExportOutlined style={{ fontSize: 11, opacity: 0.65 }} />
+      </span>
+    ),
+  });
+  const onMenuClick = (key: string) => {
+    if (key === AGENT_MENU_KEY) { window.open(agentUrl, "_blank", "noopener,noreferrer"); return; }
+    nav(key);
+  };
   // Super-admin "act as tenant": a non-empty slug means we're scoped into another tenant.
   const actingAs = isSuperAdmin(user) ? tenantStore.slug : "";
 
@@ -78,8 +98,8 @@ function AppLayout() {
           mode="inline"
           style={{ borderInlineEnd: "none" }}
           selectedKeys={[loc.pathname]}
-          items={items.map((m) => ({ key: m.key, icon: m.icon, label: m.label }))}
-          onClick={({ key }) => nav(key)}
+          items={menuItems}
+          onClick={({ key }) => onMenuClick(key)}
         />
       </Sider>
       <Layout>
@@ -114,7 +134,6 @@ function AppLayout() {
             <Suspense fallback={<PageLoading />}>
               <Routes>
                 <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/workbench" element={<Workbench />} />
                 <Route path="/knowledge" element={<Knowledge />} />
                 <Route path="/conversations" element={<Conversations />} />
                 <Route path="/handoff" element={<Handoff />} />
