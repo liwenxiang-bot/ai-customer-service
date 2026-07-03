@@ -63,6 +63,31 @@ async def cleanup_expired(ctx, _tenant: str | None = None) -> int:
     return total
 
 
+async def reembed_stragglers(ctx, _tenant: str | None = None) -> int:
+    """Cron, cross-tenant: requeue items whose chunks are stuck pending/missing.
+
+    Self-heals the ways an item silently drops out of vector retrieval: an embedding
+    outage left pending chunks, the enqueue was lost to a Redis blip, or a worker died
+    mid-job. The age guard skips items whose embed job is likely still in flight."""
+    from app.services.knowledge import items_needing_embedding
+    from app.tasks.queue import enqueue
+
+    with tenant_scope(DEFAULT_TENANT_ID):
+        async with session_scope() as db:
+            tids = (await db.execute(text("SELECT id FROM tenants WHERE is_active"))).scalars().all()
+    total = 0
+    for tid in tids:
+        with tenant_scope(tid):
+            async with session_scope() as db:
+                ids = await items_needing_embedding(db, min_age_minutes=15)
+            for iid in ids:
+                await enqueue("embed_item", iid, _tenant=str(tid))
+            total += len(ids)
+    if total:
+        log.info("reembed_stragglers_requeued", items=total)
+    return total
+
+
 async def on_startup(ctx) -> None:
     configure_logging()
     set_trace_id("worker")
@@ -78,11 +103,14 @@ async def on_shutdown(ctx) -> None:
     log.info("worker_stopped")
 
 
-# Cron: nightly data-retention cleanup at 03:30.
+# Cron: nightly data-retention cleanup at 03:30; embed self-heal every 10 minutes.
 try:
     from arq import cron
 
-    _CRON = [cron(cleanup_expired, hour=3, minute=30)]
+    _CRON = [
+        cron(cleanup_expired, hour=3, minute=30),
+        cron(reembed_stragglers, minute={5, 15, 25, 35, 45, 55}),
+    ]
 except Exception:  # pragma: no cover
     _CRON = []
 
@@ -94,6 +122,7 @@ class WorkerSettings:
         summarize_session,
         distill_from_feedback,
         cleanup_expired,
+        reembed_stragglers,
     ]
     cron_jobs = _CRON
     redis_settings = redis_settings()

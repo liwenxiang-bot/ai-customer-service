@@ -172,6 +172,10 @@ async def analytics(days: int = 14, db: AsyncSession = Depends(get_db), user: Ad
     grounding_rate = round(grounded / total_answers, 3) if total_answers else None
 
     # ---- Most-cited knowledge items (unnest the citations JSONB array) ----
+    # citation score carries two incomparable scales depending on config: RRF fusion
+    # (~0.005-0.017, rank-derived) vs rerank (0-1, calibrated relevance). Average them
+    # per score_kind instead of blending; citations written before the field existed
+    # are fusion by construction.
     top_rows = (
         await db.execute(
             text(
@@ -179,7 +183,12 @@ async def analytics(days: int = 14, db: AsyncSession = Depends(get_db), user: Ad
                 SELECT c->>'item_id' AS item_id,
                        max(c->>'title') AS title,
                        count(*) AS hits,
-                       avg((c->>'score')::float) AS avg_score
+                       avg((c->>'score')::float)
+                           FILTER (WHERE coalesce(c->>'score_kind', 'fusion') = 'fusion')
+                           AS avg_score_fusion,
+                       avg((c->>'score')::float)
+                           FILTER (WHERE c->>'score_kind' = 'rerank')
+                           AS avg_score_rerank
                 FROM messages m, jsonb_array_elements(m.citations) c
                 WHERE m.created_at >= :start AND jsonb_array_length(m.citations) > 0
                 GROUP BY c->>'item_id'
@@ -190,15 +199,22 @@ async def analytics(days: int = 14, db: AsyncSession = Depends(get_db), user: Ad
             {"start": start},
         )
     ).all()
-    top_items = [
-        {
-            "item_id": r[0],
-            "title": r[1] or "(无标题)",
-            "hits": int(r[2]),
-            "avg_score": round(float(r[3] or 0), 3),
-        }
-        for r in top_rows
-    ]
+    top_items = []
+    for r in top_rows:
+        fusion = round(float(r[3]), 4) if r[3] is not None else None
+        rerank = round(float(r[4]), 4) if r[4] is not None else None
+        top_items.append(
+            {
+                "item_id": r[0],
+                "title": r[1] or "(无标题)",
+                "hits": int(r[2]),
+                # Kept for the UI: single-scale value, preferring the calibrated one.
+                "avg_score": rerank if rerank is not None else (fusion or 0.0),
+                "score_kind": "rerank" if rerank is not None else "fusion",
+                "avg_score_fusion": fusion,
+                "avg_score_rerank": rerank,
+            }
+        )
 
     # ---- Cost breakdown ----
     by_model = (

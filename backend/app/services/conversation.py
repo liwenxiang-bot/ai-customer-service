@@ -200,7 +200,9 @@ async def handle_turn(
 
     # ---- Semantic cache: short-circuit repeated FAQs (optional) ----
     # Attachment turns depend on uploaded content, so a text-only semantic-cache hit would
-    # be stale or outright wrong for prompts like "这个是啥".
+    # be stale or outright wrong for prompts like "这个是啥". Context-dependent text
+    # ("它多少钱") is likewise skipped — on both read and write — inside semantic_cache,
+    # since the referent differs per conversation.
     # Cache reads/writes belong to transaction #2: the hit_count bump and the cached
     # assistant message roll back together if this half of the turn is cancelled.
     cached = None

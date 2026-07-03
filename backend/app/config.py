@@ -126,10 +126,27 @@ class Settings(BaseSettings):
     # score ≥0.15, off-topic ≤0.06. Harmless for 0-1-scored rerankers (Cohere/Jina). Re-run
     # the eval sweep on your own corpus when you swap rerank models or the KB grows.
     rag_min_score: float = 0.15
-    # Trigram similarity floor for the keyword path (exact-substring matches).
-    rag_trgm_threshold: float = 0.1
+    # word_similarity() floor for the keyword path's exact-term branch. Semantics: the
+    # query's trigram overlap against the best-matching window of the chunk (one-way),
+    # so short code-ish queries (E1001, SKU-12) can clear it against 600-char chunks —
+    # plain similarity() never could (~0.02 ceiling). CJK note: adjacent hanzi fuse into
+    # one pg_trgm "word", so calibrate around 0.4, not higher.
+    rag_trgm_threshold: float = 0.4
     # Candidate pool before fusion/rerank = top_k * this (bigger → better rerank recall).
     rag_candidate_multiplier: int = 8
+    # Vector recheck floor for keyword-only survivors when rerank is off or degraded
+    # (0 = off). Deliberately looser than rag_vector_min_sim: it only suppresses
+    # generic-token noise. Hits that matched an exact alphanumeric code token are
+    # exempt — precise-term recall is why the keyword path exists.
+    rag_keyword_min_sim: float = 0.35
+    # Soft per-item cap inside top_k: a document only gets trimmed past this many chunks
+    # when other items are waiting to fill the slot (0 = off).
+    rag_per_item_max: int = 2
+    # Token budget for retrieval blocks injected into the prompt by search_knowledge.
+    rag_context_token_budget: int = 4000
+    # Optional jieba user dictionary (domain terms / product names / brand slang),
+    # loaded once at startup when set. One term per line: `词语 [词频] [词性]`.
+    rag_jieba_userdict: str = ""
 
     # ---- Anti-abuse / cost ----
     rate_limit_user_per_min: int = 20
@@ -142,6 +159,9 @@ class Settings(BaseSettings):
     content_safety_enabled: bool = False
     semantic_cache_enabled: bool = False
     semantic_cache_threshold: float = 0.95
+    # Cached answers expire after this many hours; knowledge edits also purge the cache
+    # (see services/semantic_cache.invalidate_all), TTL is the backstop for drift.
+    semantic_cache_ttl_hours: int = 72
 
     # ---- Observability ----
     langfuse_enabled: bool = False

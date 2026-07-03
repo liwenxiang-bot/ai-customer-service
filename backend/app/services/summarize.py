@@ -18,6 +18,19 @@ log = get_logger("summarize")
 
 _KEEP_RECENT = 8  # leave the most recent turns verbatim
 
+# The summary is the only antecedent source for query rewriting once old turns are
+# folded (context.py injects it above recent messages): if entities get paraphrased
+# away, later self-contained retrieval queries lose their subject and miss the KB.
+# The trailing entity line keeps them machine-spottable across rolling re-summaries.
+_SUMMARY_SYSTEM_PROMPT = (
+    "你是对话摘要助手。请把以下客服对话压缩成简洁的中文要点，"
+    "保留用户身份、关键诉求、已确认的信息和待办，省略寒暄。\n"
+    "硬性要求：对话和已有摘要中出现过的产品名称、型号、错误码、订单号、金额、"
+    "时间等具体实体必须按原文一字不差保留，禁止泛化成「某产品」「某个错误」，"
+    "用户仍在讨论的对象尤其不能丢。摘要末尾固定加一行「涉及实体：」，"
+    "用逗号分隔列出上述全部实体原文。"
+)
+
 
 async def summarize_session(db: AsyncSession, session_id: str) -> bool:
     session = await db.get(Session, uuid.UUID(session_id))
@@ -48,11 +61,12 @@ async def summarize_session(db: AsyncSession, session_id: str) -> bool:
     ai_config = await get_active_ai_config(db)
     provider = get_provider(to_llm_settings(ai_config))
     prompt = [
-        {"role": "system", "content": "你是对话摘要助手。请把以下客服对话压缩成简洁的中文要点，保留用户身份、关键诉求、已确认的信息和待办，省略寒暄。"},
+        {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
         {"role": "user", "content": f"已有摘要：\n{session.summary or '（无）'}\n\n新对话：\n{transcript}\n\n请输出更新后的完整摘要："},
     ]
     try:
-        result = await provider.complete(prompt, max_tokens=400)
+        # 500 (not 400) leaves headroom for the mandatory entity list line.
+        result = await provider.complete(prompt, max_tokens=500)
         if result.text:
             session.summary = result.text.strip()
             session.summarized_until_seq = watermark

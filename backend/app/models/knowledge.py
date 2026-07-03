@@ -44,6 +44,12 @@ class KnowledgeItem(Base, TimestampMixin, TenantMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     extra: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
+    # Validity window (NULL = unbounded on that side). Time-boxed knowledge — promos,
+    # old tariffs — must stop being retrievable once expired, or it competes with
+    # current policy at full weight; retrieval filters items outside the window.
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     chunks: Mapped[list[KnowledgeChunk]] = relationship(
         back_populates="item", cascade="all, delete-orphan", lazy="selectin"
     )

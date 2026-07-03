@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,12 +30,32 @@ router = APIRouter(prefix="/knowledge", tags=["admin-knowledge"])
 
 
 # ----------------------------------------------------------------- schemas
+def _coerce_utc(v: datetime | None) -> datetime | None:
+    """Naive input is taken as UTC so window comparisons and timestamptz storage are
+    unambiguous regardless of the caller's serializer."""
+    return v if v is None or v.tzinfo else v.replace(tzinfo=UTC)
+
+
 class ItemIn(BaseModel):
     title: str = ""
     content: str
     category: str = ""
     tags: list[str] = []
     status: str = "published"
+    # Validity window: NULL = unbounded on that side; retrieval skips items outside it.
+    effective_from: datetime | None = None
+    expires_at: datetime | None = None
+
+    @field_validator("effective_from", "expires_at")
+    @classmethod
+    def _utc(cls, v: datetime | None) -> datetime | None:
+        return _coerce_utc(v)
+
+    @model_validator(mode="after")
+    def _window_ordered(self):
+        if self.effective_from and self.expires_at and self.expires_at <= self.effective_from:
+            raise ValueError("expires_at 必须晚于 effective_from")
+        return self
 
 
 class ItemUpdate(BaseModel):
@@ -43,7 +64,15 @@ class ItemUpdate(BaseModel):
     category: str | None = None
     tags: list[str] | None = None
     status: str | None = None
+    # None clears the bound when the field is explicitly sent (checked via fields_set).
+    effective_from: datetime | None = None
+    expires_at: datetime | None = None
     change_note: str = "edited"
+
+    @field_validator("effective_from", "expires_at")
+    @classmethod
+    def _utc(cls, v: datetime | None) -> datetime | None:
+        return _coerce_utc(v)
 
 
 def _item_dict(
@@ -60,6 +89,8 @@ def _item_dict(
         "version": it.version,
         "chunk_count": chunk_count,
         "ready_count": ready_count,  # embedded chunks; < chunk_count ⇒ vectors missing
+        "effective_from": it.effective_from.isoformat() if it.effective_from else None,
+        "expires_at": it.expires_at.isoformat() if it.expires_at else None,
         "created_at": it.created_at.isoformat() if it.created_at else None,
         "updated_at": it.updated_at.isoformat() if it.updated_at else None,
     }
@@ -73,6 +104,7 @@ async def list_items(
     status: str = "",
     source: str = "",
     tag: str = "",
+    expired: bool | None = Query(None, description="true=仅已过期条目，false=排除已过期"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -90,6 +122,14 @@ async def list_items(
         stmt = stmt.where(KnowledgeItem.source == source)
     if tag:
         stmt = stmt.where(KnowledgeItem.tags.contains([tag]))  # JSONB @> [tag]
+    if expired is not None:
+        now = datetime.now(UTC)
+        if expired:
+            stmt = stmt.where(KnowledgeItem.expires_at.is_not(None), KnowledgeItem.expires_at <= now)
+        else:
+            stmt = stmt.where(
+                or_(KnowledgeItem.expires_at.is_(None), KnowledgeItem.expires_at > now)
+            )
 
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (
@@ -139,7 +179,11 @@ async def tags(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get
 async def create_item(
     body: ItemIn, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_operator)
 ):
-    item = await ksvc.create_item(db, body.model_dump(), user)
+    # The service dict only carries the classic fields; the validity window is set on
+    # the flushed row here so the service API stays unchanged.
+    item = await ksvc.create_item(db, body.model_dump(exclude={"effective_from", "expires_at"}), user)
+    item.effective_from = body.effective_from
+    item.expires_at = body.expires_at
     await db.commit()
     return _item_dict(item, 0)
 
@@ -169,8 +213,20 @@ async def update_item(
     user: AdminUser = Depends(require_operator),
 ):
     item = await _get_or_404(db, item_id)
-    data = {k: v for k, v in body.model_dump().items() if v is not None or k == "change_note"}
+    # For the window fields None is a meaningful value ("clear the bound"), so apply
+    # them only when explicitly sent, and validate against the merged final state.
+    eff = body.effective_from if "effective_from" in body.model_fields_set else item.effective_from
+    exp = body.expires_at if "expires_at" in body.model_fields_set else item.expires_at
+    if eff and exp and exp <= eff:
+        raise HTTPException(status_code=400, detail="expires_at 必须晚于 effective_from")
+    data = {
+        k: v
+        for k, v in body.model_dump(exclude={"effective_from", "expires_at"}).items()
+        if v is not None or k == "change_note"
+    }
     await ksvc.update_item(db, item, data, user)
+    item.effective_from = eff
+    item.expires_at = exp
     await db.commit()
     return _item_dict(item)
 
@@ -348,11 +404,35 @@ async def review_approve(
     cand = await db.get(KnowledgeReviewCandidate, uuid.UUID(cid))
     if not cand or cand.status != ReviewStatus.PENDING:
         raise HTTPException(status_code=404, detail="待审核条目不存在")
+    title = (body.title or cand.suggested_title).strip()
+    content = body.content or cand.suggested_content
+    # Distilled candidates are, by construction, paraphrases of answers that already
+    # cited the KB — approving them verbatim accumulates near-duplicates that crowd
+    # top_k. Block exact duplicates (same title, or same content modulo whitespace);
+    # the candidate stays pending so the reviewer can edit-and-approve or reject.
+    norm_content = re.sub(r"\s+", "", content)
+    dup = (
+        await db.execute(
+            text(
+                "SELECT id::text, title FROM knowledge_items "
+                "WHERE status <> 'archived' "
+                "  AND ((:title <> '' AND title = :title) "
+                "       OR (:norm <> '' AND regexp_replace(content, '\\s+', '', 'g') = :norm)) "
+                "LIMIT 1"
+            ),
+            {"title": title, "norm": norm_content},
+        )
+    ).first()
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail=f"与已有条目重复：{dup[1] or dup[0]}，请修改标题/内容后再通过，或改为更新原条目",
+        )
     item = await ksvc.create_item(
         db,
         {
-            "title": body.title or cand.suggested_title,
-            "content": body.content or cand.suggested_content,
+            "title": title,
+            "content": content,
             "category": body.category or cand.suggested_category,
             "source": KnowledgeSource.AUTO_DISTILLED,
         },

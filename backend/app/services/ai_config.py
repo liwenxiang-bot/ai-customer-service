@@ -30,6 +30,9 @@ RETRIEVAL_DEFAULTS: dict = {
     "min_score": settings.rag_min_score,
     "trgm_threshold": settings.rag_trgm_threshold,
     "candidate_multiplier": settings.rag_candidate_multiplier,
+    "keyword_min_sim": settings.rag_keyword_min_sim,
+    "per_item_max": settings.rag_per_item_max,
+    "context_token_budget": settings.rag_context_token_budget,
     "rerank_top_n": 3,
     "expand_context": True,
 }

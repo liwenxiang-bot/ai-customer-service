@@ -6,13 +6,15 @@ FTS). Vectors are generated off the request path (requirements §6, §7, §13).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, event, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.context import estimate_tokens
 from app.core.logging import get_logger
+from app.db.tenant_context import get_current_tenant
 from app.llm.factory import get_embedding_client
 from app.models.enums import ChunkStatus, KnowledgeStatus
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem, KnowledgeVersion
@@ -55,7 +57,8 @@ async def create_item(db: AsyncSession, data: dict, actor=None) -> KnowledgeItem
     await db.flush()
     await _snapshot_version(db, item, actor, "created")
     await write_audit(db, actor, "knowledge.create", "knowledge_item", str(item.id), {"title": item.title})
-    await _enqueue_embed(item.id)
+    await _purge_answer_cache(db)
+    await _enqueue_embed(db, item.id)
     return item
 
 
@@ -72,8 +75,9 @@ async def update_item(db: AsyncSession, item: KnowledgeItem, data: dict, actor=N
             setattr(item, field, data[field])
     await db.flush()
     await write_audit(db, actor, "knowledge.update", "knowledge_item", str(item.id), {"version": item.version})
+    await _purge_answer_cache(db)
     if content_changed:
-        await _enqueue_embed(item.id)
+        await _enqueue_embed(db, item.id)
     return item
 
 
@@ -81,6 +85,7 @@ async def delete_item(db: AsyncSession, item: KnowledgeItem, actor=None) -> None
     await write_audit(db, actor, "knowledge.delete", "knowledge_item", str(item.id), {"title": item.title})
     await db.delete(item)
     await db.flush()
+    await _purge_answer_cache(db)
 
 
 async def rollback_to_version(db: AsyncSession, item: KnowledgeItem, version_id: str, actor=None):
@@ -100,7 +105,17 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
     """Chunk an item, generate embeddings, and (re)build its chunks. Returns chunk count.
     Runs in the worker. If embeddings are unavailable, chunks are stored unembedded
     (keyword search still works) and marked pending."""
-    item = await db.get(KnowledgeItem, uuid.UUID(item_id) if isinstance(item_id, str) else item_id)
+    iid = uuid.UUID(item_id) if isinstance(item_id, str) else item_id
+    # Concurrent jobs for the same item (rapid edits, manual requeue + straggler cron)
+    # serialize here; each rebuilds from the row it reads AFTER its predecessor commits,
+    # so the delete+insert below can't interleave into duplicate chunks. Deliberately
+    # NOT deduped via arq job ids: with keep_result on, a same-id enqueue is silently
+    # dropped for an hour after success — a lost re-embed is worse than a wasted one.
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended('embed:' || :iid, 0))"),
+        {"iid": str(iid)},
+    )
+    item = await db.get(KnowledgeItem, iid)
     if not item or item.status == KnowledgeStatus.ARCHIVED:
         # Archived/deleted → drop chunks so they stop being retrieved.
         if item:
@@ -111,15 +126,28 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
     ai_config = await get_active_ai_config(db)
     emb_cfg = to_embedding_settings(ai_config)
     params = ai_config.retrieval or {}
-    text = f"{item.title}\n{item.content}" if item.title else item.content
-    pieces = chunk_text(text, int(params.get("chunk_size", 600)), int(params.get("chunk_overlap", 100)))
+    pieces = chunk_text(
+        item.content, int(params.get("chunk_size", 600)), int(params.get("chunk_overlap", 100))
+    )
+
+    # Anchor every chunk to its document: the title joins the embedding and FTS inputs
+    # so heading-style queries ("退货政策") reach chunks deep in a long document, while
+    # `content` stays the raw slice for citation accuracy. Tags are keyword-ish noise
+    # for the vector space, so they only join the FTS side.
+    anchor = (item.title or "").strip()
+    tags_line = " ".join(str(t) for t in (item.tags or []) if t).strip()
+    fts_head = "\n".join(p for p in (anchor, tags_line) if p)
+    if not pieces and anchor:
+        pieces = [anchor]  # title-only item: keep it retrievable
 
     await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.item_id == item.id))
 
     vectors: list = [None] * len(pieces)
     if emb_cfg.api_key and pieces:
         try:
-            vectors = await get_embedding_client(emb_cfg).embed(pieces)
+            vectors = await get_embedding_client(emb_cfg).embed(
+                [f"{anchor}\n{p}" if anchor else p for p in pieces]
+            )
         except Exception as exc:  # noqa: BLE001
             log.warning("embed_failed_storing_unembedded", item_id=str(item.id), error=str(exc))
             vectors = [None] * len(pieces)
@@ -131,7 +159,7 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
                 item_id=item.id,
                 chunk_index=i,
                 content=piece,
-                content_seg=segment(piece),
+                content_seg=segment(f"{fts_head}\n{piece}" if fts_head else piece),
                 embedding=vec,
                 embedding_model=emb_cfg.model if vec is not None else "",
                 embedding_dim=emb_cfg.dim if vec is not None else 0,
@@ -202,31 +230,67 @@ async def list_item_chunks(db: AsyncSession, item_id: str) -> list[dict]:
     ]
 
 
-async def items_needing_embedding(db: AsyncSession) -> list[str]:
+async def items_needing_embedding(db: AsyncSession, min_age_minutes: int = 0) -> list[str]:
     """Non-archived items with content whose chunks are missing or not all 'ready' — the
-    set to re-embed after an embedding outage or the long-doc batch fix."""
+    set to re-embed after an embedding outage or the long-doc batch fix.
+
+    `min_age_minutes` skips recently-touched items whose embed job is likely still in
+    flight — the straggler cron uses it to avoid double-firing on healthy items."""
     rows = (
         await db.execute(
             text(
                 """
                 SELECT i.id::text FROM knowledge_items i
                 WHERE i.status <> 'archived' AND i.content <> ''
+                  AND i.updated_at < now() - make_interval(mins => :age)
                   AND (NOT EXISTS (SELECT 1 FROM knowledge_chunks c WHERE c.item_id = i.id)
                        OR EXISTS (SELECT 1 FROM knowledge_chunks c
                                   WHERE c.item_id = i.id AND c.status <> 'ready'))
                 """
-            )
+            ),
+            {"age": min_age_minutes},
         )
     ).all()
     return [r[0] for r in rows]
 
 
 async def enqueue_reembed(item_id: str) -> None:
-    """Public wrapper so the admin API can (re)queue an item's embedding."""
-    await _enqueue_embed(item_id)
-
-
-async def _enqueue_embed(item_id) -> None:
+    """Public wrapper so the admin API can (re)queue an already-committed item."""
     from app.tasks.queue import enqueue
 
     await enqueue("embed_item", str(item_id))
+
+
+async def _purge_answer_cache(db: AsyncSession) -> None:
+    """Knowledge changed → cached answers may now cite stale content; drop them all.
+    Coarse but correct: entries are cheap to rebuild and RLS scopes the wipe to the
+    current tenant."""
+    from app.services.semantic_cache import invalidate_all
+
+    try:
+        await invalidate_all(db)
+    except Exception as exc:  # noqa: BLE001 — cache hygiene must never block a save
+        log.warning("semantic_cache_invalidate_failed", error=str(exc))
+
+
+async def _enqueue_embed(db: AsyncSession, item_id) -> None:
+    """Fire the embed job only after the surrounding transaction commits: the worker
+    opens its own session, so an early enqueue races it against uncommitted rows —
+    it would find nothing (new item, arq gives up) or read stale content and mark
+    the old vectors ready."""
+    from app.tasks.queue import enqueue
+
+    iid = str(item_id)
+    tenant = get_current_tenant()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover — no loop, nothing to defer onto
+        await enqueue("embed_item", iid)
+        return
+
+    @event.listens_for(db.sync_session, "after_commit", once=True)
+    def _fire(_session) -> None:
+        # Runs in the engine greenlet on the loop's thread; the task is scheduled onto
+        # the loop with the tenant captured above (the request context may be gone by
+        # the time it executes).
+        loop.create_task(enqueue("embed_item", iid, _tenant=str(tenant) if tenant else None))

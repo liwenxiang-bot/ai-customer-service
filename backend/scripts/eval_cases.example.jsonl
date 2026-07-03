@@ -1,0 +1,18 @@
+# scripts/rag_eval 的评测集示例（JSONL：每行一个 JSON 对象，# 开头为注释行）。
+# 用法：python -m scripts.rag_eval --cases my_cases.jsonl
+#
+# 三种行类型（corpus / positive / negative 三段各自独立：某段为空则回落到内置集）：
+#   corpus   — 评测用种子语料（title + content），运行结束自动清理
+#   positive — 应命中的查询：expected_title 是期望条目标题的子串
+#   negative — 语料答不了的查询：检索应返回空（拒答）
+{"type": "corpus", "title": "退货政策", "content": "本店支持7天无理由退货，商品需保持完好，不影响二次销售。"}
+{"type": "corpus", "title": "退款时效", "content": "退款将在收到退货后3个工作日内原路返回到您的支付账户。"}
+{"type": "corpus", "title": "错误码E1001", "content": "错误码 E1001 表示退货申请已超过有效期，请联系人工客服处理。"}
+{"type": "positive", "query": "怎么退货", "expected_title": "退货政策"}
+{"type": "positive", "query": "多久能退款到账", "expected_title": "退款时效"}
+{"type": "positive", "query": "E1001 是什么意思", "expected_title": "错误码E1001"}
+{"type": "negative", "query": "今天天气怎么样"}
+{"type": "negative", "query": "帮我写一首关于春天的诗"}
+# scripts/mine_bad_cases 从线上点踩/转人工流量挖出的坏例长这样：expected_title 为空，
+# 会被 rag_eval 跳过；人工确认期望命中的条目、填上标题后才参与评测。
+{"type": "positive", "query": "买的东西什么时候能寄到", "expected_title": "", "source": "feedback_down", "session_id": "<uuid>", "user_question": "我买的东西什么时候能寄到？"}
