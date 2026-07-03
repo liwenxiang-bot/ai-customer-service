@@ -72,6 +72,18 @@ body {
 }
 button {
   font: inherit;
+  /* 重置 Safari/iOS 原生控件外观：默认 -webkit-appearance:button 会给裸 button
+     (如 .canned-item) 套上圆角、内阴影等系统样式，导致 UI 走形。统一由自有 CSS 决定外观。 */
+  -webkit-appearance: none;
+  appearance: none;
+}
+input,
+textarea,
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  /* iOS 会给输入框加内阴影，一并去掉 */
+  -webkit-box-shadow: none;
 }
 @media (min-width: 1024px) {
   * {
@@ -352,6 +364,9 @@ button {
   border-radius: 8px;
   padding: 9px 12px;
   font: inherit;
+  /* ≥16px：iOS Safari 对聚焦时字号 <16px 的输入框会自动放大页面。设 16px 从根上避免，
+     无需禁用 viewport 缩放（禁缩放伤无障碍）。 */
+  font-size: 16px;
   outline: none;
   background: var(--panel);
   color: var(--text);
@@ -820,6 +835,8 @@ button {
   border-radius: 8px;
   padding: 8px 10px;
   font: inherit;
+  /* ≥16px：防止 iOS Safari 点击回复框时自动放大页面（见 .input 说明）。 */
+  font-size: 16px;
   outline: none;
   max-height: 120px; /* 与 Session.tsx autoGrow 上限一致 */
   background: var(--panel);
