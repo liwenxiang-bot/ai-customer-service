@@ -22,11 +22,16 @@ docker 全栈自托管。架构:终端用户 → Caddy/nginx(HTTPS/WSS)→ backe
    - `LLM_*`、`EMBEDDING_*` —— ⚠️ `EMBEDDING_DIM` 必须与模型维度一致(text-embedding-v4 = **1024**),
      且要在**第一次启动前**设好(向量列建表时按它定)。
 
+   - `AGENT_CONSOLE_URL`(可选)→ 坐席工作台若走独立域名(如 `https://agent.example.com`)才填;
+     留空则坐席站挂在 `{APP_BASE_URL}/agent`,转人工通知深链自动指向那里。
+
 2. **起全栈**(migrate 容器自动 `alembic upgrade head` + bootstrap)
    ```bash
    make stack-up                          # = docker compose --profile app up -d --build
    docker compose --profile app ps        # 各服务 healthy
    ```
+   > 镜像构建时会自动打包 widget、admin **与坐席工作台(agent)**;坐席站作为静态资源被后端挂在
+   > `/agent`,无需单独容器或反代规则。迁移由 migrate 容器自动执行(含坐席归属列 `0012`)。
 
 3. **反向代理 + HTTPS**:用 `deploy/Caddyfile`(改域名,admin 端口对齐 `ADMIN_PORT`,默认 8080)→
    `sudo systemctl reload caddy`。或用 `deploy/nginx.conf` + `certbot`(文件头部有命令)。
@@ -40,6 +45,11 @@ docker 全栈自托管。架构:终端用户 → Caddy/nginx(HTTPS/WSS)→ backe
 
 4. **后台初始化**:打开 admin 域名 → 用 `BOOTSTRAP_ADMIN_*` 登录 → 立刻改密 →「AI 配置」确认
    对话/Embedding 模型与 Key、把 `vector_min_sim` 设为 **0.5**、打开「上下文扩展」→「渠道配置」加 widget 域名白名单。
+
+5. **坐席工作台**:客服坐席访问 **`https://chat.example.com/agent/`**(= 对话域名下的 `/agent`),
+   用同一套后台账号登录即可接待。手机浏览器打开可「添加到主屏幕」当 App 用。反代无需额外配置——
+   `/agent` 静态资源、`/api/admin`、`/ws/admin` 都在 backend,对话域名的现有转发规则已覆盖
+   (务必确认 `/ws/` 的 WebSocket 升级头没丢,否则实时消息退化,见下方 ⚠️)。
 
 ---
 
@@ -88,7 +98,7 @@ git reset --hard <旧版本号> && make stack-up
 # 以后:直接用锚点文件
 git reset --hard $(cat .last_release_commit) && make stack-up
 ```
-迁移 `0003` 向后兼容,**代码回滚无需动数据库**。仅当数据真出问题才用备份恢复:
+历次迁移(含最新的坐席归属列 `0012`,加的是可空列)均向后兼容,**代码回滚无需动数据库**——旧代码忽略新列即可。仅当数据真出问题才用备份恢复:
 ```bash
 gunzip -c backups/acs_YYYY-MM-DD_HHMMSS.sql.gz \
   | docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'

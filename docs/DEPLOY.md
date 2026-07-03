@@ -65,7 +65,7 @@ ADMIN_CORS_ORIGINS=https://admin.yourbiz.com
 docker compose --profile app up -d --build
 ```
 
-它会自动：构建镜像（含 widget/admin 打包）→ 跑 `migrate`（建表 + pgvector/HNSW/全文索引 + 初始化默认管理员/AI配置/Web渠道）→ 起 backend / worker / admin。
+它会自动：构建镜像（含 widget / admin / **坐席工作台 agent** 打包）→ 跑 `migrate`（建表 + pgvector/HNSW/全文索引 + 迁移 + 初始化默认管理员/AI配置/Web渠道）→ 起 backend / worker / admin。坐席站作为静态资源被后端挂在 `/agent`，不占单独容器。
 
 验证：
 ```bash
@@ -115,11 +115,22 @@ Caddy 自动申请并续期证书，无需手动配证书。
 
 ---
 
+## 6. 坐席工作台（客服实时接待）
+
+客服坐席打开 **`https://chat.yourbiz.com/agent/`**，用后台账号登录即可接待。手机浏览器可「添加到主屏幕」当 App 用。
+
+- 客户转人工后，工单进坐席站收件箱「待认领」；坐席**认领 → 接管 → 回复 → 结束**，结束时工单自动完结。
+- 若配了转人工通知（企微/SMTP），通知里带**深链**，点一下直达该会话。
+- 无需额外反代规则：`/agent` 静态资源与 `/api/admin`、`/ws/admin` 都在 backend，上面 Caddy 那条 `chat.yourbiz.com → 127.0.0.1:8000` 已覆盖（Caddy 自动透传 WSS）。要放独立域名再配 `.env` 的 `AGENT_CONSOLE_URL`。
+
+---
+
 ## 上线检查清单
 
 - [ ] `APP_SECRET_KEY` / `JWT_SECRET` 已改强随机；默认管理员密码已改
 - [ ] `POSTGRES_PASSWORD` 已改；`8000/8090` 未对公网暴露
 - [ ] HTTPS/WSS 正常（`https://chat.yourbiz.com/chat` 能流式对话）
+- [ ] 坐席工作台可登录（`https://chat.yourbiz.com/agent/` 用后台账号进得去、收件箱能加载）
 - [ ] Web 渠道**域名白名单**已填自己的站点
 - [ ] 每日成本上限 `DAILY_COST_CAP_USD` 按预算设；通义「免费额度用完即停」保持**关闭**
 - [ ] 数据库定期备份（`docker compose exec postgres pg_dump ...`）

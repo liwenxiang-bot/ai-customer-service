@@ -7,17 +7,18 @@ PIP := $(BACKEND)/.venv/bin/pip
 
 .DEFAULT_GOAL := help
 .PHONY: help setup deps-up deps-down migrate bootstrap dev-backend dev-worker \
-        dev-embed dev-admin dev-widget build-widget build-admin test eval lint \
-        stack-up stack-down release clean
+        dev-embed dev-admin dev-widget dev-agent build-widget build-admin build-agent \
+        test eval lint stack-up stack-down release clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Create venv + install all deps (backend, widget, admin)
+setup: ## Create venv + install all deps (backend, widget, admin, agent)
 	cd $(BACKEND) && python3 -m venv .venv && .venv/bin/pip install -U pip && .venv/bin/pip install -r requirements.txt
 	cd widget && pnpm install
 	cd admin && pnpm install
+	cd agent && pnpm install
 	@test -f .env || cp .env.example .env
 	@echo "✅ setup done. Edit .env (LLM_API_KEY etc.), then: make deps-up migrate bootstrap"
 
@@ -48,11 +49,17 @@ dev-admin: ## Run the admin frontend (Vite dev, :5173)
 dev-widget: ## Run the widget dev preview (:5174)
 	cd widget && pnpm dev
 
+dev-agent: ## Run the agent console (坐席工作台) dev server (:5176)
+	cd agent && pnpm dev
+
 build-widget: ## Build the embeddable widget into widget/dist
 	cd widget && pnpm build
 
 build-admin: ## Build the admin app into admin/dist
 	cd admin && pnpm build
+
+build-agent: ## Build the agent console into agent/dist (backend serves it at /agent)
+	cd agent && pnpm build
 
 test: ## Run backend tests
 	cd $(BACKEND) && .venv/bin/python -m pytest -q
@@ -73,4 +80,4 @@ release: ## 线上增量发版：备份→拉代码→重建+迁移→回填→�
 	bash deploy/release.sh
 
 clean: ## Remove build artifacts
-	rm -rf widget/dist admin/dist $(BACKEND)/.pytest_cache $(BACKEND)/.ruff_cache
+	rm -rf widget/dist admin/dist agent/dist $(BACKEND)/.pytest_cache $(BACKEND)/.ruff_cache
