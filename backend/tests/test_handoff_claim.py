@@ -298,7 +298,9 @@ async def test_queue_counts_mine_dedupes_by_session():
             counts = await queue_counts(db=db, user=me)
             # s_ticket（我认领的工单）+ s_takeover（我接管但工单未认领）= 2，按会话去重。
             assert counts["mine"] == 2
-            assert counts["waiting"] >= 1
+            # takeover 由本用例 seed 的接管会话保证；waiting 口径（不含已认领）另见
+            # test_waiting_excludes_claimed_sessions——此处两个 seed 会话都不算 waiting，
+            # 故不对 waiting 断言，避免依赖共享库的残留数据。
             assert counts["takeover"] >= 1
             assert set(counts) == {"waiting", "mine", "takeover", "all"}
         finally:
