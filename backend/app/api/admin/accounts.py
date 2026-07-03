@@ -75,6 +75,8 @@ async def update_user(
     if not target:
         raise HTTPException(status_code=404, detail="账号不存在")
     data = body.model_dump(exclude_unset=True)
+    if target.id == user.id and data.get("is_active") is False:
+        raise HTTPException(status_code=400, detail="不能停用当前登录账号")
     if "password" in data and data["password"]:
         target.password_hash = hash_password(data.pop("password"))
     else:

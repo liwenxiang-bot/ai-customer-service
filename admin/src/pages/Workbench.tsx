@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { App as AntApp, Button, Dropdown, Empty, Input, Segmented, Tag, Tooltip, theme } from "antd";
+import { Alert, App as AntApp, Button, Dropdown, Empty, Grid, Input, Popconfirm, Segmented, Spin, Tag, Tooltip, theme } from "antd";
 import {
   CheckOutlined,
   CustomerServiceOutlined,
@@ -15,6 +15,54 @@ import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 import { fmtShort } from "../utils/time";
 import { useRealtime } from "../hooks/useRealtime";
+import { usePolling } from "../hooks/usePolling";
+import { isImeComposing } from "../utils/ime";
+import { CHANNEL_TYPE, SESSION_STATUS, statusMeta } from "../utils/status";
+
+/** 回复输入区 —— 草稿文本放在本地 state，敲字只重渲染这一小块，
+ *  不再带动整个工作台（50 项队列 + 全部消息气泡）重渲染；提交成功后自行清空。 */
+function Composer({ canned, sending, onSend, onTyping }: {
+  canned: any[];
+  sending: boolean;
+  onSend: (content: string) => Promise<boolean>;
+  onTyping: () => void;
+}) {
+  const [text, setText] = useState("");
+  const submit = async () => {
+    const c = text.trim();
+    if (!c) return;
+    if (await onSend(c)) setText("");
+  };
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+      <Input.TextArea
+        value={text}
+        onChange={(e) => { setText(e.target.value); onTyping(); }}
+        autoSize={{ minRows: 1, maxRows: 4 }}
+        placeholder="输入回复，回车发送给客户（Shift+Enter 换行）"
+        onPressEnter={(e) => {
+          if (isImeComposing(e)) return; // 输入法选词上屏的回车不发送
+          if (!e.shiftKey) { e.preventDefault(); submit(); }
+        }}
+      />
+      <Dropdown
+        trigger={["click"]}
+        menu={{
+          items: canned.length
+            ? canned.map((c) => ({ key: c.id, label: c.title || c.content.slice(0, 24) }))
+            : [{ key: "none", label: "暂无模板", disabled: true }],
+          onClick: ({ key }) => {
+            const c = canned.find((x) => x.id === key);
+            if (c) setText((t) => (t ? t + "\n" + c.content : c.content));
+          },
+        }}
+      >
+        <Button icon={<ThunderboltOutlined />}>快捷回复</Button>
+      </Dropdown>
+      <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={submit}>发送</Button>
+    </div>
+  );
+}
 
 /** 坐席工作台 — a two-pane live console for handling conversations that need a human:
  *  left = auto-refreshing queue (待人工 / 接管中), right = chat + takeover controls. */
@@ -26,18 +74,24 @@ export function Workbench() {
   const line = token.colorBorderSecondary;
   const panel = token.colorBgContainer;
   const muted = token.colorTextSecondary;
+  // 窄屏（<992px）降级：队列与聊天面板纵向堆叠。首帧 screens 为空对象时按宽屏渲染，避免桌面端闪一下堆叠布局。
+  const screens = Grid.useBreakpoint();
+  const narrow = screens.lg === false;
 
   const [filter, setFilter] = useState<string>("pending");
   const [list, setList] = useState<any[]>([]);
+  const [listError, setListError] = useState<string | null>(null); // 队列拉取失败提示（保留旧数据）
   const [counts, setCounts] = useState<any>({ waiting: 0, takeover: 0, all: 0 });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
-  const [replyText, setReplyText] = useState("");
+  const [detailLoading, setDetailLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [customerTyping, setCustomerTyping] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
   const typingHideRef = useRef<ReturnType<typeof setTimeout> | null>(null); // auto-hide "客户正在输入"
   const lastTypingRef = useRef(0); // throttle outbound operator typing pings
+  const selectedIdRef = useRef<string | null>(null); // WS 回调 / await 之后读最新选中值，避免闭包串会话
+  selectedIdRef.current = selectedId;
 
   // Deep-link from a handoff ticket (?session=ID) → preselect that conversation.
   useEffect(() => {
@@ -49,40 +103,68 @@ export function Workbench() {
   const [canned, setCanned] = useState<any[]>([]);
   useEffect(() => { cannedApi.list().then((d) => setCanned(d.items)).catch(() => {}); }, []);
 
-  // ---- poll the queue ----
+  // ---- poll the queue (usePolling：页面隐藏自动暂停，回前台立即补一次) ----
+  const filterRef = useRef(filter); // scheduleLoadList 的 400ms 定时器闭包可能过期，始终经 ref 读最新 tab
+  filterRef.current = filter;
+  const listSeq = useRef(0); // 过期响应保护：只允许最新一次请求落地（同 Conversations 的 loadSeq 模式）
   const loadList = () => {
+    const f = filterRef.current;
+    const seq = ++listSeq.current;
     const params =
-      filter === "takeover" ? { status: "human_takeover" } :
-      filter === "all" ? { attention: true } :
+      f === "takeover" ? { status: "human_takeover" } :
+      f === "all" ? { attention: true } :
       { pending_human: true };  // 待接待 = waiting (status=escalated)
-    conversationApi.list({ ...params, page_size: 50 }).then((d) => setList(d.items)).catch(() => {});
+    conversationApi.list({ ...params, page_size: 50 })
+      .then((d) => {
+        // 落地时校验：已切 tab 或已有更新的请求发出，旧响应直接丢弃，不覆盖当前列表
+        if (seq !== listSeq.current || filterRef.current !== f) return;
+        setList(d.items); setListError(null);
+      })
+      .catch((e) => { if (seq === listSeq.current && filterRef.current === f) setListError(apiError(e)); }); // 保留旧数据，列表顶部提示错误
     conversationApi.queueCounts().then(setCounts).catch(() => {});
   };
-  useEffect(() => {
-    loadList();
-    const t = setInterval(loadList, 15000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter]);
+  usePolling(loadList, 15000, { deps: [filter] });
+
+  // WS 队列事件突发时合并刷新（400ms 尾随），避免瞬间打出多轮 list+counts 请求
+  const queueTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleLoadList = () => {
+    if (queueTimerRef.current) return;
+    queueTimerRef.current = setTimeout(() => { queueTimerRef.current = null; loadList(); }, 400);
+  };
 
   // ---- poll the selected conversation ----
   const loadDetail = () => {
-    if (selectedId) conversationApi.detail(selectedId).then(setDetail).catch(() => {});
+    const sid = selectedIdRef.current;
+    if (!sid) return;
+    conversationApi.detail(sid)
+      .then((d) => {
+        if (selectedIdRef.current !== sid) return;
+        // 按 message.id 合并：快照请求在途期间 appendMsg 可能已追加实时消息（发送回执 / WS 推送），
+        // 慢返回的旧快照整体替换会把它们吞掉——保留本地已有而快照缺失的尾部消息。
+        setDetail((prev: any) => {
+          if (!prev?.messages?.length) return d;
+          const seen = new Set((d.messages || []).map((x: any) => x.id));
+          const extra = prev.messages.filter((x: any) => x.id && !seen.has(x.id));
+          return extra.length ? { ...d, messages: [...(d.messages || []), ...extra] } : d;
+        });
+        setDetailLoading(false);
+      })
+      .catch(() => { if (selectedIdRef.current === sid) setDetailLoading(false); });
   };
   useEffect(() => {
     setDetail(null);
-    if (!selectedId) return;
-    loadDetail();
-    const t = setInterval(loadDetail, 15000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setDetailLoading(!!selectedId);
   }, [selectedId]);
+  usePolling(loadDetail, 15000, { enabled: !!selectedId, deps: [selectedId] });
 
   useEffect(() => {
     if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
   }, [detail?.messages?.length]);
 
-  useEffect(() => () => { if (typingHideRef.current) clearTimeout(typingHideRef.current); }, []);
+  useEffect(() => () => {
+    if (typingHideRef.current) clearTimeout(typingHideRef.current);
+    if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
+  }, []);
 
   // Append one live message instead of refetching the whole thread — keeps the operator's
   // view as instant as the customer's (which appends incrementally). Dedup by id so the
@@ -104,8 +186,11 @@ export function Workbench() {
     typingHideRef.current = setTimeout(() => setCustomerTyping(false), 4000);
   };
   const { watch, sendTyping } = useRealtime({
-    onQueue: () => loadList(),
+    onQueue: scheduleLoadList,
     onSession: (msg: any) => {
+      // 载荷带 session_id（后端契约）：不属于当前选中会话的消息不进面板，
+      // 只安排一次队列刷新，避免快速切换会话时消息串线。
+      if (msg?.session_id && msg.session_id !== selectedIdRef.current) { scheduleLoadList(); return; }
       setCustomerTyping(false); // a real message supersedes the typing hint
       if (msg?.type === "human_message" && msg.message_id)
         appendMsg({ id: msg.message_id, role: "assistant", model: "human", content: msg.content });
@@ -118,10 +203,10 @@ export function Workbench() {
   useEffect(() => { watch(selectedId || ""); setCustomerTyping(false); }, [selectedId]);
 
   // Tell the customer the operator is typing (throttled ~2.5s; backend relays to their chat).
-  const onComposerChange = (v: string) => {
-    setReplyText(v);
+  const onComposerTyping = () => {
     const now = Date.now();
-    if (selectedId && now - lastTypingRef.current > 2500) { lastTypingRef.current = now; sendTyping(selectedId); }
+    const sid = selectedIdRef.current;
+    if (sid && now - lastTypingRef.current > 2500) { lastTypingRef.current = now; sendTyping(sid); }
   };
 
   const s = detail?.session;
@@ -131,34 +216,39 @@ export function Workbench() {
     try { await fn(); message.success(ok); loadDetail(); loadList(); }
     catch (e) { message.error(apiError(e)); }
   };
-  const sendReply = async () => {
-    const c = replyText.trim();
-    if (!c) return;
+  const sendReply = async (content: string) => {
+    const sid = selectedIdRef.current;
+    if (!sid) return false;
     setSending(true);
     try {
-      const res = await conversationApi.reply(selectedId!, c);
-      setReplyText("");
-      // Show our own reply immediately (no full reload); the realtime echo dedups by id.
-      appendMsg({ id: res?.message_id, role: "assistant", model: "human", content: c });
-    } catch (e) { message.error(apiError(e)); }
+      const res = await conversationApi.reply(sid, content);
+      // await 期间可能已切走会话：仍停留在原会话时才做乐观追加，避免串进别的面板。
+      if (selectedIdRef.current === sid)
+        appendMsg({ id: res?.message_id, role: "assistant", model: "human", content });
+      return true;
+    } catch (e) { message.error(apiError(e)); return false; }
     finally { setSending(false); }
   };
 
-  const statusTag = (it: any) =>
-    it.status === "human_takeover" ? <Tag color="green">接管中</Tag>
-    : it.status === "escalated" ? <Tag color="orange">待接待</Tag>
-    : <Tag>{it.status}</Tag>;
+  // 状态 Tag 统一取自 utils/status.ts，保证跨页文案/颜色一致
+  const statusTag = (st?: string) => {
+    const m = statusMeta(SESSION_STATUS, st);
+    return <Tag color={m.color}>{m.label}</Tag>;
+  };
 
   return (
     // Fill the padded content area exactly (viewport − 64px header − 48px acs-content padding)
     // so the panels end on the 24px bottom gap like every other page, not at the edge.
-    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 112px)" }}>
+    // 窄屏不锁死高度：面板纵向堆叠后随内容自适应，整页滚动。
+    <div style={{ display: "flex", flexDirection: "column", height: narrow ? undefined : "calc(100vh - 112px)" }}>
+      {/* 队列项键盘聚焦样式（index.css 无现成 class，就近声明 :focus-visible） */}
+      <style>{`.acs-queue-item:focus-visible { outline: 2px solid ${token.colorPrimary}; outline-offset: -2px; }`}</style>
       <div className="acs-page-title">坐席工作台</div>
       <div className="acs-page-sub">实时接待需要人工处理的会话：接管后可直接与客户对话，AI 自动让位。</div>
 
-      <div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
-        {/* ---- queue ---- */}
-        <div style={{ width: 300, display: "flex", flexDirection: "column", background: panel, border: `1px solid ${line}`, borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ display: "flex", flexDirection: narrow ? "column" : "row", gap: 14, flex: 1, minHeight: 0 }}>
+        {/* ---- queue ----（窄屏限高 240px 内部滚动，宽屏固定 300px 侧栏） */}
+        <div style={{ ...(narrow ? { maxHeight: 240, flexShrink: 0 } : { width: 300 }), display: "flex", flexDirection: "column", background: panel, border: `1px solid ${line}`, borderRadius: 8, overflow: "hidden" }}>
           <div style={{ padding: "10px 12px", borderBottom: `1px solid ${line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <Segmented
               size="small"
@@ -173,13 +263,20 @@ export function Workbench() {
             <Tooltip title="刷新"><Button size="small" type="text" icon={<ReloadOutlined />} onClick={loadList} /></Tooltip>
           </div>
           <div style={{ flex: 1, overflowY: "auto" }}>
+            {listError && (
+              <Alert banner type="error" showIcon message={`队列刷新失败：${listError}`} style={{ fontSize: 12 }} />
+            )}
             {list.length === 0 ? (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有待接待的会话" style={{ marginTop: 60 }} />
+              !listError && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前没有待接待的会话" style={{ marginTop: 60 }} />
             ) : (
               list.map((it) => (
                 <div
                   key={it.id}
+                  className="acs-queue-item"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setSelectedId(it.id)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedId(it.id); } }}
                   style={{
                     padding: "11px 12px", borderBottom: `1px solid ${line}`, cursor: "pointer",
                     background: selectedId === it.id ? token.colorPrimaryBg : "transparent",
@@ -189,13 +286,13 @@ export function Workbench() {
                     <span style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {it.end_user_display || it.end_user_id || "匿名用户"}
                     </span>
-                    {statusTag(it)}
+                    {statusTag(it.status)}
                   </div>
                   <div style={{ color: muted, fontSize: 12, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {it.title || "（无内容）"}
                   </div>
                   <div style={{ color: token.colorTextTertiary, fontSize: 11, marginTop: 3 }}>
-                    <Tag bordered={false} style={{ fontSize: 10, lineHeight: "16px", padding: "0 5px", marginRight: 4 }}>{it.channel_type}</Tag>
+                    <Tag bordered={false} style={{ fontSize: 10, lineHeight: "16px", padding: "0 5px", marginRight: 4 }}>{statusMeta(CHANNEL_TYPE, it.channel_type).label}</Tag>
                     {fmtShort(it.last_activity_at)}
                   </div>
                 </div>
@@ -204,11 +301,23 @@ export function Workbench() {
           </div>
         </div>
 
-        {/* ---- chat panel ---- */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", background: panel, border: `1px solid ${line}`, borderRadius: 8, overflow: "hidden" }}>
+        {/* ---- chat panel ----（窄屏给最小高度撑起空态/加载态，消息区另行限高内部滚动） */}
+        <div style={{ flex: 1, ...(narrow ? { minHeight: 360 } : {}), display: "flex", flexDirection: "column", background: panel, border: `1px solid ${line}`, borderRadius: 8, overflow: "hidden" }}>
           {!s ? (
             <div style={{ flex: 1, display: "grid", placeItems: "center" }}>
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="从左侧选择一个会话开始接待" />
+              {!selectedId ? (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="从左侧选择一个会话开始接待" />
+              ) : detailLoading ? (
+                <div style={{ textAlign: "center", color: muted }}>
+                  <Spin />
+                  <div style={{ marginTop: 10, fontSize: 13 }}>会话加载中…</div>
+                </div>
+              ) : (
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ color: muted, fontSize: 13, marginBottom: 12 }}>会话加载失败，请重试</div>
+                  <Button icon={<ReloadOutlined />} onClick={() => { setDetailLoading(true); loadDetail(); }}>重试</Button>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -216,21 +325,26 @@ export function Workbench() {
               <div style={{ padding: "10px 16px", borderBottom: `1px solid ${line}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <div style={{ minWidth: 0 }}>
                   <span style={{ fontWeight: 600 }}>{s.end_user_display || s.end_user_id || "匿名用户"}</span>
-                  <Tag bordered={false} style={{ marginLeft: 8 }}>{s.channel_type}</Tag>
-                  {inTakeover ? <Tag color="green">接管中</Tag> : s.escalated ? <Tag color="red">待人工</Tag> : null}
+                  <Tag bordered={false} style={{ marginLeft: 8 }}>{statusMeta(CHANNEL_TYPE, s.channel_type).label}</Tag>
+                  {inTakeover ? statusTag("human_takeover") : s.escalated ? statusTag("escalated") : null}
                 </div>
                 {editable && (
                   <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
                     {!inTakeover && <Button type="primary" icon={<CustomerServiceOutlined />} onClick={() => act(() => conversationApi.takeover(selectedId!), "已接管，可直接回复客户")}>接管对话</Button>}
                     {inTakeover && <Button onClick={() => act(() => conversationApi.release(selectedId!, true), "已结束接管，AI 恢复")}>结束接管</Button>}
-                    {inTakeover && <Button danger icon={<CheckOutlined />} onClick={() => act(() => conversationApi.release(selectedId!, false), "已结束并完成")}>结束并完成</Button>}
+                    {inTakeover && (
+                      <Popconfirm title="结束接管并关闭该会话？" description="客户将收到「本次人工服务已结束」，无法继续此对话。" okText="结束" okButtonProps={{ danger: true }}
+                        onConfirm={() => act(() => conversationApi.release(selectedId!, false), "已结束并完成")}>
+                        <Button danger icon={<CheckOutlined />}>结束并完成</Button>
+                      </Popconfirm>
+                    )}
                     {!inTakeover && s.escalated && <Button icon={<CheckOutlined />} onClick={() => act(() => conversationApi.markHandled(selectedId!), "已标记完成")}>标记完成</Button>}
                   </div>
                 )}
               </div>
 
-              {/* messages */}
-              <div ref={bodyRef} style={{ flex: 1, overflowY: "auto", padding: 16, background: token.colorBgLayout, display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* messages —— 窄屏外层不锁高，给消息区 55vh 上限保证内部滚动（自动滚底依赖它），输入框始终可见 */}
+              <div ref={bodyRef} style={{ flex: 1, ...(narrow ? { maxHeight: "55vh" } : {}), overflowY: "auto", padding: 16, background: token.colorBgLayout, display: "flex", flexDirection: "column", gap: 10 }}>
                 {(detail.messages || []).filter((m: any) => m.role === "user" || m.role === "assistant").map((m: any) => {
                   const isUser = m.role === "user";
                   const isHuman = m.model === "human";
@@ -275,30 +389,7 @@ export function Workbench() {
               {/* composer */}
               <div style={{ borderTop: `1px solid ${line}`, padding: 12 }}>
                 {inTakeover ? (
-                  <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                    <Input.TextArea
-                      value={replyText}
-                      onChange={(e) => onComposerChange(e.target.value)}
-                      autoSize={{ minRows: 1, maxRows: 4 }}
-                      placeholder="输入回复，回车发送给客户（Shift+Enter 换行）"
-                      onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); sendReply(); } }}
-                    />
-                    <Dropdown
-                      trigger={["click"]}
-                      menu={{
-                        items: canned.length
-                          ? canned.map((c) => ({ key: c.id, label: c.title || c.content.slice(0, 24) }))
-                          : [{ key: "none", label: "暂无模板", disabled: true }],
-                        onClick: ({ key }) => {
-                          const c = canned.find((x) => x.id === key);
-                          if (c) setReplyText((t) => (t ? t + "\n" + c.content : c.content));
-                        },
-                      }}
-                    >
-                      <Button icon={<ThunderboltOutlined />}>快捷回复</Button>
-                    </Dropdown>
-                    <Button type="primary" icon={<SendOutlined />} loading={sending} onClick={sendReply}>发送</Button>
-                  </div>
+                  <Composer canned={canned} sending={sending} onSend={sendReply} onTyping={onComposerTyping} />
                 ) : (
                   <div style={{ textAlign: "center", color: muted, fontSize: 13, padding: "6px 0" }}>
                     点击右上角「接管对话」后即可直接回复客户

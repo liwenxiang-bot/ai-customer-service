@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Card, Drawer, Form, Input, InputNumber, Popconfirm, Space, Table, Tag } from "antd";
+import { App as AntApp, Button, Card, Drawer, Form, Input, InputNumber, Popconfirm, Space, Table, Tag, Typography } from "antd";
 import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
 import { cannedApi } from "../api";
 import { apiError } from "../api/client";
@@ -19,7 +19,7 @@ export function CannedResponses() {
 
   const load = () => {
     setLoading(true);
-    cannedApi.list(dq).then((d) => setItems(d.items)).finally(() => setLoading(false));
+    cannedApi.list(dq).then((d) => setItems(d.items)).catch((e) => message.error(apiError(e))).finally(() => setLoading(false));
   };
   useEffect(load, [dq]);
 
@@ -39,16 +39,16 @@ export function CannedResponses() {
   };
 
   const columns = [
-    { title: "标题", dataIndex: "title", width: 200, render: (t: string) => t || <span style={{ color: "#aaa" }}>（无标题）</span> },
+    { title: "标题", dataIndex: "title", width: 200, render: (t: string) => t || <Typography.Text type="secondary">（无标题）</Typography.Text> },
     { title: "分类", dataIndex: "category", width: 120, render: (c: string) => c ? <Tag>{c}</Tag> : "—" },
     { title: "内容", dataIndex: "content", ellipsis: true },
     { title: "排序", dataIndex: "sort_order", width: 70 },
     ...(editable ? [{
       title: "操作", width: 120, render: (_: any, r: any) => (
         <Space size="small">
-          <a onClick={() => openEdit(r)}>编辑</a>
-          <Popconfirm title="删除该模板？" onConfirm={async () => { await cannedApi.remove(r.id); message.success("已删除"); load(); }}>
-            <a style={{ color: "#ef4444" }}>删除</a>
+          <Button type="link" size="small" style={{ padding: 0 }} onClick={() => openEdit(r)}>编辑</Button>
+          <Popconfirm title="删除该模板？" onConfirm={async () => { try { await cannedApi.remove(r.id); message.success("已删除"); load(); } catch (e) { message.error(apiError(e)); } }}>
+            <Button type="link" size="small" danger style={{ padding: 0 }}>删除</Button>
           </Popconfirm>
         </Space>
       ),
@@ -65,7 +65,7 @@ export function CannedResponses() {
             value={search} onChange={(e) => setSearch(e.target.value)} />
           {editable && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>新增模板</Button>}
         </Space>
-        <Table rowKey="id" loading={loading} columns={columns as any} dataSource={items} size="small" pagination={false} />
+        <Table rowKey="id" loading={loading} columns={columns as any} dataSource={items} size="small" pagination={{ pageSize: 20, hideOnSinglePage: true }} />
       </Card>
 
       <Drawer title={drawer?.id ? "编辑模板" : "新增模板"} width={520} open={!!drawer} onClose={() => setDrawer(null)}

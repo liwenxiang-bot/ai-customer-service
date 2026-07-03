@@ -24,6 +24,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // 向后兼容：旧版「记住登录」曾把 base64 密码存进 localStorage，启动时清掉密码字段（只保留邮箱/租户）。
+    try {
+      const saved = localStorage.getItem("acs_login_remember");
+      if (saved) {
+        const { email, password, tenant } = JSON.parse(saved);
+        if (password) localStorage.setItem("acs_login_remember", JSON.stringify({ email, tenant: tenant || "" }));
+      }
+    } catch { /* ignore corrupt value */ }
     (async () => {
       if (tokenStore.access) {
         try {
@@ -42,9 +50,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(u);
   };
   const logout = async () => {
-    await authApi.logout();
-    tenantStore.set(""); // drop any super-admin "act as tenant" scope
-    setUser(null);
+    try {
+      await authApi.logout(); // 内部 finally 已清 token
+    } catch {
+      // 登出接口失败（断网/5xx）不应阻断本地登出，吞掉异常让调用方继续跳转登录页
+    } finally {
+      tenantStore.set(""); // drop any super-admin "act as tenant" scope
+      setUser(null);
+    }
   };
 
   return <Ctx.Provider value={{ user, loading, login, logout }}>{children}</Ctx.Provider>;

@@ -10,5 +10,25 @@ export default defineConfig({
       "/api": { target: "http://127.0.0.1:8000", changeOrigin: true },
     },
   },
-  build: { outDir: "dist" },
+  build: {
+    outDir: "dist",
+    rollupOptions: {
+      output: {
+        // Split long-cache vendor chunks; page-only deps (recharts, react-markdown)
+        // stay with their lazy route chunks.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          const parts = id.split("node_modules/").pop()!.split("/");
+          const pkg = parts[0].startsWith("@") ? `${parts[0]}/${parts[1]}` : parts[0];
+          if (["react", "react-dom", "scheduler", "react-router", "react-router-dom", "@remix-run/router"].includes(pkg)) {
+            return "react-vendor";
+          }
+          if (pkg === "antd" || pkg.startsWith("@ant-design/") || pkg.startsWith("rc-") || pkg.startsWith("@rc-component/")) {
+            return "antd-vendor";
+          }
+          return undefined;
+        },
+      },
+    },
+  },
 });

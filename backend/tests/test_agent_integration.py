@@ -5,7 +5,7 @@ dev Postgres to be running; skips otherwise.
 """
 
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -75,7 +75,7 @@ async def test_tool_loop_runs_and_persists():
         ai_config = await get_active_ai_config(db)
         session = Session(
             channel_type="web", channel_key="default", end_user_id="itest",
-            status=SessionStatus.ACTIVE, last_activity_at=datetime.now(timezone.utc),
+            status=SessionStatus.ACTIVE, last_activity_at=datetime.now(UTC),
         )
         db.add(session)
         await db.flush()

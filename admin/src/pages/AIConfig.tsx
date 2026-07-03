@@ -7,6 +7,7 @@ import { ThunderboltOutlined } from "@ant-design/icons";
 import { aiConfigApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, isAdmin } from "../auth";
+import { usePolling } from "../hooks/usePolling";
 
 export function AIConfig() {
   const { user } = useAuth();
@@ -17,20 +18,22 @@ export function AIConfig() {
   const [rebuild, setRebuild] = useState<any>(null);
 
   const load = async () => {
-    const cfg = await aiConfigApi.get();
-    form.setFieldsValue(cfg);
+    try {
+      const cfg = await aiConfigApi.get();
+      form.setFieldsValue(cfg);
+    } catch (e) {
+      message.error(apiError(e));
+    }
   };
   useEffect(() => { load(); }, []);
 
-  // Poll rebuild progress while one is running.
-  useEffect(() => {
-    const timer = setInterval(async () => {
-      const d = await aiConfigApi.rebuildStatus();
-      setRebuild(d.rebuild);
-    }, 2000);
-    aiConfigApi.rebuildStatus().then((d) => setRebuild(d.rebuild));
-    return () => clearInterval(timer);
-  }, []);
+  const fetchRebuild = () =>
+    aiConfigApi.rebuildStatus().then((d) => setRebuild(d.rebuild)).catch(() => { /* 轮询忽略瞬时错误 */ });
+  // 进页面先查一次是否有进行中的重建。
+  useEffect(() => { fetchRebuild(); }, []);
+  const rebuilding = !!rebuild && (rebuild.status === "running" || rebuild.status === "pending");
+  // 仅在重建进行中时以 2s 轮询进度；页面隐藏自动暂停（usePolling 内置），空闲时不发请求。
+  usePolling(fetchRebuild, 2000, { enabled: rebuilding });
 
   const save = async () => {
     const v = await form.validateFields();
@@ -60,13 +63,11 @@ export function AIConfig() {
     try {
       await aiConfigApi.rebuild();
       message.info("已触发向量重建，进度见上方");
-      aiConfigApi.rebuildStatus().then((d) => setRebuild(d.rebuild));
+      fetchRebuild();
     } catch (e) {
       message.error(apiError(e));
     }
   };
-
-  const rebuilding = rebuild && (rebuild.status === "running" || rebuild.status === "pending");
 
   return (
     <div>

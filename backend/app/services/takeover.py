@@ -110,7 +110,14 @@ async def operator_reply(db: AsyncSession, session: Session, content: str) -> DB
     await db.flush()
     await publish(
         str(session.id),
-        {"type": "human_message", "content": content, "message_id": str(msg.id)},
+        {
+            "type": "human_message",
+            # session_id lets subscribers (e.g. the workbench watching several sessions)
+            # drop pushes that don't belong to the conversation on screen.
+            "session_id": str(session.id),
+            "content": content,
+            "message_id": str(msg.id),
+        },
     )
     return msg
 
@@ -142,6 +149,7 @@ async def persist_customer_message(
         session_id,
         {
             "type": "customer_message",
+            "session_id": str(session.id),
             "content": text,
             "message_id": str(msg.id),
             "attachments": attachments or [],

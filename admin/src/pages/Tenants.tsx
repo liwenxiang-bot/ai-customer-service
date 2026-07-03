@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Card, Form, Input, Modal, Space, Switch, Table, Tag } from "antd";
+import { App as AntApp, Button, Card, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag } from "antd";
 import { LoginOutlined, PlusOutlined } from "@ant-design/icons";
 import { tenantApi } from "../api";
 import { apiError, tenantStore } from "../api/client";
@@ -63,7 +63,15 @@ export function Tenants() {
           ) : (
             <Button size="small" icon={<LoginOutlined />} disabled={!r.is_active} onClick={() => enter(r)}>进入</Button>
           )}
-          <Switch size="small" checked={r.is_active} onChange={() => toggle(r)} checkedChildren="启用" unCheckedChildren="停用" />
+          {r.is_active ? (
+            // 停用是高危操作：整租户立即不可用，需二次确认；启用方向无需拦截。
+            <Popconfirm title="停用该租户？" description="该租户所有后台账号与客户端 Widget 将立即失效"
+              okText="停用" okButtonProps={{ danger: true }} onConfirm={() => toggle(r)}>
+              <Switch size="small" checked checkedChildren="启用" unCheckedChildren="停用" />
+            </Popconfirm>
+          ) : (
+            <Switch size="small" checked={false} onChange={() => toggle(r)} checkedChildren="启用" unCheckedChildren="停用" />
+          )}
         </Space>
       ),
     },

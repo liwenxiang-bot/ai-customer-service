@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { Layout, Menu, Spin, Dropdown, Avatar, Tag, Button, Tooltip, Alert, theme } from "antd";
 import {
@@ -19,19 +19,28 @@ import {
 import { useAuth, isAdmin, isSuperAdmin } from "./auth";
 import { tenantStore } from "./api/client";
 import { useThemeMode } from "./theme";
-import { Login } from "./pages/Login";
-import { Dashboard } from "./pages/Dashboard";
-import { Workbench } from "./pages/Workbench";
-import { Knowledge } from "./pages/Knowledge";
-import { AIConfig } from "./pages/AIConfig";
-import { Channels } from "./pages/Channels";
-import { Conversations } from "./pages/Conversations";
-import { Handoff } from "./pages/Handoff";
-import { CannedResponses } from "./pages/CannedResponses";
-import { Accounts } from "./pages/Accounts";
-import { Tenants } from "./pages/Tenants";
+
+// Route-level code splitting: each page loads on demand (pages use named exports).
+const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
+const Dashboard = lazy(() => import("./pages/Dashboard").then((m) => ({ default: m.Dashboard })));
+const Workbench = lazy(() => import("./pages/Workbench").then((m) => ({ default: m.Workbench })));
+const Knowledge = lazy(() => import("./pages/Knowledge").then((m) => ({ default: m.Knowledge })));
+const AIConfig = lazy(() => import("./pages/AIConfig").then((m) => ({ default: m.AIConfig })));
+const Channels = lazy(() => import("./pages/Channels").then((m) => ({ default: m.Channels })));
+const Conversations = lazy(() => import("./pages/Conversations").then((m) => ({ default: m.Conversations })));
+const Handoff = lazy(() => import("./pages/Handoff").then((m) => ({ default: m.Handoff })));
+const CannedResponses = lazy(() => import("./pages/CannedResponses").then((m) => ({ default: m.CannedResponses })));
+const Accounts = lazy(() => import("./pages/Accounts").then((m) => ({ default: m.Accounts })));
+const Tenants = lazy(() => import("./pages/Tenants").then((m) => ({ default: m.Tenants })));
 
 const { Header, Sider, Content } = Layout;
+
+// Centered fallback while a lazy page chunk downloads.
+const PageLoading = ({ full }: { full?: boolean }) => (
+  <div style={{ height: full ? "100vh" : "60vh", display: "grid", placeItems: "center" }}>
+    <Spin size="large" />
+  </div>
+);
 
 const MENU = [
   { key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
@@ -61,7 +70,7 @@ function AppLayout() {
 
   return (
     <Layout style={{ height: "100vh" }}>
-      <Sider theme={dark ? "dark" : "light"} width={200} collapsible collapsed={collapsed} onCollapse={setCollapsed} style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}>
+      <Sider theme={dark ? "dark" : "light"} width={200} breakpoint="lg" collapsible collapsed={collapsed} onCollapse={setCollapsed} style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}>
         <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, padding: collapsed ? 0 : "0 20px", fontWeight: 700, fontSize: 16, color: dark ? "#2DD4BF" : "#0F766E", whiteSpace: "nowrap", overflow: "hidden" }}>
           <RobotOutlined style={{ fontSize: 18 }} />{!collapsed && "AI 客服后台"}
         </div>
@@ -81,9 +90,10 @@ function AppLayout() {
           <Dropdown
             menu={{ items: [{ key: "logout", icon: <LogoutOutlined />, label: "退出登录", onClick: async () => { await logout(); nav("/login"); } }] }}
           >
-            <span style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
+            <span style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8, marginLeft: 8, minWidth: 0 }}>
               <Avatar size="small" icon={<UserOutlined />} style={{ background: "#0F766E" }} />
-              {user?.name || user?.email}
+              {/* Truncate long names on narrow screens instead of wrapping the header. */}
+              <span style={{ maxWidth: 160, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user?.name || user?.email}</span>
               <Tag color={isAdmin(user?.role) ? "purple" : user?.role === "operator" ? "blue" : "default"}>
                 {user?.role === "admin" ? "管理员" : user?.role === "operator" ? "运营" : "只读"}
               </Tag>
@@ -101,19 +111,21 @@ function AppLayout() {
             />
           )}
           <div className="acs-content">
-            <Routes>
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/workbench" element={<Workbench />} />
-              <Route path="/knowledge" element={<Knowledge />} />
-              <Route path="/conversations" element={<Conversations />} />
-              <Route path="/handoff" element={<Handoff />} />
-              <Route path="/canned" element={<CannedResponses />} />
-              <Route path="/ai-config" element={<AIConfig />} />
-              <Route path="/channels" element={<Channels />} />
-              <Route path="/accounts" element={isAdmin(user?.role) ? <Accounts /> : <Navigate to="/dashboard" />} />
-              <Route path="/tenants" element={isSuperAdmin(user) ? <Tenants /> : <Navigate to="/dashboard" />} />
-              <Route path="*" element={<Navigate to="/dashboard" />} />
-            </Routes>
+            <Suspense fallback={<PageLoading />}>
+              <Routes>
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/workbench" element={<Workbench />} />
+                <Route path="/knowledge" element={<Knowledge />} />
+                <Route path="/conversations" element={<Conversations />} />
+                <Route path="/handoff" element={<Handoff />} />
+                <Route path="/canned" element={<CannedResponses />} />
+                <Route path="/ai-config" element={<AIConfig />} />
+                <Route path="/channels" element={<Channels />} />
+                <Route path="/accounts" element={isAdmin(user?.role) ? <Accounts /> : <Navigate to="/dashboard" />} />
+                <Route path="/tenants" element={isSuperAdmin(user) ? <Tenants /> : <Navigate to="/dashboard" />} />
+                <Route path="*" element={<Navigate to="/dashboard" />} />
+              </Routes>
+            </Suspense>
           </div>
         </Content>
       </Layout>
@@ -130,10 +142,12 @@ export function App() {
   }
   if (!user) {
     return (
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="*" element={<Navigate to="/login" state={{ from: loc.pathname }} />} />
-      </Routes>
+      <Suspense fallback={<PageLoading full />}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<Navigate to="/login" state={{ from: loc.pathname }} />} />
+        </Routes>
+      </Suspense>
     );
   }
   return <AppLayout />;

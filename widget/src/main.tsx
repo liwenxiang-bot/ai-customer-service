@@ -9,6 +9,14 @@ declare global {
   }
 }
 
+// 商户配置的主题色会被拼进 <style>，只放行 hex / 纯字母色名，防止闭合声明块注入任意 CSS。
+function safeThemeColor(v: unknown): string {
+  const fallback = "#4f46e5";
+  if (typeof v !== "string") return fallback;
+  const s = v.trim();
+  return /^#[0-9a-fA-F]{3,8}$/.test(s) || /^[a-zA-Z]+$/.test(s) ? s : fallback;
+}
+
 function resolveBaseUrl(): string {
   if (window.ACS_CONFIG?.baseUrl) return window.ACS_CONFIG.baseUrl.replace(/\/$/, "");
   const cs = document.currentScript as HTMLScriptElement | null;
@@ -68,7 +76,7 @@ async function boot() {
 
   const shadow = host.attachShadow({ mode: "open" });
   const styleEl = document.createElement("style");
-  styleEl.textContent = buildStyles(branding.theme_color || "#4f46e5");
+  styleEl.textContent = buildStyles(safeThemeColor(branding.theme_color));
   shadow.appendChild(styleEl);
   const mount = document.createElement("div");
   shadow.appendChild(mount);
