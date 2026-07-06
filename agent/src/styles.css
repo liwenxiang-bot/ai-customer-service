@@ -77,13 +77,20 @@ button {
   -webkit-appearance: none;
   appearance: none;
 }
-input,
+/* 排除 checkbox/radio：appearance:none 会把原生方框与对勾整个抹掉，
+   勾选状态完全不可见（登录页「记住邮箱」曾因此看起来像坏了）。 */
+input:not([type="checkbox"]):not([type="radio"]),
 textarea,
 select {
   -webkit-appearance: none;
   appearance: none;
   /* iOS 会给输入框加内阴影，一并去掉 */
   -webkit-box-shadow: none;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--brand);
+  cursor: pointer;
 }
 @media (min-width: 1024px) {
   * {
@@ -423,11 +430,13 @@ select {
 .remember-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-size: 13px;
   color: var(--muted);
   margin-bottom: 14px;
   user-select: none;
+  cursor: pointer;
+  width: fit-content; /* 点击区域只覆盖文字+勾选框，不横跨整行 */
 }
 .form-error {
   color: var(--red);
