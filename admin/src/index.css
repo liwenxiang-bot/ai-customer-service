@@ -41,43 +41,78 @@ body {
 
 /* ─────────────────────────── Login ─────────────────────────── */
 .acs-login-bg {
-  height: 100vh;
+  min-height: 100dvh; /* dvh：移动端工具栏收展不产生死滚动，与坐席站登录页一致 */
   display: grid;
   place-items: center;
   padding: 24px;
+  /* 深 teal 底 + 一抹光晕 + 右下角超大对话气泡线稿（产品母题，5% 白描边） */
   background:
-    radial-gradient(1100px 560px at 72% -12%, rgba(45, 212, 191, 0.34), transparent 60%),
-    radial-gradient(820px 520px at -8% 112%, rgba(13, 148, 136, 0.42), transparent 55%),
-    linear-gradient(135deg, #0f766e 0%, #115e59 52%, #134e4a 100%);
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='520' height='520' viewBox='0 0 520 520'%3E%3Cpath d='M124 80h272a64 64 0 0 1 64 64v152a64 64 0 0 1-64 64H268l-92 80v-80h-52a64 64 0 0 1-64-64V144a64 64 0 0 1 64-64z' fill='none' stroke='rgba(255,255,255,0.05)' stroke-width='10'/%3E%3C/svg%3E")
+      no-repeat calc(100% + 130px) calc(100% + 150px),
+    radial-gradient(900px 480px at 76% -10%, rgba(45, 212, 191, 0.16), transparent 60%),
+    linear-gradient(160deg, #10655d 0%, #0c4a44 48%, #0a3833 100%);
 }
 .acs-login-card {
-  width: 410px;
+  width: 404px;
   max-width: 100%;
   background: #fff;
-  border-radius: 16px;
-  padding: 38px 38px 26px;
-  box-shadow: 0 28px 70px -16px rgba(6, 38, 36, 0.5), 0 6px 20px -8px rgba(0, 0, 0, 0.18);
+  border-radius: 18px;
+  padding: 36px 36px 24px;
+  box-shadow: 0 24px 64px -24px rgba(4, 32, 30, 0.55), 0 2px 8px rgba(0, 0, 0, 0.08);
 }
-.acs-login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 30px; }
+.acs-login-brand { display: flex; align-items: center; gap: 14px; }
 .acs-login-logo {
-  width: 50px; height: 50px; flex: none;
+  position: relative;
+  width: 48px; height: 48px; flex: none;
   border-radius: 13px;
   display: grid; place-items: center;
-  background: linear-gradient(135deg, #2dd4bf 0%, #0f766e 100%);
-  color: #fff; font-size: 25px;
-  box-shadow: 0 8px 18px -5px rgba(15, 118, 110, 0.6);
+  background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
+  color: #fff; font-size: 23px;
+  box-shadow: 0 6px 16px -6px rgba(15, 118, 110, 0.45);
+}
+/* 在线状态点：与坐席站登录页共用的品牌签名（服务在线） */
+.acs-login-presence {
+  position: absolute;
+  right: -3px; bottom: -3px;
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: #2dd4bf;
+  box-shadow: 0 0 0 3px #fff;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .acs-login-presence::after {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    border: 2px solid rgba(45, 212, 191, 0.55);
+    animation: acs-presence-pulse 2.6s ease-out infinite;
+  }
+  @keyframes acs-presence-pulse {
+    0% { transform: scale(0.7); opacity: 1; }
+    70%, 100% { transform: scale(1.9); opacity: 0; }
+  }
+}
+.acs-login-eyebrow {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
+  color: #93a3a0; margin-bottom: 3px;
 }
 .acs-login-title { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; color: #18222e; line-height: 1.15; }
-.acs-login-sub { font-size: 13px; color: #6b7480; margin-top: 3px; }
+.acs-login-sub { font-size: 13px; color: #6b7480; margin: 10px 0 26px; }
 .acs-login-icon { color: #aab2bd; }
-.acs-login-row { display: flex; align-items: center; justify-content: space-between; margin: 2px 0 18px; }
-.acs-login-link { font-size: 13px; color: #0f766e; cursor: pointer; transition: color 0.15s; }
-.acs-login-link:hover { color: #115e59; text-decoration: underline; }
-.acs-login-card .acs-login-btn {
-  height: 46px; font-size: 15px; font-weight: 600;
-  box-shadow: 0 10px 22px -8px rgba(15, 118, 110, 0.55);
-}
+.acs-login-row { display: flex; align-items: center; margin: 2px 0 20px; }
+.acs-login-card .ant-form-item-label > label { font-size: 13px; color: #4b5563; }
+.acs-login-card .ant-form-item { margin-bottom: 18px; }
+.acs-login-card .acs-login-btn { height: 44px; font-size: 15px; font-weight: 600; box-shadow: none; }
 .acs-login-card .ant-input-affix-wrapper { padding-top: 9px; padding-bottom: 9px; }
+/* hint 是功能性文案（找回路径），对比度须过 AA；eyebrow 纯装饰可更浅 */
+.acs-login-hint { margin-top: 18px; font-size: 12px; color: #6b7480; text-align: center; }
+[data-theme="dark"] .acs-login-card { background: #171c22; }
+[data-theme="dark"] .acs-login-hint { color: #98a2b0; }
+[data-theme="dark"] .acs-login-title { color: #e6eaf0; }
+[data-theme="dark"] .acs-login-sub { color: #98a2b0; }
+[data-theme="dark"] .acs-login-card .ant-form-item-label > label { color: #98a2b0; }
+[data-theme="dark"] .acs-login-presence { box-shadow: 0 0 0 3px #171c22; }
 
 /* ─────────────────────────── Dashboard ─────────────────────────── */
 /* Equal-height cards per row → no ragged bottoms. */

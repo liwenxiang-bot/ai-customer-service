@@ -46,9 +46,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string, tenant?: string) => {
-    tenantStore.set((tenant || "").trim()); // route this login (and later requests) to the tenant
-    const u = await authApi.login(email, password);
-    setUser(u);
+    // 先写 store 是必须的：登录请求本身靠 X-Tenant-Slug 头路由到目标租户。
+    // 但失败要回滚，否则一次错误尝试就清掉代管遗留的租户上下文，
+    // 租户字段随之从登录页永久消失（无 UI 入口可恢复）。
+    const prevSlug = tenantStore.slug;
+    const prevName = tenantStore.name;
+    tenantStore.set((tenant || "").trim());
+    try {
+      const u = await authApi.login(email, password);
+      setUser(u);
+    } catch (e) {
+      tenantStore.set(prevSlug, prevName || undefined);
+      throw e;
+    }
   };
   const logout = async () => {
     try {
