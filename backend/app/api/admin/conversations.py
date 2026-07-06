@@ -24,6 +24,7 @@ from app.models.enums import HandoffStatus, SessionStatus
 from app.services import knowledge as ksvc
 from app.services import takeover as tk
 from app.services.audit import write_audit
+from app.services.handoff import QUEUE_STATUSES, resolve_session_tickets
 
 router = APIRouter(prefix="/conversations", tags=["admin-conversations"])
 
@@ -53,9 +54,7 @@ def _filtered_sessions(
     if attention:
         # Workbench queue = waiting (escalated) or being handled (takeover). Status-based so
         # resolved / AI-resumed sessions (where the `escalated` flag lingers True) don't leak in.
-        stmt = stmt.where(
-            Session.status.in_([SessionStatus.ESCALATED, SessionStatus.HUMAN_TAKEOVER])
-        )
+        stmt = stmt.where(Session.status.in_(QUEUE_STATUSES))
     if q:
         like = f"%{escape_like(q)}%"
         stmt = stmt.where(
@@ -193,9 +192,16 @@ async def queue_counts(
             select(func.count(Session.id)).where(Session.status == SessionStatus.HUMAN_TAKEOVER)
         )
     ).scalar_one()
-    my_ticket_sessions = select(HandoffTicket.session_id.label("sid")).where(
-        HandoffTicket.assignee_id == user.id,
-        HandoffTicket.status == HandoffStatus.IN_PROGRESS,
+    # 工单半边 join 会话在队状态，与「我的」列表口径（attention 基集）严格对齐：
+    # 工单若因异常路径滞留在已离队会话上，不再把角标撑成"计数 2、列表空"的幽灵。
+    my_ticket_sessions = (
+        select(HandoffTicket.session_id.label("sid"))
+        .join(Session, Session.id == HandoffTicket.session_id)
+        .where(
+            HandoffTicket.assignee_id == user.id,
+            HandoffTicket.status == HandoffStatus.IN_PROGRESS,
+            Session.status.in_(QUEUE_STATUSES),
+        )
     )
     my_takeover_sessions = select(Session.id.label("sid")).where(
         Session.status == SessionStatus.HUMAN_TAKEOVER,
@@ -315,8 +321,23 @@ async def mark_handled(
     session = await db.get(Session, uuid.UUID(session_id))
     if not session:
         raise HTTPException(status_code=404, detail="会话不存在")
+    was_takeover = session.status == SessionStatus.HUMAN_TAKEOVER
     session.status = SessionStatus.HUMAN_HANDLED
+    # 会话离队必须收尾工单，否则已认领的 in_progress 工单滞留成幽灵计数
+    # （只进 queue-counts 的 mine 角标、不进任何列表）。
+    session.takeover_by_id = None
+    session.takeover_by_name = ""
+    resolved = await resolve_session_tickets(db, session, "标记已处理", assignee_id=user.id)
+    if resolved:
+        await write_audit(
+            db, user, "handoff.auto_resolve", "session", session_id,
+            {"tickets": resolved, "note": "标记已处理"},
+        )
     await db.commit()
+    if was_takeover:
+        # 接管态残留也要清 Redis 标志：is_takeover 只看标志，不清则 AI 对该会话
+        # 哑火最长 24h（客户消息只落库、无人应答，且会话已不在任何队列里）。
+        await tk.clear_takeover_flag(session_id)
     await tk.publish_admin_event({"type": "queue", "event": "handled", "session_id": session_id})
     return {"ok": True}
 
@@ -427,14 +448,16 @@ async def release(
     session_id: str, body: ReleaseIn, db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_operator),
 ):
-    """End takeover. resume_ai=True → AI resumes; False → mark session human-handled
-    and auto-resolve the session's open/in_progress handoff tickets."""
+    """End takeover. resume_ai=True → AI resumes; False → mark session human-handled.
+    两个分支都会自动 resolve 该会话的 open/in_progress 工单（人工介入已结束）。"""
     session = await _get_session_or_404(db, session_id)
     resolved = await tk.end_takeover(db, session, resume_ai=body.resume_ai, operator=user)
     if resolved:
         await write_audit(
             db, user, "handoff.auto_resolve", "session", session_id,
-            {"tickets": resolved, "note": "坐席结束会话"},
+            # 与工单 resolution_note 同口径，否则审计会把「AI 接续」误读成关闭会话。
+            {"tickets": resolved,
+             "note": "坐席结束接管（AI 接续）" if body.resume_ai else "坐席结束会话"},
         )
     await db.commit()
     return {"ok": True, "status": session.status, "resolved_tickets": resolved}

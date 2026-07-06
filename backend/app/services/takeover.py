@@ -16,14 +16,13 @@ import json
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
 from app.core.redis_client import get_redis
-from app.models.conversation import HandoffTicket, Session
 from app.models.conversation import Message as DBMessage
-from app.models.enums import HandoffStatus, MessageRole, SessionStatus
+from app.models.conversation import Session
+from app.models.enums import MessageRole, SessionStatus
 
 log = get_logger("takeover")
 
@@ -52,6 +51,16 @@ async def publish_admin_event(payload: dict) -> None:
 
 def _flag_key(session_id: str) -> str:
     return f"takeover:{session_id}"
+
+
+async def clear_takeover_flag(session_id: str) -> None:
+    """Best-effort 删除 Redis 接管标志。所有让会话离队的路径都必须清它：
+    is_takeover 只看这个标志（不查 DB），残留会让 AI 对该会话哑火最长 24h（TTL）。
+    Redis 抖动不阻断主流程——标志最终会因 TTL 过期自愈。"""
+    try:
+        await get_redis().delete(_flag_key(session_id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("takeover_flag_cleanup_failed", session_id=session_id, error=str(exc))
 
 
 async def is_takeover(session_id: str) -> bool:
@@ -89,35 +98,23 @@ async def start_takeover(db: AsyncSession, session: Session, operator=None) -> N
 async def end_takeover(
     db: AsyncSession, session: Session, resume_ai: bool = True, operator=None
 ) -> list[str]:
-    """End the takeover. When the operator closes the conversation for good
-    (resume_ai=False), auto-resolve the session's open/in_progress handoff tickets so
-    they don't linger in the queue. Returns the resolved ticket ids (for audit)."""
+    """End the takeover and auto-resolve the session's open/in_progress handoff
+    tickets — in BOTH branches. resume_ai=True 时人工介入同样已经结束，工单若继续
+    挂在坐席名下，会话（已回 active）却不在任何队列列表里，只会把 queue-counts
+    的 mine 角标撑成幽灵计数。客户后续再求助会重新建单。Returns resolved ids."""
     session.status = SessionStatus.ACTIVE if resume_ai else SessionStatus.HUMAN_HANDLED
     # Clear the takeover attribution so the session drops out of "接待中（我的）".
     session.takeover_by_id = None
     session.takeover_by_name = ""
-    resolved_ids: list[str] = []
-    if not resume_ai:
-        tickets = (
-            await db.execute(
-                select(HandoffTicket)
-                .where(
-                    HandoffTicket.session_id == session.id,
-                    HandoffTicket.status.in_(
-                        [HandoffStatus.OPEN, HandoffStatus.IN_PROGRESS]
-                    ),
-                )
-                .with_for_update()
-            )
-        ).scalars().all()
-        now = datetime.now(UTC)
-        for t in tickets:
-            t.status = HandoffStatus.RESOLVED
-            t.resolution_note = "坐席结束会话"
-            t.resolved_at = now
-            if operator is not None and t.assignee_id is None:
-                t.assignee_id = operator.id
-            resolved_ids.append(str(t.id))
+    # Lazy import: handoff 模块级 import 了本模块（publish_admin_event）。
+    from app.services.handoff import resolve_session_tickets
+
+    resolved_ids = await resolve_session_tickets(
+        db,
+        session,
+        "坐席结束接管（AI 接续）" if resume_ai else "坐席结束会话",
+        assignee_id=operator.id if operator is not None else None,
+    )
     await db.flush()
     await get_redis().delete(_flag_key(str(session.id)))
     await publish(
@@ -133,6 +130,39 @@ async def end_takeover(
         session_id=str(session.id),
         resume_ai=resume_ai,
         resolved_tickets=len(resolved_ids),
+    )
+    return resolved_ids
+
+
+async def close_session(
+    db: AsyncSession, session: Session, rating: int = 0, note: str = ""
+) -> list[str]:
+    """客户端结束会话：置 CLOSED、落满意度，并收尾人工侧状态——解决存活工单、
+    清接管标志与归属，让工作台队列与角标即时回落。此前这里只改会话状态，
+    坐席已认领的工单会永远滞留 in_progress（幽灵计数）。Returns resolved ids."""
+    was_takeover = session.status == SessionStatus.HUMAN_TAKEOVER
+    session.status = SessionStatus.CLOSED
+    if 1 <= rating <= 5:
+        session.satisfaction_rating = rating
+    if note:
+        session.satisfaction_note = note
+    session.takeover_by_id = None
+    session.takeover_by_name = ""
+    from app.services.handoff import resolve_session_tickets  # lazy: 避免循环 import
+
+    resolved_ids = await resolve_session_tickets(db, session, "客户结束会话")
+    await db.flush()
+    if was_takeover:
+        await clear_takeover_flag(str(session.id))
+    if resolved_ids or was_takeover:
+        await publish_admin_event(
+            {"type": "queue", "event": "closed", "session_id": str(session.id)}
+        )
+    log.info(
+        "session_closed_by_customer",
+        session_id=str(session.id),
+        resolved_tickets=len(resolved_ids),
+        was_takeover=was_takeover,
     )
     return resolved_ids
 
