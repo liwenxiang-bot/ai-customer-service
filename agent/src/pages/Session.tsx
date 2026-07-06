@@ -360,7 +360,7 @@ export function SessionPage() {
           )}
           {inTakeover && (
             <button className="btn btn-ghost btn-sm" disabled={!!acting}
-              onClick={() => act("release", () => conversationApi.release(id, true), "已结束接管，AI 恢复")}>
+              onClick={() => act("release", () => conversationApi.release(id, true), "已结束接管：AI 接续服务，工单已解决")}>
               {actLabel("release", "结束接管", "结束中…")}
             </button>
           )}

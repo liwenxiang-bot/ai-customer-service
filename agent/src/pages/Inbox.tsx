@@ -21,10 +21,13 @@ const EMPTY_COPY: Record<Tab, { title: string; sub: string }> = {
 
 /** 工单认领徽标：待认领红（=admin open）/ 他人跟进橙（=admin in_progress）/ 我认领的蓝。
  *  列表项未附 ticket 字段（如「全部」tab 老数据）时不显示。 */
-function ClaimBadge({ ticket, myId }: { ticket: any; myId?: string }) {
+function ClaimBadge({ ticket, myId, status }: { ticket: any; myId?: string; status?: string }) {
   if (ticket === undefined) return null;
-  if (!ticket || ticket.status === "open")
+  if (!ticket || ticket.status === "open") {
+    // 接管中的会话没有存活工单时不标「待认领」——旁边的状态徽标已说明有人在接待。
+    if (!ticket && status === "human_takeover") return null;
     return <span className={`badge badge-${HANDOFF_STATUS.open.cls}`}>待认领</span>;
+  }
   if (ticket.assignee_id && ticket.assignee_id === myId)
     return <span className="badge badge-blue">我认领的</span>;
   return (
@@ -331,7 +334,7 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
                   <div className="conv-meta">
                     <span className="badge badge-plain">{channelLabel(it.channel_type)}</span>
                     <span className={`badge badge-${st.cls}`}>{st.label}</span>
-                    <ClaimBadge ticket={it.ticket} myId={user?.id} />
+                    <ClaimBadge ticket={it.ticket} myId={user?.id} status={it.status} />
                   </div>
                 </div>
                 {claimable && (

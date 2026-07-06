@@ -235,7 +235,16 @@ async def update_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="工单不存在")
     if body.assignee is not None:
-        ticket.assignee_id = user.id if body.assignee == "me" else None
+        # 认领/退回时同步状态，否则会造出「in_progress 却无人认领」的死态：
+        # 会话被踢出待认领、又进不了任何人的「我的」，且 claim 接口拒绝认领。
+        if body.assignee == "me":
+            ticket.assignee_id = user.id
+            if ticket.status == HandoffStatus.OPEN:
+                ticket.status = HandoffStatus.IN_PROGRESS
+        else:
+            ticket.assignee_id = None
+            if ticket.status == HandoffStatus.IN_PROGRESS:
+                ticket.status = HandoffStatus.OPEN
     if body.priority in ("urgent", "high", "normal", "low"):
         ticket.priority = body.priority
     await db.commit()

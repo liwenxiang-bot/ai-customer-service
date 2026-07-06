@@ -53,12 +53,43 @@ from app.services.conversation import (
 from app.services.feedback import set_feedback
 from app.services.handoff import create_handoff
 from app.services.takeover import (
+    close_session,
     is_takeover,
     persist_customer_message,
     publish,
     push_channel,
 )
 from app.services.tenant import tenant_for_channel
+
+
+async def _handle_request_human(session_id: str) -> None:
+    """转人工请求：按会话当前状态判断，而非 escalated 标志——该标志从不复位，
+    用它做守卫会让"接待过一次"的会话永远无法再转人工（客户却收到"已为你转接"
+    的假回执）。接管中不重复建单（人工已在场）；其余状态交给 create_handoff：
+    有存活工单则幂等复用，否则重新建单入队。"""
+    if not session_id or not (sid := _as_uuid(session_id)):
+        return
+    async with session_scope() as db:
+        s = await db.get(Session, sid)
+        if s and s.status != SessionStatus.HUMAN_TAKEOVER:
+            await create_handoff(
+                db, s, HandoffReason.USER_REQUEST, "user_request",
+                s.summary or s.title or "",
+            )
+        await db.commit()
+
+
+async def _handle_end_session(session_id: str, payload: dict) -> None:
+    """客户端结束会话：统一收尾（置 CLOSED + 解决存活工单 + 清接管标志）。"""
+    if not session_id or not (sid := _as_uuid(session_id)):
+        return
+    rating = int(payload.get("rating") or 0)
+    note = (payload.get("note") or "")[:1000]
+    async with session_scope() as db:
+        s = await db.get(Session, sid)
+        if s:
+            await close_session(db, s, rating=rating, note=note)
+        await db.commit()
 
 
 def _as_uuid(value: str) -> uuid.UUID | None:
@@ -360,33 +391,14 @@ async def chat_ws(
                 continue
 
             if mtype == "request_human":
-                if session_id and (sid := _as_uuid(session_id)):
-                    async with session_scope() as db:
-                        s = await db.get(Session, sid)
-                        if s and not s.escalated:
-                            await create_handoff(
-                                db, s, HandoffReason.USER_REQUEST, "user_request",
-                                s.summary or s.title or "",
-                            )
-                        await db.commit()
+                await _handle_request_human(session_id)
                 await send(
                     {"type": "escalated", "message": "已为你转接人工，我们会尽快安排同事跟进。"}
                 )
                 continue
 
             if mtype == "end_session":
-                if session_id and (sid := _as_uuid(session_id)):
-                    rating = int(payload.get("rating") or 0)
-                    note = (payload.get("note") or "")[:1000]
-                    async with session_scope() as db:
-                        s = await db.get(Session, sid)
-                        if s:
-                            s.status = SessionStatus.CLOSED
-                            if 1 <= rating <= 5:
-                                s.satisfaction_rating = rating
-                            if note:
-                                s.satisfaction_note = note
-                        await db.commit()
+                await _handle_end_session(session_id, payload)
                 await send({"type": "session_ended"})
                 continue
 
