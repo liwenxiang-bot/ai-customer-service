@@ -316,37 +316,82 @@ select {
   align-items: center;
   justify-content: center;
   padding: 20px;
+  /* 品牌氛围：两抹极淡的 teal 光晕，亮暗主题都走 --primary-weak 变量 */
+  background:
+    radial-gradient(640px 420px at 10% -8%, var(--primary-weak), transparent 62%),
+    radial-gradient(760px 480px at 108% 112%, var(--primary-weak), transparent 58%),
+    var(--bg);
 }
 .login-card {
   width: 100%;
-  max-width: 360px;
+  max-width: 384px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 28px 24px;
+  border-radius: 16px;
+  padding: 32px 28px 22px;
   box-shadow: var(--shadow);
 }
 .login-brand {
+  position: relative;
   width: 46px;
   height: 46px;
   border-radius: 13px;
-  background: var(--brand);
+  background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 14px;
-  box-shadow: var(--shadow-sm);
+  margin-bottom: 18px;
+  box-shadow: 0 6px 16px -6px rgba(15, 118, 110, 0.45);
+}
+/* 在线状态点：客服台"开门营业"的隐喻，也是两个控制台共用的品牌签名 */
+.login-presence {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #2dd4bf;
+  box-shadow: 0 0 0 3px var(--panel);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .login-presence::after {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    border: 2px solid rgba(45, 212, 191, 0.55);
+    animation: presence-pulse 2.6s ease-out infinite;
+  }
+  @keyframes presence-pulse {
+    0% { transform: scale(0.7); opacity: 1; }
+    70%, 100% { transform: scale(1.9); opacity: 0; }
+  }
+}
+.login-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--faint);
+  margin-bottom: 6px;
 }
 .login-title {
-  font-size: 20px;
+  font-size: 22px;
   font-weight: 700;
-  color: var(--primary);
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 .login-sub {
   font-size: 13px;
   color: var(--muted);
-  margin: 4px 0 18px;
+  margin: 6px 0 22px;
+}
+.login-hint {
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--muted); /* 功能性文案（找回路径），比 --faint 高一档保证可读 */
+  text-align: center;
 }
 .field {
   display: block;

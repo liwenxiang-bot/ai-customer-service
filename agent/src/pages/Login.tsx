@@ -45,15 +45,17 @@ export function Login() {
     <div className="login-page">
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="28" height="28" fill="none">
+          <svg viewBox="0 0 64 64" width="26" height="26" fill="none">
             <path d="M20 38v-5c0-7 5.4-12 12-12s12 5 12 12v5" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
             <rect x="16.6" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
             <rect x="40.4" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
             <path d="M43.6 47.4c-.6 3.2-3.8 5-7.6 5h-2.4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
             <circle cx="32.4" cy="52.4" r="2.4" fill="currentColor" />
           </svg>
+          <i className="login-presence" />
         </div>
-        <div className="login-title">客服坐席</div>
+        <div className="login-eyebrow">智能客服平台 · 坐席端</div>
+        <div className="login-title">坐席工作台</div>
         <div className="login-sub">登录后开始接待客户会话</div>
         <label className="field">
           <span className="field-label">邮箱</span>
@@ -85,6 +87,7 @@ export function Login() {
         <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
           {busy ? "登录中…" : "登录"}
         </button>
+        <div className="login-hint">登录遇到问题？请联系管理员重置密码</div>
       </form>
     </div>
   );
