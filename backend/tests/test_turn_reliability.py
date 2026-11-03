@@ -88,6 +88,17 @@ def test_turn_finishes_after_client_disconnects_mid_answer(monkeypatch):
         finished["done"] = True  # = handle_turn's final COMMIT ran
 
     monkeypatch.setattr(ws_mod, "handle_turn", slow_turn)
+
+    async def _noop():
+        return None
+
+    # `with TestClient` runs the app lifespan (keeps the portal — and the orphaned turn — alive
+    # after the socket closes). Its shutdown would close global clients bound to other tests'
+    # event loops, so stub those out here.
+    import app.main as main_mod
+
+    for name in ("close_redis", "close_llm", "close_pool", "ensure_bucket"):
+        monkeypatch.setattr(main_mod, name, _noop)
     with TestClient(app) as client:
         with client.websocket_connect("/ws/chat?uid=u-gone") as ws:
             assert ws.receive_json()["type"] == "connected"
