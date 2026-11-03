@@ -7,7 +7,7 @@ Changing the embedding model or dimension triggers a full vector rebuild.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from app.llm.factory import get_provider
 from app.models.admin import AdminUser
 from app.models.enums import KnowledgeStatus
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem
+from app.services.abuse_guard import DEFAULT_OFF_TOPIC_REPLY, DEFAULT_SCOPE
 from app.services.ai_config import get_active_ai_config, merged_retrieval
 from app.services.audit import write_audit
 from app.services.embedding_rebuild import latest_job, start_rebuild
@@ -50,6 +51,12 @@ def _serialize(cfg) -> dict:
         "retrieval": merged_retrieval(cfg),
         "content_safety_enabled": cfg.content_safety_enabled,
         "semantic_cache_enabled": cfg.semantic_cache_enabled,
+        "guard_enabled": cfg.guard_enabled,
+        "business_scope": cfg.business_scope,
+        "off_topic_reply": cfg.off_topic_reply,
+        "max_input_chars": cfg.max_input_chars,
+        "default_business_scope": DEFAULT_SCOPE,
+        "default_off_topic_reply": DEFAULT_OFF_TOPIC_REPLY,
     }
 
 
@@ -80,6 +87,10 @@ class AIConfigUpdate(BaseModel):
     retrieval: dict | None = None
     content_safety_enabled: bool | None = None
     semantic_cache_enabled: bool | None = None
+    guard_enabled: bool | None = None
+    business_scope: str | None = Field(None, max_length=500)
+    off_topic_reply: str | None = Field(None, max_length=500)
+    max_input_chars: int | None = Field(None, ge=100, le=8000)
     # Required acknowledgement when the embedding model/dim changes (triggers a full,
     # disruptive vector rebuild) — without it the update is rejected with a 409 precheck.
     confirm_rebuild: bool = False

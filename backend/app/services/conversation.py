@@ -26,12 +26,13 @@ from app.agent.tools import default_registry
 from app.channels.base import InboundMessage
 from app.config import settings
 from app.core.logging import get_logger, set_trace_id
+from app.core.metrics import guard_blocks
 from app.llm.factory import get_provider
 from app.models.config import ChannelConfig
 from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
 from app.models.enums import ChannelType, MessageRole, SessionStatus
-from app.services import semantic_cache
+from app.services import abuse_guard, semantic_cache
 from app.services.ai_config import get_active_ai_config, to_llm_settings
 from app.services.content_safety import check_input
 from app.services.takeover import is_takeover, publish
@@ -213,6 +214,19 @@ async def handle_turn(
     set_trace_id(trace_id)
 
     ai_config = await get_active_ai_config(db)
+
+    # ---- Guard layer 1: length cap (before anything is stored or sent to the LLM) ----
+    cap = abuse_guard.too_long(ai_config, inbound.text)
+    if cap:
+        guard_blocks.labels("too_long").inc()
+        notice = f"消息有点长啦，请精简到 {cap} 字以内再发给我～"
+        yield AgentEvent(kind="text", text=notice)
+        yield AgentEvent(
+            kind="done", text=notice,
+            data={"message_id": None, "session_id": inbound.session_id, "blocked": True},
+        )
+        return
+
     session, _ = await get_or_create_session(db, inbound)
 
     user_msg = await _persist_user_message(
@@ -249,6 +263,20 @@ async def handle_turn(
             kind="done", text="",
             data={"message_id": None, "session_id": str(session.id), "takeover": True},
         )
+        return
+
+    # ---- Guard layer 2: obvious jailbreak / prompt-injection phrasing → canned refusal ----
+    if abuse_guard.is_jailbreak(ai_config, inbound.text):
+        guard_blocks.labels("jailbreak").inc()
+        log.warning("guard_jailbreak_blocked", session_id=str(session.id))
+        reply = abuse_guard.off_topic_reply(ai_config)
+        msg = await _persist_assistant_text(db, session, reply, [])
+        yield AgentEvent(kind="text", text=reply)
+        yield AgentEvent(
+            kind="done", text=reply,
+            data={"message_id": str(msg.id), "session_id": str(session.id), "blocked": True},
+        )
+        await db.commit()
         return
 
     # ---- Input content safety (optional) ----

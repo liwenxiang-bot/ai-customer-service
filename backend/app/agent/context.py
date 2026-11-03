@@ -48,7 +48,11 @@ def estimate_tokens(text: str) -> int:
 
 def _system_prompt(ai_config: AIConfig, channel_override: str | None) -> str:
     base = (channel_override or ai_config.system_prompt or "").strip()
-    return base
+    # The scope guard is appended even when a channel overrides the base prompt, so a
+    # channel persona can't accidentally drop the abuse protection.
+    from app.services.abuse_guard import scope_instruction
+
+    return base + scope_instruction(ai_config)
 
 
 def _is_image(att: dict) -> bool:

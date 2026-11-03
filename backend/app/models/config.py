@@ -115,3 +115,15 @@ class AIConfig(Base, TimestampMixin, TenantMixin):
     # ---- Optional features ----
     content_safety_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     semantic_cache_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    # ---- Abuse / off-topic guard ----
+    guard_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    # What this assistant serves (e.g. "本店手机配件的选购、订单、售后"); empty → generic.
+    business_scope: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    # Canned reply for off-topic / jailbreak requests; empty → built-in default.
+    off_topic_reply: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    max_input_chars: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1000, server_default="1000"
+    )

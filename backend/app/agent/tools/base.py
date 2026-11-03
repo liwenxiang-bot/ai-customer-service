@@ -28,6 +28,7 @@ class ToolContext:
     trace_id: str
     citations: list[dict[str, Any]] = field(default_factory=list)
     escalation: dict[str, Any] | None = None
+    off_topic: str | None = None  # set by decline_off_topic: the runner replies with the canned text
 
 
 class Tool(abc.ABC):

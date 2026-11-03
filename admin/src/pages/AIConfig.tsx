@@ -16,11 +16,14 @@ export function AIConfig() {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [rebuild, setRebuild] = useState<any>(null);
+  const [guardDefaults, setGuardDefaults] = useState<{ scope?: string; reply?: string }>({});
+  const guardOn = Form.useWatch("guard_enabled", form);
 
   const load = async () => {
     try {
       const cfg = await aiConfigApi.get();
       form.setFieldsValue(cfg);
+      setGuardDefaults({ scope: cfg.default_business_scope, reply: cfg.default_off_topic_reply });
     } catch (e) {
       message.error(apiError(e));
     }
@@ -152,6 +155,34 @@ export function AIConfig() {
             <Card title="System Prompt / 人设" style={{ marginTop: 16 }}>
               <Form.Item name="system_prompt" noStyle>
                 <Input.TextArea rows={10} placeholder="客服助手的角色设定与行为准则" />
+              </Form.Item>
+            </Card>
+
+            <Card
+              title="防滥用 / 服务范围"
+              style={{ marginTop: 16 }}
+              extra={
+                <Form.Item name="guard_enabled" valuePropName="checked" noStyle>
+                  <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+                </Form.Item>
+              }
+            >
+              <div style={{ color: "var(--ant-color-text-secondary)", fontSize: 13, marginBottom: 12 }}>
+                只回答业务范围内的问题：越狱话术直接拦截、超长消息提示精简；与业务无关的请求（写代码、写作业、闲聊等）
+                由模型识别后自动回复下方话术，不再进行第二次模型调用。
+              </div>
+              <Form.Item
+                name="business_scope"
+                label="业务范围"
+                tooltip="一句话描述客服负责的内容，模型据此判断是否离题。留空使用默认描述。"
+              >
+                <Input.TextArea rows={2} maxLength={500} showCount disabled={!guardOn} placeholder={guardDefaults.scope} />
+              </Form.Item>
+              <Form.Item name="off_topic_reply" label="离题拒答话术" tooltip="留空使用默认话术。">
+                <Input.TextArea rows={3} maxLength={500} showCount disabled={!guardOn} placeholder={guardDefaults.reply} />
+              </Form.Item>
+              <Form.Item name="max_input_chars" label="单条消息最大字数" tooltip="超过时提示用户精简，不会调用模型。">
+                <InputNumber min={100} max={8000} step={100} disabled={!guardOn} style={{ width: 160 }} addonAfter="字" />
               </Form.Item>
             </Card>
           </Col>
