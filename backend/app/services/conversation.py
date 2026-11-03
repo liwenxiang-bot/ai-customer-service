@@ -34,6 +34,7 @@ from app.models.enums import ChannelType, MessageRole, SessionStatus
 from app.services import semantic_cache
 from app.services.ai_config import get_active_ai_config, to_llm_settings
 from app.services.content_safety import check_input
+from app.services.takeover import is_takeover, publish
 from app.services.usage import is_cost_capped, mark_escalation, mark_new_conversation
 
 log = get_logger("conversation")
@@ -214,7 +215,9 @@ async def handle_turn(
     ai_config = await get_active_ai_config(db)
     session, _ = await get_or_create_session(db, inbound)
 
-    await _persist_user_message(db, session, inbound.text, inbound.attachments, client_msg_id)
+    user_msg = await _persist_user_message(
+        db, session, inbound.text, inbound.attachments, client_msg_id
+    )
     # ---- Transaction #1: make the user message durable BEFORE the AI half runs ----
     # Everything above (session creation, seq, client_msg_id bookkeeping, usage "new
     # conversation" tick) commits here so that a mid-turn cancel/disconnect only rolls
@@ -227,6 +230,26 @@ async def handle_turn(
     # on the next transaction's BEGIN (db.session._pin_tenant_on_begin).
     inbound.session_id = str(session.id)
     await db.commit()
+
+    # ---- Human takeover: the AI stays silent on EVERY channel ----
+    # (The WebSocket path checks this before calling us; REST and WeChat rely on this gate.)
+    # The message is already persisted; surface it live to the operator and stop here.
+    if await is_takeover(str(session.id)):
+        await publish(
+            str(session.id),
+            {
+                "type": "customer_message",
+                "session_id": str(session.id),
+                "content": inbound.text,
+                "message_id": str(user_msg.id),
+                "attachments": inbound.attachments or [],
+            },
+        )
+        yield AgentEvent(
+            kind="done", text="",
+            data={"message_id": None, "session_id": str(session.id), "takeover": True},
+        )
+        return
 
     # ---- Input content safety (optional) ----
     safe, notice = await check_input(ai_config, inbound.text)

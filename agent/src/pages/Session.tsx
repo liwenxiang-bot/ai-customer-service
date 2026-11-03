@@ -330,8 +330,8 @@ export function SessionPage() {
 
   const s = detail?.session;
   const inTakeover = s?.status === "human_takeover";
-  // 目前只有网页渠道能把坐席附件推给客户（企微推送尚未打通）
-  const canAttach = s?.channel_type === "web";
+  // 网页渠道渲染附件气泡；企微客户收到「文件名 + 链接」
+  const canAttach = s?.channel_type === "web" || s?.channel_type === "wechat_work";
   const ticketOpen = !!ticket && ticket.status === "open";
   const ticketMine = !!ticket && ticket.status === "in_progress" && !!ticket.assignee_id && ticket.assignee_id === user?.id;
   const ticketOther = !!ticket && ticket.status === "in_progress" && !ticketMine;

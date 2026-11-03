@@ -489,6 +489,22 @@ async def test_create_handoff_idempotent_and_reescalates(monkeypatch):
 
     notify_calls = _stub_notify(monkeypatch)
 
+    # 通知改为「提交后投递 worker 任务」：这里让投递直接执行 worker 的 notify_handoff，
+    # 每次 commit 后 drain 一下，断言与真实链路一致（含 worker 侧的已送达去重）。
+    from app.db.session import drain_after_commit_tasks
+    from app.tasks.wechat_tasks import notify_handoff
+
+    async def _inline_enqueue(name, *args, **kw):
+        assert name == "notify_handoff"
+        kw.pop("_job_id", None)
+        await notify_handoff({"job_try": 3}, *args, **kw)
+
+    monkeypatch.setattr("app.tasks.queue.enqueue", _inline_enqueue)
+
+    async def commit(db):
+        await db.commit()
+        await drain_after_commit_tasks()
+
     async with session_scope() as db:
         # 场景1：AI 已恢复的会话（active + escalated=True，旧守卫在这里失效）重新建单。
         session = _session(status=SessionStatus.ACTIVE)
@@ -497,13 +513,13 @@ async def test_create_handoff_idempotent_and_reescalates(monkeypatch):
 
         try:
             t1 = await create_handoff(db, session, "user_request", "user_request", "再次求助")
-            await db.commit()
+            await commit(db)
             assert session.status == SessionStatus.ESCALATED
             assert t1.status == HandoffStatus.OPEN
 
             # 场景2：已有存活工单时幂等复用，不新建；原通知已送达则不重发。
             t2 = await create_handoff(db, session, "user_request", "user_request", "重复点击")
-            await db.commit()
+            await commit(db)
             assert t2.id == t1.id
             n = (
                 await db.execute(
@@ -516,19 +532,20 @@ async def test_create_handoff_idempotent_and_reescalates(monkeypatch):
             assert len(notify_calls) == 1  # 仅首次建单通知一次
 
             # 场景2b：原通知失败（notified=False）的，复用时补发一次。
+            await db.refresh(t1)  # worker 在另一会话里写了 notified=True，先同步再改
             t1.notified = False
-            await db.commit()
+            await commit(db)
             await create_handoff(db, session, "user_request", "user_request", "再次点击")
-            await db.commit()
+            await commit(db)
             assert len(notify_calls) == 2
             await db.refresh(t1)
             assert t1.notified is True
 
             # 场景3：接管中不降级——复用工单且状态保持 human_takeover。
             session.status = SessionStatus.HUMAN_TAKEOVER
-            await db.commit()
+            await commit(db)
             t3 = await create_handoff(db, session, "user_request", "user_request", "接管中点转人工")
-            await db.commit()
+            await commit(db)
             assert t3.id == t1.id
             assert session.status == SessionStatus.HUMAN_TAKEOVER
         finally:

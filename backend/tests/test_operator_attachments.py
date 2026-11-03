@@ -99,15 +99,15 @@ async def test_reply_requires_text_or_attachment(wired):
     assert e.value.status_code == 400
 
 
-async def test_attachments_refused_on_non_web_channel(wired):
-    wired.session.channel_type = "wechat"
+async def test_attachments_refused_on_unsupported_channel(wired):
+    wired.session.channel_type = "feishu"
     key = f"agent/{wired.session.id}/abc.png"
     with pytest.raises(HTTPException) as e:
         await conv.reply(str(wired.session.id), conv.ReplyIn(attachments=[_att(key)]), wired.db, user=None)
     assert e.value.status_code == 400
 
 
-async def test_text_reply_still_works_on_wechat(wired):
-    wired.session.channel_type = "wechat"
+async def test_text_reply_still_works_on_unsupported_channel(wired):
+    wired.session.channel_type = "feishu"
     res = await conv.reply(str(wired.session.id), conv.ReplyIn(content="您好"), wired.db, user=None)
     assert res["ok"] and res["attachments"] == []

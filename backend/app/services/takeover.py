@@ -22,7 +22,7 @@ from app.core.logging import get_logger
 from app.core.redis_client import get_redis
 from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
-from app.models.enums import MessageRole, SessionStatus
+from app.models.enums import ChannelType, MessageRole, SessionStatus
 
 log = get_logger("takeover")
 
@@ -72,6 +72,18 @@ async def is_takeover(session_id: str) -> bool:
         return False
 
 
+def deliver_offsite(db: AsyncSession, session: Session, text: str) -> None:
+    """Customers on channels without our WebSocket (WeChat Work) don't receive Redis pushes:
+    send operator-side messages through the channel's API instead, once committed."""
+    if session.channel_type != ChannelType.WECHAT_WORK or not text.strip():
+        return
+    from app.db.session import run_after_commit
+    from app.tasks.queue import enqueue
+
+    to, tenant = session.end_user_id, str(session.tenant_id)
+    run_after_commit(db, lambda: enqueue("wechat_send", to, text, _tenant=tenant))
+
+
 async def publish(session_id: str, payload: dict) -> None:
     """Relay an event to the customer's live WebSocket (if connected)."""
     try:
@@ -90,7 +102,9 @@ async def start_takeover(db: AsyncSession, session: Session, operator=None) -> N
         session.takeover_by_name = operator.name or operator.email
     await db.flush()
     await get_redis().set(_flag_key(str(session.id)), "1", ex=_TTL)
-    await publish(str(session.id), {"type": "human_takeover", "message": "人工客服已接入，正在为你服务~"})
+    notice = "人工客服已接入，正在为你服务~"
+    await publish(str(session.id), {"type": "human_takeover", "message": notice})
+    deliver_offsite(db, session, notice)
     await publish_admin_event({"type": "queue", "event": "takeover", "session_id": str(session.id)})
     log.info("takeover_started", session_id=str(session.id))
 
@@ -117,13 +131,12 @@ async def end_takeover(
     )
     await db.flush()
     await get_redis().delete(_flag_key(str(session.id)))
+    notice = "AI 助手已恢复，继续为你服务。" if resume_ai else "本次人工服务已结束，感谢咨询。"
     await publish(
         str(session.id),
-        {
-            "type": "ai_resumed" if resume_ai else "human_ended",
-            "message": "AI 助手已恢复，继续为你服务。" if resume_ai else "本次人工服务已结束，感谢咨询。",
-        },
+        {"type": "ai_resumed" if resume_ai else "human_ended", "message": notice},
     )
+    deliver_offsite(db, session, notice)
     await publish_admin_event({"type": "queue", "event": "released", "session_id": str(session.id)})
     log.info(
         "takeover_ended",
@@ -202,6 +215,9 @@ async def operator_reply(
             "message_id": str(msg.id),
         },
     )
+    # WeChat can't render our attachment bubbles: send each file as a name + link line.
+    links = "\n".join(f"📎 {a.get('name') or '附件'}：{a.get('url')}" for a in (attachments or []))
+    deliver_offsite(db, session, "\n".join(p for p in (content, links) if p))
     return msg
 
 

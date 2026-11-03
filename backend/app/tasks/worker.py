@@ -13,6 +13,7 @@ from app.core.logging import configure_logging, get_logger, set_trace_id
 from app.db.session import session_scope
 from app.db.tenant_context import DEFAULT_TENANT_ID, tenant_scope
 from app.tasks.queue import redis_settings
+from app.tasks.wechat_tasks import notify_handoff, wechat_handle_inbound, wechat_send
 
 log = get_logger("worker")
 
@@ -154,6 +155,9 @@ class WorkerSettings:
         distill_from_feedback,
         cleanup_expired,
         reembed_stragglers,
+        wechat_handle_inbound,
+        wechat_send,
+        notify_handoff,
     ]
     cron_jobs = _CRON
     redis_settings = redis_settings()

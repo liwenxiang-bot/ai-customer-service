@@ -21,6 +21,8 @@ from app.models.config import ChannelConfig
 
 log = get_logger("notify")
 
+NO_CHANNEL_CONFIGURED = "no notification channel configured"
+
 
 async def get_notify_config(db: AsyncSession) -> dict:
     row = (
@@ -92,7 +94,7 @@ async def notify_operator(db: AsyncSession, title: str, body_md: str) -> tuple[b
             errors.append(err)
 
     if not webhook and not cfg.get("email_to"):
-        errors.append("no notification channel configured")
+        errors.append(NO_CHANNEL_CONFIGURED)
 
     if not delivered:
         log.warning("operator_notify_failed", errors=errors)
