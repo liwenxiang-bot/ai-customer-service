@@ -29,6 +29,7 @@ from app.db.session import session_scope
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem
 from app.rag.retrieval import hybrid_search
 from app.services.ai_config import get_active_ai_config, merged_retrieval
+from scripts._guard import refuse_in_production
 
 log = get_logger("rag_param_eval")
 TAG = "__param_eval__"
@@ -348,4 +349,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    refuse_in_production("参数扫描会改写 ai_configs、写入合成知识并在事务内重建 HNSW 索引")
     asyncio.run(main())

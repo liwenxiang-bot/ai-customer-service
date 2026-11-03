@@ -88,6 +88,23 @@ ALLOWED_UPLOAD_TYPES = {
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
+def _delete_sync(keys: list[str]) -> int:
+    deleted = 0
+    for i in range(0, len(keys), 1000):  # S3 DeleteObjects caps at 1000 keys
+        batch = [{"Key": k} for k in keys[i : i + 1000]]
+        resp = _client().delete_objects(Bucket=settings.minio_bucket, Delete={"Objects": batch, "Quiet": True})
+        deleted += len(batch) - len(resp.get("Errors", []))
+    return deleted
+
+
+async def delete_objects(keys: list[str]) -> int:
+    """Best-effort bulk delete (data retention / user deletion requests)."""
+    keys = [k for k in dict.fromkeys(keys) if k]
+    if not keys:
+        return 0
+    return await asyncio.to_thread(_delete_sync, keys)
+
+
 def attachment_descriptor(key: str, name: str, content_type: str, size: int) -> dict:
     """The attachment shape stored on messages and pushed to clients."""
     return {

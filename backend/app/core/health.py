@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from sqlalchemy import text
 
@@ -89,7 +90,24 @@ async def check_embedding_dim() -> bool:
     return True
 
 
+_HEALTH_TTL = 5.0
+_health_cache: tuple[float, dict] | None = None
+
+
 async def full_health() -> dict:
+    """Dependency health, cached for a few seconds: /health is reachable from the internet and
+    each call probes DB, Redis, object storage and the vector column — unthrottled, it's a
+    cheap way to load every dependency at once."""
+    global _health_cache
+    now = time.monotonic()
+    if _health_cache and now - _health_cache[0] < _HEALTH_TTL:
+        return _health_cache[1]
+    result = await _probe()
+    _health_cache = (now, result)
+    return result
+
+
+async def _probe() -> dict:
     db_ok, redis_ok, storage_ok, dim_ok = await asyncio.gather(
         check_db(), check_redis(), check_storage(), check_embedding_dim()
     )

@@ -12,6 +12,7 @@ from app.core.encryption import encrypt_secret
 from app.db.session import session_scope
 from app.models.config import AIConfig
 from app.services.embedding_rebuild import _alter_vector_dim
+from scripts._guard import refuse_in_production
 
 
 async def main() -> None:
@@ -31,4 +32,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    refuse_in_production("会清空全部向量并切换 Embedding 配置")
     asyncio.run(main())

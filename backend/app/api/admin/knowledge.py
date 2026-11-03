@@ -799,7 +799,16 @@ async def _pending_candidate_or_409(
 ) -> KnowledgeReviewCandidate:
     """404 for unknown ids; 409 (who/when) for already-reviewed ones — a stale list is
     the everyday path here, and 「不存在」 would send the reviewer chasing ghosts."""
-    cand = await db.get(KnowledgeReviewCandidate, cid)
+    # FOR UPDATE: a concurrent approve/reject of the same candidate waits for this transaction
+    # and then sees it's no longer pending (409) — instead of both creating a knowledge item.
+    cand = (
+        await db.execute(
+            select(KnowledgeReviewCandidate)
+            .where(KnowledgeReviewCandidate.id == cid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one_or_none()
     if not cand:
         raise HTTPException(status_code=404, detail="待审核条目不存在")
     if cand.status != ReviewStatus.PENDING:

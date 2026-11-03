@@ -6,9 +6,11 @@ All tasks are idempotent-ish and use their own DB session; ARQ provides retries.
 
 from __future__ import annotations
 
+from arq import func
 from sqlalchemy import text
 
 from app.config import settings
+from app.core.clock import app_tz
 from app.core.logging import configure_logging, get_logger, set_trace_id
 from app.db.session import session_scope
 from app.db.tenant_context import DEFAULT_TENANT_ID, tenant_scope
@@ -123,6 +125,16 @@ async def on_startup(ctx) -> None:
     configure_logging()
     set_trace_id("worker")
     settings.enforce_secure_defaults()
+    from app.services.embedding_rebuild import fail_stale_jobs
+
+    try:
+        with tenant_scope(DEFAULT_TENANT_ID):
+            async with session_scope() as db:
+                n = await fail_stale_jobs(db)
+        if n:
+            log.warning("stale_rebuild_jobs_failed", count=n)
+    except Exception as exc:  # noqa: BLE001 — never block worker start
+        log.warning("stale_rebuild_sweep_failed", error=str(exc))
     log.info("worker_started")
 
 
@@ -150,7 +162,9 @@ except Exception:  # pragma: no cover
 class WorkerSettings:
     functions = [
         embed_item,
-        rebuild_embeddings,
+        # A full rebuild of a large knowledge base can exceed the default 600s; a timeout kills
+        # it mid-way and (before the stale sweep) left the job RUNNING forever.
+        func(rebuild_embeddings, timeout=3 * 3600),
         summarize_session,
         distill_from_feedback,
         cleanup_expired,
@@ -163,6 +177,8 @@ class WorkerSettings:
     redis_settings = redis_settings()
     on_startup = on_startup
     on_shutdown = on_shutdown
+    # Cron in the business timezone (the container runs UTC: 03:30 UTC = 11:30 Beijing peak).
+    timezone = app_tz()
     max_jobs = 10
     job_timeout = 600
     keep_result = 3600

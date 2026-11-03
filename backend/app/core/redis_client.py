@@ -21,6 +21,11 @@ def get_redis() -> aioredis.Redis:
             encoding="utf-8",
             decode_responses=True,
             health_check_interval=30,
+            # Fail fast instead of hanging a request when Redis is unreachable. No socket read
+            # timeout on purpose: pub/sub listeners legitimately block on reads while idle.
+            socket_connect_timeout=5,
+            socket_keepalive=True,
+            retry_on_timeout=True,
         )
     return _pool
 
