@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -32,6 +33,19 @@ log = get_logger("app")
 
 _WIDGET_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "widget", "dist")
 _AGENT_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "agent", "dist")
+
+
+def _widget_version() -> str:
+    """Content hash of the built widget: /chat references widget.js?v=<hash>, so every release
+    gets a new URL and a stale browser cache can't keep the old widget alive."""
+    try:
+        with open(os.path.join(_WIDGET_DIST, "widget.js"), "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:12]
+    except OSError:
+        return "dev"
+
+
+_WIDGET_VERSION = _widget_version()
 
 
 @asynccontextmanager
@@ -101,7 +115,24 @@ async def observability_mw(request: Request, call_next):
     http_requests.labels(request.method, label, str(status)).inc()
     response.headers["x-trace-id"] = trace_id
     _security_headers(path, response)
+    _cache_headers(path, response)
     return response
+
+
+def _cache_headers(path: str, response) -> None:
+    """Static front-ends must never get stuck on an old build.
+
+    widget.js has a fixed URL (merchants paste it into their pages) and StaticFiles sends only
+    ETag/Last-Modified: without Cache-Control, browsers apply heuristic caching (~10% of the
+    file's age) and can keep serving a months-old build for days without asking — customers
+    simply don't see new features. `no-cache` = always revalidate (a cheap 304 when unchanged).
+    Vite's content-hashed assets never change, so they can be cached forever."""
+    if "cache-control" in response.headers:
+        return  # e.g. the media proxy sets its own
+    if path.startswith("/agent/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif path.startswith(("/embed/", "/agent")):
+        response.headers["Cache-Control"] = "no-cache"
 
 
 def _security_headers(path: str, response) -> None:
@@ -155,7 +186,8 @@ async def standalone_chat(channel_key: str = "default"):
     if not _CHANNEL_KEY_RE.fullmatch(channel_key):
         raise HTTPException(status_code=400, detail="invalid channel_key")
     config = json.dumps({"channelKey": channel_key, "mode": "fullscreen"}).replace("<", "\\u003c")
-    return HTMLResponse(_STANDALONE_HTML.replace("__ACS_CONFIG__", config))
+    html = _STANDALONE_HTML.replace("__ACS_CONFIG__", config).replace("__WIDGET_VERSION__", _WIDGET_VERSION)
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
 
 _CHANNEL_KEY_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
@@ -179,7 +211,7 @@ _STANDALONE_HTML = """<!doctype html>
   <script>
     window.ACS_CONFIG = __ACS_CONFIG__;
   </script>
-  <script src="/embed/widget.js"></script>
+  <script src="/embed/widget.js?v=__WIDGET_VERSION__"></script>
 </body>
 </html>
 """

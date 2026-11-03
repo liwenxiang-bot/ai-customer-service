@@ -247,3 +247,29 @@ async def test_rate_limit_key_always_gets_a_ttl(fresh_redis):
     ok, _ = await rl._check(key, 5, window_sec=30)
     assert ok and 0 < await fresh_redis.ttl(key) <= 30
     await fresh_redis.delete(key)
+
+
+# ---- static front-ends never stick on an old build ----
+
+
+async def test_widget_and_agent_revalidate_and_chat_page_is_versioned():
+    from app.main import _WIDGET_VERSION, _cache_headers
+
+    async with await _client() as c:
+        chat = await c.get("/chat")
+    assert f'/embed/widget.js?v={_WIDGET_VERSION}"' in chat.text
+    assert chat.headers["cache-control"] == "no-cache"
+
+    def headers_for(path, preset=None):
+        class R:
+            pass
+
+        r = R()
+        r.headers = dict(preset or {})
+        _cache_headers(path, r)
+        return r.headers
+
+    assert headers_for("/embed/widget.js")["Cache-Control"] == "no-cache"
+    assert headers_for("/agent/")["Cache-Control"] == "no-cache"
+    assert "immutable" in headers_for("/agent/assets/index-abc123.js")["Cache-Control"]
+    assert headers_for("/api/chat/media/x", {"cache-control": "public, max-age=86400"}) == {"cache-control": "public, max-age=86400"}
