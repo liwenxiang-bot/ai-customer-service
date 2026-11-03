@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatClient, ServerEvent } from "./client";
 import { EMOJI_GROUPS, insertAtCaret, loadRecentEmoji, rememberEmoji } from "./emoji";
 import { renderMarkdown } from "./markdown";
+import { store } from "./storage";
 
 export interface WidgetConfig {
   baseUrl: string;
@@ -55,10 +56,10 @@ interface Msg {
 
 function uidFor(channelKey: string): string {
   const key = `acs_uid_${channelKey}`;
-  let v = localStorage.getItem(key);
+  let v = store.get(key);
   if (!v) {
     v = "u-" + (crypto.randomUUID?.() || Math.random().toString(36).slice(2) + Date.now());
-    localStorage.setItem(key, v);
+    store.set(key, v);
   }
   return v;
 }
@@ -175,7 +176,7 @@ export function App({ config }: { config: WidgetConfig }) {
 
   // ---- connection lifecycle ----
   useEffect(() => {
-    const sessionId = localStorage.getItem(sessionKey) || "";
+    const sessionId = store.get(sessionKey) || "";
     const client = new ChatClient(config.baseUrl, uid.current, sessionId, channelKey, handleEvent);
     clientRef.current = client;
     if (open) client.connect();
@@ -342,7 +343,7 @@ export function App({ config }: { config: WidgetConfig }) {
       case "escalated":
         // 未聊天直接转人工时服务端会新建会话：记住它，后续消息与坐席推送都落在这个会话上
         if (ev.session_id) {
-          localStorage.setItem(sessionKey, ev.session_id);
+          store.set(sessionKey, ev.session_id);
           if (clientRef.current) clientRef.current.sessionId = ev.session_id;
         }
         setEscalated(true);
@@ -395,7 +396,7 @@ export function App({ config }: { config: WidgetConfig }) {
         setEscalated(true);
         break;
       case "message_end":
-        if (ev.session_id) localStorage.setItem(sessionKey, ev.session_id);
+        if (ev.session_id) store.set(sessionKey, ev.session_id);
         finalizeStreaming(ev.turn_id, ev.message_id, ev.citations);
         setBusy(false);
         break;
@@ -412,6 +413,13 @@ export function App({ config }: { config: WidgetConfig }) {
         lastFbRef.current = null;
         break;
       case "rate_limited":
+        // The message was ACKed on enqueue but then dropped: show THAT bubble as failed (with
+        // retry) instead of leaving it looking delivered.
+        if (ev.client_msg_id) {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === ev.client_msg_id && m.role === "user" ? { ...m, status: "failed" as const } : m))
+          );
+        }
         failStreaming(); // 终结流式占位气泡，避免点点动画与错误提示同屏永驻
         appendSystem(ev.message || "请求过于频繁，请稍后再试。");
         setBusy(false);
@@ -571,8 +579,8 @@ export function App({ config }: { config: WidgetConfig }) {
     setBusy(true);
     setMessages((prev) => capMessages([...prev, { id: holderId, role: "assistant", content: "", streaming: true, ts: Date.now() }]));
     try {
-      const data = await client.sendMessageHttp(text, atts);
-      if (data.session_id) localStorage.setItem(sessionKey, data.session_id);
+      const data = await client.sendMessageHttp(text, atts, id);
+      if (data.session_id) store.set(sessionKey, data.session_id);
       setMessages((prev) => {
         // 人工接管中：AI 不作答，坐席回复走推送——去掉占位气泡，只把本条标为已发送
         if (data.takeover) {
@@ -678,7 +686,7 @@ export function App({ config }: { config: WidgetConfig }) {
   function finishEnd() {
     setShowRate(false);
     setEnded(true);
-    localStorage.removeItem(sessionKey);
+    store.remove(sessionKey);
   }
   function submitRate() {
     clientRef.current?.endSession(rating, rateNote.trim());
@@ -1036,12 +1044,15 @@ function MessageBody({ m, sep, copied, retryDisabled, onRetry, onFeedback, onCop
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
                 )}
               </button>
+              {/* 👍/👎 rate the AI (they feed knowledge distillation): not shown on a human agent's reply */}
+              {!m.fromHuman && <>
               <button class={m.feedback === "up" ? "active" : ""} onClick={() => { onFeedback(m, "up"); setNoteOpen(false); }} title="有帮助" aria-label="有帮助">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10v12" /><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" /></svg>
               </button>
               <button class={m.feedback === "down" ? "active" : ""} onClick={() => { onFeedback(m, "down"); setNoteOpen(true); }} title="没帮助" aria-label="没帮助">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 14V2" /><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z" /></svg>
               </button>
+              </>}
             </div>
           )}
           {noteOpen && (

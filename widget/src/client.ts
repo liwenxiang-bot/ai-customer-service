@@ -262,7 +262,7 @@ export class ChatClient {
 
   /** HTTP 降级通道：WS 连不上时走非流式 REST 接口，整段返回 {reply, session_id, citations…}。
    *  text 允许为空（纯附件消息）：与 WS 分支对齐，只要 attachments 非空服务端即接受。 */
-  async sendMessageHttp(text: string, attachments?: any[]): Promise<any> {
+  async sendMessageHttp(text: string, attachments?: any[], clientMsgId?: string): Promise<any> {
     const res = await fetch(`${this.origin}/api/chat/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -272,6 +272,9 @@ export class ChatClient {
         session_id: this.sessionId || null,
         channel_key: this.channelKey,
         attachments: attachments || [],
+        // Same idempotency key as the WS path: a retry of this request (or a later WS resend)
+        // replays the first answer instead of running the turn — and billing it — twice.
+        ...(clientMsgId ? { client_msg_id: clientMsgId } : {}),
       }),
     });
     if (!res.ok) throw new Error(`发送失败（${res.status}）`);
