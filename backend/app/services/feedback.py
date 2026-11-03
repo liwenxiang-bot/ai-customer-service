@@ -14,8 +14,10 @@ log = get_logger("feedback")
 
 
 async def set_feedback(
-    db: AsyncSession, message_id: str, kind: str, note: str = ""
+    db: AsyncSession, message_id: str, kind: str, note: str = "", session_id: str | None = None
 ) -> bool:
+    """Record 👍/👎. When `session_id` is given (public callers), the message must belong to
+    that session — otherwise anyone holding a message id could rewrite feedback."""
     try:
         mid = uuid.UUID(message_id)
     except (ValueError, TypeError):
@@ -23,10 +25,12 @@ async def set_feedback(
     msg = await db.get(DBMessage, mid)
     if not msg:
         return False
+    if session_id is not None and str(msg.session_id) != session_id:
+        return False
     if kind not in (FeedbackKind.UP, FeedbackKind.DOWN):
         return False
     msg.feedback = kind
-    msg.feedback_note = note or ""
+    msg.feedback_note = (note or "")[:1000]
     await db.flush()
 
     # 👎 is the strongest live "retrieval failed the user" signal. Log it structured —

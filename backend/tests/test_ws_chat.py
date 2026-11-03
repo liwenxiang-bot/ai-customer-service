@@ -71,6 +71,11 @@ def _patch_connection_deps(monkeypatch) -> None:
     monkeypatch.setattr(ws_mod, "is_takeover", is_takeover)
     monkeypatch.setattr(ws_mod, "_push_listener", push_listener)
 
+    async def owned(sid, uid):  # ownership has its own tests; keep the harness DB-free
+        return True
+
+    monkeypatch.setattr(ws_mod, "_session_owned_by", owned)
+
 
 # ------------------------------------------------------- ping / stop while generating
 def test_ping_and_stop_while_generating(monkeypatch):
@@ -591,3 +596,79 @@ async def test_persist_stopped_turn_tail_check_without_client_msg_id():
         ]
     finally:
         await _delete_session(sid)
+
+
+# ------------------------------------------------------- operator push subscription
+def test_push_listener_follows_new_session_on_same_socket(monkeypatch):
+    """End session → new session on the same socket: operator pushes for the NEW session
+    must be subscribed (previously only the first session's channel was ever listened to)."""
+    _patch_connection_deps(monkeypatch)
+    subscribed: list[str] = []
+
+    async def spy_listener(send, sid):
+        subscribed.append(sid)
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(ws_mod, "_push_listener", spy_listener)
+    sids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    calls = {"n": 0}
+
+    async def turn(db, inbound, client_msg_id=""):
+        sid = sids[min(calls["n"], 1)]
+        calls["n"] += 1
+        yield AgentEvent(kind="text", text="好")
+        yield AgentEvent(kind="done", text="好", data={"message_id": f"m{calls['n']}", "session_id": sid, "citations": []})
+
+    monkeypatch.setattr(ws_mod, "handle_turn", turn)
+
+    with _make_client().websocket_connect("/ws/chat?uid=u10") as ws:
+        assert ws.receive_json()["type"] == "connected"
+        for _ in range(2):
+            ws.send_json({"type": "user_message", "text": "hi"})
+            while ws.receive_json()["type"] != "message_end":
+                pass
+        ws.send_json({"type": "ping"})
+        assert ws.receive_json()["type"] == "pong"
+    assert subscribed == sids
+
+
+async def test_push_listener_resubscribes_after_redis_error(monkeypatch):
+    """A Redis hiccup must not silently end operator pushes for the rest of the connection."""
+    attempts = {"n": 0}
+
+    class FakePubSub:
+        async def subscribe(self, ch):
+            attempts["n"] += 1
+            if attempts["n"] == 1:
+                raise ConnectionError("redis down")
+
+        async def listen(self):
+            yield {"type": "subscribe"}
+            yield {"type": "message", "data": '{"type": "human_message", "content": "在的"}'}
+            await asyncio.sleep(3600)
+
+        async def unsubscribe(self, ch):
+            pass
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(ws_mod, "get_redis", lambda: SimpleNamespace(pubsub=FakePubSub))
+    real_sleep = asyncio.sleep
+
+    async def fast_sleep(sec):
+        await real_sleep(0 if sec < 60 else sec)
+
+    monkeypatch.setattr(ws_mod.asyncio, "sleep", fast_sleep)
+    got = asyncio.Event()
+    received = []
+
+    async def send(payload):
+        received.append(payload)
+        got.set()
+
+    task = asyncio.create_task(ws_mod._push_listener(send, "s1"))
+    await asyncio.wait_for(got.wait(), 2)
+    task.cancel()
+    assert attempts["n"] == 2
+    assert received == [{"type": "human_message", "content": "在的"}]

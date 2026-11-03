@@ -34,6 +34,13 @@ from app.services.usage import record_turn_cost
 
 log = get_logger("agent.runner")
 
+DEGRADED_REPLY = (
+    "抱歉，我这边暂时遇到了一点问题，没能正常处理你的请求。"
+    "你可以稍后再试一次，或回复「人工」由同事为你跟进。"
+)
+INTERRUPTED_NOTE = "\n\n（回复中断了，内容可能不完整。你可以重新提问，或回复「人工」由同事跟进。）"
+TRUNCATED_NOTE = "\n\n（回答较长，已截断。可以告诉我想继续了解哪一部分。）"
+
 _TOOL_TIMEOUT = 20.0
 
 
@@ -88,6 +95,7 @@ class AgentRunner:
             assistant_text = ""
             pending: list[ToolCall] = []
             errored = False
+            finish_reason: str | None = None
 
             async for ev in self.provider.stream_chat(
                 messages, tools=tools_for_call, tool_choice=tool_choice
@@ -98,6 +106,7 @@ class AgentRunner:
                 elif ev.kind == "tool_calls":
                     pending = ev.tool_calls
                 elif ev.kind == "done":
+                    finish_reason = ev.finish_reason
                     if ev.usage:
                         usage.prompt_tokens += ev.usage.prompt_tokens
                         usage.completion_tokens += ev.usage.completion_tokens
@@ -135,15 +144,36 @@ class AgentRunner:
                     continue
                 # Hard provider failure on the first pass → graceful degrade.
                 degraded = True
-                final_text = (
-                    "抱歉，我这边暂时遇到了一点问题，没能正常处理你的请求。"
-                    "你可以稍后再试一次，或回复「人工」由同事为你跟进。"
-                )
+                final_text = DEGRADED_REPLY
                 yield AgentEvent(kind="text", text=final_text)
+                break
+
+            if errored:
+                # A later pass failed (after tools ran) or the stream broke mid-answer. Never
+                # present that as a normal answer: it would be counted as "ok", hide the outage
+                # from dashboards and be eligible for the semantic cache. Half-received tool
+                # calls from a broken stream are not executed.
+                degraded = True
+                log.warning(
+                    "llm_turn_degraded", loop=loop_i, partial_chars=len(assistant_text),
+                    tools_ran=len(tool_trace),
+                )
+                if assistant_text.strip():
+                    final_text = assistant_text + INTERRUPTED_NOTE
+                    yield AgentEvent(kind="text", text=INTERRUPTED_NOTE)
+                else:
+                    final_text = DEGRADED_REPLY
+                    yield AgentEvent(kind="text", text=final_text)
                 break
 
             if not pending:
                 final_text = assistant_text
+                if finish_reason == "length":
+                    # Cut off by max_tokens: keep what was said, but flag it as incomplete.
+                    degraded = True
+                    log.warning("llm_answer_truncated", loop=loop_i, chars=len(assistant_text))
+                    final_text = assistant_text + TRUNCATED_NOTE
+                    yield AgentEvent(kind="text", text=TRUNCATED_NOTE)
                 break
 
             # ---- Execute the requested tools, then loop so the model can use results ----
@@ -183,6 +213,7 @@ class AgentRunner:
                 final_text = "我已为你转接人工，请稍候有同事跟进。"
                 yield AgentEvent(kind="text", text=final_text)
             else:
+                fallback_errored = False
                 async for ev in self.provider.stream_chat(messages, tools=None):
                     if ev.kind == "text" and ev.text:
                         final_text += ev.text
@@ -190,7 +221,15 @@ class AgentRunner:
                     elif ev.kind == "done" and ev.usage:
                         usage.prompt_tokens += ev.usage.prompt_tokens
                         usage.completion_tokens += ev.usage.completion_tokens
+                    elif ev.kind == "error":
+                        fallback_errored = True
+                        log.warning("llm_error_in_fallback", error=ev.error)
                 final_text = final_text.strip()
+                if fallback_errored:
+                    degraded = True
+                    if final_text:
+                        final_text += INTERRUPTED_NOTE
+                        yield AgentEvent(kind="text", text=INTERRUPTED_NOTE)
                 if not final_text:
                     final_text = "抱歉，我这边没能正常生成回复，可以再描述一下你的问题吗？"
                     yield AgentEvent(kind="text", text=final_text)

@@ -35,6 +35,7 @@ from sqlalchemy import select
 from app.channels.base import InboundMessage
 from app.channels.web import web_adapter
 from app.core.logging import get_logger
+from app.core.net import client_ip
 from app.core.ratelimit import check_chat_limits
 from app.core.redis_client import get_redis
 from app.db.session import session_scope
@@ -49,6 +50,7 @@ from app.services.conversation import (
     _record_client_msg_id,
     get_or_create_session,
     handle_turn,
+    owned_session,
 )
 from app.services.feedback import set_feedback
 from app.services.handoff import create_handoff
@@ -138,10 +140,7 @@ async def _client_msg_seen(session_id: str, client_msg_id: str) -> bool:
 
 
 def _client_ip(ws: WebSocket) -> str:
-    xff = ws.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return ws.client.host if ws.client else ""
+    return client_ip(ws)
 
 
 async def _reject_ws(websocket: WebSocket) -> None:
@@ -190,6 +189,11 @@ async def chat_ws(
     await websocket.accept()
     end_user_id = uid or f"anon-{uuid.uuid4().hex[:12]}"
     ip = _client_ip(websocket)
+    # A session id from the URL is only honoured if this uid owns it; otherwise behave as a
+    # fresh visitor (no history, no push subscription, no end/escalate on someone else's chat).
+    if session_id and not await _session_owned_by(session_id, end_user_id):
+        log.warning("ws_session_owner_mismatch", session_id=session_id)
+        session_id = ""
 
     # Single-writer guard: the main loop and the _push_listener task both emit on this socket,
     # and Starlette's send_json writes multiple frames and isn't concurrency-safe. Serialize
@@ -205,11 +209,21 @@ async def chat_ws(
 
     # Background task that relays operator (takeover) messages to this socket.
     push_task: asyncio.Task | None = None
+    push_sid = ""
 
     def ensure_push_listener(sid: str) -> None:
-        nonlocal push_task
-        if sid and push_task is None:
-            push_task = asyncio.create_task(_push_listener(send, sid))
+        # Follow the connection's *current* session: after "end session" the widget starts a
+        # new one on the same socket, and operator pushes for it must still arrive. Also
+        # restart a listener that exited (e.g. its Redis connection was lost for good).
+        nonlocal push_task, push_sid
+        if not sid:
+            return
+        if push_task is not None and push_sid == sid and not push_task.done():
+            return
+        if push_task is not None:
+            push_task.cancel()
+        push_sid = sid
+        push_task = asyncio.create_task(_push_listener(send, sid))
 
     if session_id:
         ensure_push_listener(session_id)
@@ -383,9 +397,9 @@ async def chat_ws(
 
             if mtype == "feedback":
                 async with session_scope() as db:
-                    ok = await set_feedback(
+                    ok = bool(session_id) and await set_feedback(
                         db, payload.get("message_id", ""), payload.get("kind", ""),
-                        payload.get("note", ""),
+                        str(payload.get("note", ""))[:1000], session_id=session_id,
                     )
                 await send({"type": "feedback_ack", "ok": ok})
                 continue
@@ -452,33 +466,46 @@ async def chat_ws(
                 task.cancel()
 
 
+async def _session_owned_by(session_id: str, end_user_id: str) -> bool:
+    async with session_scope() as db:
+        return await owned_session(db, session_id, end_user_id, "web") is not None
+
+
+PUSH_RECONNECT_MAX_SEC = 10.0
+
+
 async def _push_listener(send, session_id: str) -> None:
     """Subscribe to the session's Redis channel and forward operator pushes to the WS.
 
     `send` is the connection's locked writer (not the raw socket) so these pushes can't
     interleave with the main loop's frames.
     """
-    pubsub = get_redis().pubsub()
     channel = push_channel(session_id)
-    try:
-        await pubsub.subscribe(channel)
-        async for message in pubsub.listen():
-            if message.get("type") != "message":
-                continue
-            try:
-                await send(json.loads(message["data"]))
-            except Exception:  # noqa: BLE001 — socket gone
-                break
-    except asyncio.CancelledError:
-        pass
-    except Exception as exc:  # noqa: BLE001
-        log.debug("push_listener_error", error=str(exc))
-    finally:
+    backoff = 1.0
+    while True:
+        pubsub = get_redis().pubsub()
         try:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
-        except Exception:  # noqa: BLE001
-            pass
+            await pubsub.subscribe(channel)
+            backoff = 1.0
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                try:
+                    await send(json.loads(message["data"]))
+                except Exception:  # noqa: BLE001 — socket gone: stop for good
+                    return
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001 — Redis hiccup: resubscribe, don't go silent
+            log.warning("push_listener_reconnect", session_id=session_id, error=str(exc))
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+                await pubsub.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, PUSH_RECONNECT_MAX_SEC)
 
 
 async def _run_turn(send, inbound: InboundMessage, state: dict, client_msg_id: str = "") -> str:
