@@ -35,6 +35,20 @@ from app.services.usage import record_turn_cost
 
 log = get_logger("agent.runner")
 
+async def _release_connection(db) -> None:
+    """Commit before each LLM call so the pooled connection isn't held while the model streams.
+
+    An LLM pass can take tens of seconds; keeping the transaction open across it pins one
+    pooled connection per in-flight conversation (pool 10+20 → ~30 concurrent chats per
+    process). Work done so far in the turn (reads, a handoff ticket from a tool) is complete
+    and consistent at this point, so committing it early is safe — and lets post-commit side
+    effects (operator notifications) go out sooner.
+    """
+    in_tx = getattr(db, "in_transaction", None)
+    if callable(in_tx) and in_tx():
+        await db.commit()
+
+
 DEGRADED_REPLY = (
     "抱歉，我这边暂时遇到了一点问题，没能正常处理你的请求。"
     "你可以稍后再试一次，或回复「人工」由同事为你跟进。"
@@ -101,6 +115,7 @@ class AgentRunner:
             errored = False
             finish_reason: str | None = None
 
+            await _release_connection(db)
             async for ev in self.provider.stream_chat(
                 messages, tools=tools_for_call, tool_choice=tool_choice
             ):
@@ -224,6 +239,7 @@ class AgentRunner:
                 yield AgentEvent(kind="text", text=final_text)
             else:
                 fallback_errored = False
+                await _release_connection(db)
                 async for ev in self.provider.stream_chat(messages, tools=None):
                     if ev.kind == "text" and ev.text:
                         final_text += ev.text

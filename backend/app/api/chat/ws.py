@@ -217,8 +217,13 @@ async def chat_ws(
     # every send through one lock so a takeover push can't interleave with a streaming chunk
     # and corrupt/drop a frame. (admin/ws.py solves the same problem with a dedicated sender.)
     send_lock = asyncio.Lock()
+    closed = False
 
     async def send(payload: dict) -> None:
+        # After the client disconnects, writes become no-ops: an in-flight turn keeps
+        # running to completion (and persists) instead of failing on the dead socket.
+        if closed:
+            return
         async with send_lock:
             await websocket.send_json(payload)
 
@@ -490,11 +495,16 @@ async def chat_ws(
         except Exception:  # noqa: BLE001
             pass
     finally:
-        # Cancel the worker before the generation task so its stop-handling branch
-        # can't try to write to a socket that's already gone.
-        for task in (worker_task, gen_task, push_task):
+        closed = True
+        # A turn that is mid-generation is NOT cancelled on disconnect (mobile users switch
+        # apps all the time): it finishes in the background, its answer is committed, and the
+        # widget backfills it from history on reconnect. A watchdog bounds it. Turns still
+        # queued behind it are dropped with the worker.
+        for task in (worker_task, push_task):
             if task is not None:
                 task.cancel()
+        if gen_task is not None and not gen_task.done():
+            _orphan_turns.add(asyncio.create_task(_finish_orphaned_turn(gen_task)))
 
 
 async def _session_owned_by(session_id: str, end_user_id: str) -> bool:
@@ -503,6 +513,22 @@ async def _session_owned_by(session_id: str, end_user_id: str) -> bool:
 
 
 PUSH_RECONNECT_MAX_SEC = 10.0
+ORPHAN_TURN_TIMEOUT_SEC = 120.0
+_orphan_turns: set[asyncio.Task] = set()
+
+
+async def _finish_orphaned_turn(task: asyncio.Task) -> None:
+    """Let a turn whose client went away run to completion (bounded), then forget it."""
+    try:
+        await asyncio.wait_for(asyncio.shield(task), ORPHAN_TURN_TIMEOUT_SEC)
+        log.info("ws_orphan_turn_completed")
+    except TimeoutError:
+        task.cancel()
+        log.warning("ws_orphan_turn_timeout")
+    except BaseException:  # noqa: BLE001 — the turn itself failed; nothing to deliver
+        pass
+    finally:
+        _orphan_turns.discard(asyncio.current_task())
 _CONTROL_FRAMES = frozenset({"request_human", "end_session"})
 
 
