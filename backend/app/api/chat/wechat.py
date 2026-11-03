@@ -8,8 +8,6 @@ the callback well under WeChat's timeout (requirements §5.2, §14).
 
 from __future__ import annotations
 
-import asyncio
-
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import PlainTextResponse
 
@@ -22,8 +20,7 @@ from app.channels.wechat import (
 from app.channels.wechat_crypto import WeChatCryptoError
 from app.core.logging import get_logger
 from app.db.session import session_scope
-from app.services.conversation import handle_turn
-from app.services.wechat_client import send_text
+from app.tasks.queue import enqueue
 
 router = APIRouter(prefix="/api/wechat", tags=["wechat"])
 log = get_logger("wechat.callback")
@@ -71,26 +68,15 @@ async def receive(
         log.warning("wechat_decrypt_failed", error=str(exc))
         return PlainTextResponse("")
 
-    inbound = inbound_from_wechat(msg)
-    if inbound is not None:
-        # ACK now; process + push asynchronously so we never hit WeChat's callback timeout.
-        asyncio.create_task(_process_and_push(cfg, inbound))
+    if inbound_from_wechat(msg) is not None:
+        # ACK now and hand the turn to the worker: a durable job survives deploys/restarts
+        # (an in-process task did not), and keying it by MsgId drops WeChat's retries of the
+        # same message (it re-posts when it doesn't get a timely ACK).
+        job_key = msg.get("MsgId") or f"{msg.get('FromUserName', '')}:{msg.get('CreateTime', '')}"
+        await enqueue("wechat_handle_inbound", msg, _job_id=f"wx-in:{job_key}")
 
     # Empty 200 is a valid ACK for WeChat Work app callbacks.
     return PlainTextResponse("")
-
-
-async def _process_and_push(cfg, inbound) -> None:
-    try:
-        parts: list[str] = []
-        async with session_scope() as db:
-            async for ev in handle_turn(db, inbound):
-                if ev.kind == "text":
-                    parts.append(ev.text)
-        reply = "".join(parts).strip() or "（暂无回复）"
-        await send_text(cfg.corp_id, cfg.secret, cfg.agent_id, inbound.end_user_id, reply)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("wechat_process_failed", error=str(exc))
 
 
 def _extract_encrypt(xml_body: str) -> str:

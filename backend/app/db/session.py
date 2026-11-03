@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import asyncio
+import contextvars
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
@@ -10,8 +12,10 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session as OrmSession
 
 from app.config import settings
+from app.core.logging import get_logger
 from app.db.tenant_context import get_current_tenant
 
 engine = create_async_engine(
@@ -81,3 +85,50 @@ class session_scope:
                 await self._session.rollback()
         finally:
             await self._session.close()
+
+
+# ---- Post-commit side effects ----
+# External side effects (enqueue a notification, push to WeChat, broadcast to the workbench)
+# must only happen once the data they describe is durable: firing them inside the transaction
+# means a rollback/cancel leaves operators chasing a ticket or message that doesn't exist.
+# `run_after_commit` queues a coroutine factory on the session; it runs (fire-and-forget) right
+# after the next successful COMMIT and is dropped on ROLLBACK.
+
+_AFTER_COMMIT_KEY = "acs_after_commit"
+_background: set[asyncio.Task] = set()
+_log = get_logger("db.session")
+
+
+def run_after_commit(db: AsyncSession, fn: Callable[[], Awaitable[object]]) -> None:
+    db.sync_session.info.setdefault(_AFTER_COMMIT_KEY, []).append(fn)
+
+
+async def _run_safely(fn: Callable[[], Awaitable[object]]) -> None:
+    try:
+        await fn()
+    except Exception as exc:  # noqa: BLE001 — a side effect must never surface as a request error
+        _log.warning("after_commit_failed", error=str(exc))
+
+
+@event.listens_for(OrmSession, "after_commit")
+def _fire_after_commit(sync_session) -> None:
+    fns = sync_session.info.pop(_AFTER_COMMIT_KEY, None)
+    if not fns:
+        return
+    loop = asyncio.get_running_loop()
+    ctx = contextvars.copy_context()  # keep the tenant / trace context of the committing code
+    for fn in fns:
+        task = loop.create_task(_run_safely(fn), context=ctx)
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+
+
+@event.listens_for(OrmSession, "after_rollback")
+def _drop_after_commit(sync_session) -> None:
+    sync_session.info.pop(_AFTER_COMMIT_KEY, None)
+
+
+async def drain_after_commit_tasks() -> None:
+    """Await in-flight post-commit side effects (tests, graceful shutdown)."""
+    if _background:
+        await asyncio.gather(*list(_background), return_exceptions=True)

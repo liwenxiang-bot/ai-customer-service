@@ -672,3 +672,50 @@ async def test_push_listener_resubscribes_after_redis_error(monkeypatch):
     task.cancel()
     assert attempts["n"] == 2
     assert received == [{"type": "human_message", "content": "在的"}]
+
+
+# ------------------------------------------------------- 转人工 ordering
+def test_request_human_right_after_first_answer_uses_that_session(monkeypatch):
+    """转人工 clicked the instant the first answer ends must escalate THAT session (the
+    connection only adopts the id once the turn finishes — previously it saw '' and the
+    customer got a fake 「已为你转接」)."""
+    _patch_connection_deps(monkeypatch)
+    sid = str(uuid.uuid4())
+    seen = []
+
+    async def turn(db, inbound, client_msg_id=""):
+        yield AgentEvent(kind="text", text="好")
+        yield AgentEvent(kind="done", text="好", data={"message_id": "m1", "session_id": sid, "citations": []})
+
+    async def spy_request_human(session_id, end_user_id="", channel_key="default"):
+        seen.append(session_id)
+        return session_id
+
+    monkeypatch.setattr(ws_mod, "handle_turn", turn)
+    monkeypatch.setattr(ws_mod, "_handle_request_human", spy_request_human)
+    with _make_client().websocket_connect("/ws/chat?uid=u11") as ws:
+        assert ws.receive_json()["type"] == "connected"
+        ws.send_json({"type": "user_message", "text": "hi"})
+        ws.send_json({"type": "request_human"})  # sent before the turn even finishes
+        frames = []
+        while not frames or frames[-1]["type"] != "escalated":
+            frames.append(ws.receive_json())
+    assert seen == [sid]
+    assert frames[-1]["session_id"] == sid
+
+
+def test_request_human_without_session_returns_new_session(monkeypatch):
+    _patch_connection_deps(monkeypatch)
+    calls = []
+
+    async def spy_request_human(session_id, end_user_id="", channel_key="default"):
+        calls.append((session_id, end_user_id))
+        return "new-session"
+
+    monkeypatch.setattr(ws_mod, "_handle_request_human", spy_request_human)
+    with _make_client().websocket_connect("/ws/chat?uid=u12") as ws:
+        assert ws.receive_json()["type"] == "connected"
+        ws.send_json({"type": "request_human"})
+        esc = ws.receive_json()
+    assert calls == [("", "u12")]
+    assert esc["type"] == "escalated" and esc["session_id"] == "new-session"

@@ -229,6 +229,7 @@ async def chat_message(
             final = ev.data
     return {
         "reply": "".join(text_parts),
+        "takeover": bool(final.get("takeover")),
         "message_id": final.get("message_id"),
         "session_id": final.get("session_id"),
         "citations": final.get("citations", []),

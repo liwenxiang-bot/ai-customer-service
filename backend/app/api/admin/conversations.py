@@ -438,9 +438,8 @@ def _operator_upload_prefix(session: Session) -> str:
 
 
 def _require_web_session(session: Session) -> None:
-    # Only the web widget renders pushed attachments today; WeChat delivery of operator
-    # messages is not wired yet, so refuse rather than silently dropping the file.
-    if session.channel_type != "web":
+    # Web renders attachment bubbles; WeChat Work receives each file as a name + link line.
+    if session.channel_type not in ("web", "wechat_work"):
         raise HTTPException(status_code=400, detail="该渠道暂不支持坐席发送附件")
 
 

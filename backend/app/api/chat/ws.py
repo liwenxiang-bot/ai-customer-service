@@ -64,21 +64,38 @@ from app.services.takeover import (
 from app.services.tenant import tenant_for_channel
 
 
-async def _handle_request_human(session_id: str) -> None:
+async def _handle_request_human(
+    session_id: str, end_user_id: str = "", channel_key: str = "default"
+) -> str:
     """转人工请求：按会话当前状态判断，而非 escalated 标志——该标志从不复位，
     用它做守卫会让"接待过一次"的会话永远无法再转人工（客户却收到"已为你转接"
     的假回执）。接管中不重复建单（人工已在场）；其余状态交给 create_handoff：
-    有存活工单则幂等复用，否则重新建单入队。"""
-    if not session_id or not (sid := _as_uuid(session_id)):
-        return
+    有存活工单则幂等复用，否则重新建单入队。
+
+    客户还没聊过天就点「转人工」时（连接上没有会话），先为他建会话再建单——
+    此前这里直接返回，客户却收到「已为你转接」的假回执、坐席队列里什么都没有。
+    返回最终使用的会话 id（可能是新建的）。"""
+    sid = _as_uuid(session_id) if session_id else None
+    if sid is None and not end_user_id:
+        return session_id
     async with session_scope() as db:
-        s = await db.get(Session, sid)
+        if sid is None:
+            s, _ = await get_or_create_session(
+                db,
+                InboundMessage(
+                    channel_type=ChannelType.WEB, channel_key=channel_key,
+                    end_user_id=end_user_id, text="",
+                ),
+            )
+        else:
+            s = await db.get(Session, sid)
         if s and s.status != SessionStatus.HUMAN_TAKEOVER:
             await create_handoff(
                 db, s, HandoffReason.USER_REQUEST, "user_request",
                 s.summary or s.title or "",
             )
         await db.commit()
+        return str(s.id) if s else session_id
 
 
 async def _handle_end_session(session_id: str, payload: dict) -> None:
@@ -339,11 +356,31 @@ async def chat_ws(
             session_id = task.result() or session_id
         ensure_push_listener(session_id)
 
+    async def handle_control(payload: dict) -> None:
+        # Runs on the turn worker, i.e. strictly after any turn queued before it: a
+        # 转人工 / 结束 clicked right after an answer must see that turn's session id
+        # (adopted only once the turn completes), not the empty pre-turn value.
+        nonlocal session_id
+        if payload.get("type") == "request_human":
+            session_id = await _handle_request_human(session_id, end_user_id, channel_key)
+            ensure_push_listener(session_id)
+            await send({
+                "type": "escalated",
+                "session_id": session_id or None,
+                "message": "已为你转接人工，我们会尽快安排同事跟进。",
+            })
+        else:  # end_session
+            await _handle_end_session(session_id, payload)
+            await send({"type": "session_ended"})
+
     async def turn_worker() -> None:
         while True:
             payload = await turn_queue.get()
             try:
-                await process_turn(payload)
+                if payload.get("type") in _CONTROL_FRAMES:
+                    await handle_control(payload)
+                else:
+                    await process_turn(payload)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — keep the connection alive
@@ -404,16 +441,10 @@ async def chat_ws(
                 await send({"type": "feedback_ack", "ok": ok})
                 continue
 
-            if mtype == "request_human":
-                await _handle_request_human(session_id)
-                await send(
-                    {"type": "escalated", "message": "已为你转接人工，我们会尽快安排同事跟进。"}
-                )
-                continue
-
-            if mtype == "end_session":
-                await _handle_end_session(session_id, payload)
-                await send({"type": "session_ended"})
+            if mtype in _CONTROL_FRAMES:
+                # Ordered behind queued turns (see handle_control). Never dropped on a full
+                # queue: wait for room instead — these are rare, user-initiated clicks.
+                await turn_queue.put(payload)
                 continue
 
             if mtype != "user_message":
@@ -472,6 +503,7 @@ async def _session_owned_by(session_id: str, end_user_id: str) -> bool:
 
 
 PUSH_RECONNECT_MAX_SEC = 10.0
+_CONTROL_FRAMES = frozenset({"request_human", "end_session"})
 
 
 async def _push_listener(send, session_id: str) -> None:

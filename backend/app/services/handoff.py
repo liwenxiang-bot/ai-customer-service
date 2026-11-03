@@ -121,12 +121,10 @@ async def create_handoff(
         # 通道对该会话永久静默（唯一恢复手段是后台人工点重发），客户却反复收到
         # 「已为你转接」的回执。
         if not ticket.notified:
-            await resend_handoff_notify(db, ticket)
+            _notify_after_commit(db, ticket)
         if requeued:
             # 防御路径（如工单存活但会话已被挪出队列）：拉回队列要让工作台即时刷新。
-            await publish_admin_event(
-                {"type": "queue", "event": "handoff", "session_id": str(session.id)}
-            )
+            _broadcast_after_commit(db, session.id)
         log.info("handoff_reused", ticket_id=str(ticket.id), session_id=str(session.id))
         return ticket
 
@@ -149,29 +147,18 @@ async def create_handoff(
         session.status = SessionStatus.ESCALATED
     await db.flush()
 
-    # Notify the operator. Best-effort: failure is recorded, not fatal.
-    title = "🔔 转人工提醒"
-    body = (
-        f"> 渠道：{session.channel_type}\n"
-        f"> 用户：{session.end_user_display or session.end_user_id or '匿名'}\n"
-        f"> 原因：{reason_detail or reason}\n\n"
-        f"**对话摘要**：{summary[:500]}\n\n"
-        f"[点此接待（坐席站）]({agent_console_link(session.id)})"
-        f" ｜ [后台查看]({_admin_console_link(session.id)})"
-    )
-    delivered, err = await notify_operator(db, title, body)
-    ticket.notified = delivered
-    ticket.notify_error = err
-    await db.flush()
+    # Notify + broadcast only after the ticket is committed: a cancelled/rolled-back turn must
+    # not page an operator for a ticket that doesn't exist, and a slow webhook/SMTP must not
+    # hold up the customer's reply. The worker records notified / notify_error.
+    _notify_after_commit(db, ticket)
     escalations_metric.labels(reason).inc()
-    await publish_admin_event({"type": "queue", "event": "handoff", "session_id": str(session.id)})
+    _broadcast_after_commit(db, session.id)
 
     log.info(
         "handoff_created",
         ticket_id=str(ticket.id),
         session_id=str(session.id),
         reason=reason,
-        notified=delivered,
     )
     return ticket
 
@@ -203,12 +190,35 @@ async def resolve_handoff(
             )
 
 
-async def resend_handoff_notify(db: AsyncSession, ticket: HandoffTicket) -> tuple[bool, str]:
-    """Re-send the operator notification for an existing ticket (manual retry)."""
-    title = "🔔 转人工提醒（重发）"
+def _notify_after_commit(db: AsyncSession, ticket: HandoffTicket) -> None:
+    from app.db.session import run_after_commit
+    from app.tasks.queue import enqueue
+
+    tid, tenant = str(ticket.id), str(ticket.tenant_id)
+    # job id dedupes repeat escalations of the same ticket while a send is pending.
+    run_after_commit(
+        db, lambda: enqueue("notify_handoff", tid, _tenant=tenant, _job_id=f"notify-handoff:{tid}")
+    )
+
+
+def _broadcast_after_commit(db: AsyncSession, session_id) -> None:
+    from app.db.session import run_after_commit
+
+    sid = str(session_id)
+    run_after_commit(
+        db, lambda: publish_admin_event({"type": "queue", "event": "handoff", "session_id": sid})
+    )
+
+
+async def send_handoff_notify(
+    db: AsyncSession, ticket: HandoffTicket, title: str = "🔔 转人工提醒"
+) -> tuple[bool, str]:
+    """Deliver the operator notification for a ticket and record the outcome on it."""
+    session = await db.get(Session, ticket.session_id)
+    who = (session.end_user_display if session else "") or ticket.end_user_id or "匿名"
     body = (
         f"> 渠道：{ticket.channel_type}\n"
-        f"> 用户：{ticket.end_user_id or '匿名'}\n"
+        f"> 用户：{who}\n"
         f"> 原因：{ticket.reason_detail or ticket.reason}\n\n"
         f"**对话摘要**：{ticket.conversation_summary[:500]}\n\n"
         f"[点此接待（坐席站）]({agent_console_link(ticket.session_id)})"
@@ -218,5 +228,11 @@ async def resend_handoff_notify(db: AsyncSession, ticket: HandoffTicket) -> tupl
     ticket.notified = delivered
     ticket.notify_error = err
     await db.flush()
-    log.info("handoff_notify_resent", ticket_id=str(ticket.id), notified=delivered)
+    log.info("handoff_notify_sent", ticket_id=str(ticket.id), notified=delivered)
     return delivered, err
+
+
+async def resend_handoff_notify(db: AsyncSession, ticket: HandoffTicket) -> tuple[bool, str]:
+    """Re-send the operator notification for an existing ticket (manual retry, synchronous so
+    the operator sees the result immediately)."""
+    return await send_handoff_notify(db, ticket, title="🔔 转人工提醒（重发）")

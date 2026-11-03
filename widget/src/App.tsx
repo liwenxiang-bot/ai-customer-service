@@ -326,6 +326,11 @@ export function App({ config }: { config: WidgetConfig }) {
         showAgentTyping();
         break;
       case "escalated":
+        // 未聊天直接转人工时服务端会新建会话：记住它，后续消息与坐席推送都落在这个会话上
+        if (ev.session_id) {
+          localStorage.setItem(sessionKey, ev.session_id);
+          if (clientRef.current) clientRef.current.sessionId = ev.session_id;
+        }
         setEscalated(true);
         if (ev.message) appendSystem(ev.message);
         break;
@@ -555,6 +560,12 @@ export function App({ config }: { config: WidgetConfig }) {
       const data = await client.sendMessageHttp(text, atts);
       if (data.session_id) localStorage.setItem(sessionKey, data.session_id);
       setMessages((prev) => {
+        // 人工接管中：AI 不作答，坐席回复走推送——去掉占位气泡，只把本条标为已发送
+        if (data.takeover) {
+          return prev
+            .filter((m) => m.id !== holderId)
+            .map((m) => (m.id === id ? { ...m, status: "sent" as const } : m));
+        }
         // 回复已先一步经 history 回填（同 DB id）：丢弃占位，避免同一条回复双份渲染
         if (data.message_id && prev.some((m) => m.id === data.message_id)) {
           return prev
