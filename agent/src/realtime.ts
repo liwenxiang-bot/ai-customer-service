@@ -1,7 +1,13 @@
 import { useEffect, useRef } from "react";
 import { tokenStore } from "./api";
 
-type Handlers = { onQueue?: () => void; onSession?: (msg: any) => void; onTyping?: (msg: any) => void };
+type Handlers = {
+  onQueue?: () => void;
+  onSession?: (msg: any) => void;
+  onTyping?: (msg: any) => void;
+  /** New customer activity on a queued (待人工/接管中) session — any session, not just the watched one. */
+  onActivity?: (msg: any) => void;
+};
 
 /** Live admin events over WebSocket (reuses the backend Redis pub/sub bus at /ws/admin).
  *  Auto-reconnects with backoff. Call the returned `watch(sessionId)` to also receive that
@@ -31,6 +37,9 @@ export function useRealtime(handlers: Handlers) {
       wsRef.current = ws;
 
       ws.onopen = () => {
+        // Events published while we were disconnected are gone: after a REconnect, refresh
+        // once so lists/counters catch up instead of waiting for the next poll.
+        if (retry > 0) hRef.current.onQueue?.();
         retry = 0;
         if (watchRef.current) ws.send(JSON.stringify({ type: "watch", session_id: watchRef.current }));
         pingTimer = setInterval(() => {
@@ -41,6 +50,7 @@ export function useRealtime(handlers: Handlers) {
         let msg: any;
         try { msg = JSON.parse(e.data); } catch { return; }
         if (msg.type === "queue") hRef.current.onQueue?.();
+        else if (msg.type === "activity") hRef.current.onActivity?.(msg);
         else if (msg.type === "customer_typing") hRef.current.onTyping?.(msg);
         else if (["customer_message", "human_message", "human_takeover", "ai_resumed", "human_ended"].includes(msg.type)) {
           hRef.current.onSession?.(msg);

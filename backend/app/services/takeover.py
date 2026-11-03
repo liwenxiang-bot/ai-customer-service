@@ -256,4 +256,8 @@ async def persist_customer_message(
             "attachments": attachments or [],
         },
     )
+    from app.db.session import run_after_commit
+
+    sid = str(session.id)
+    run_after_commit(db, lambda: publish_admin_event({"type": "activity", "session_id": sid}))
     return msg

@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select, text, union
+from sqlalchemy import func, or_, select, text, union, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_operator
@@ -21,7 +21,7 @@ from app.core.strings import escape_like
 from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.conversation import HandoffTicket, Message, Session
-from app.models.enums import HandoffStatus, SessionStatus
+from app.models.enums import AdminRole, HandoffStatus, MessageRole, SessionStatus
 from app.services import knowledge as ksvc
 from app.services import takeover as tk
 from app.services.audit import write_audit
@@ -35,6 +35,32 @@ def _parse_day(s: str) -> datetime | None:
         return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=UTC)
     except (ValueError, TypeError):
         return None
+
+
+async def _last_message_previews(db: AsyncSession, session_ids: list) -> dict:
+    """Newest customer/AI/operator message per session, as a short preview — one DISTINCT ON
+    query for the whole page (no N+1)."""
+    if not session_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(Message.session_id, Message.role, Message.model, Message.content, Message.attachments)
+            .where(
+                Message.session_id.in_(session_ids),
+                Message.role.in_([MessageRole.USER, MessageRole.ASSISTANT]),
+            )
+            .distinct(Message.session_id)
+            .order_by(Message.session_id, Message.seq.desc())
+        )
+    ).all()
+    out = {}
+    for sid, role, model, content, atts in rows:
+        text = " ".join((content or "").split())
+        if not text and atts:
+            text = "[图片]" if any(a.get("kind") == "image" for a in atts) else "[附件]"
+        who = "customer" if role == MessageRole.USER else ("agent" if model == "human" else "ai")
+        out[sid] = {"from": who, "text": text[:80]}
+    return out
 
 
 def _filtered_sessions(
@@ -98,6 +124,7 @@ async def list_conversations(
     date_to: str = "",
     feedback: str = "",
     degraded: bool = False,
+    end_user_id: str = "",
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -108,6 +135,8 @@ async def list_conversations(
         attention=attention, status=status, q=q, date_from=date_from, date_to=date_to,
         feedback=feedback, degraded=degraded,
     )
+    if end_user_id:  # a customer's history (workbench side panel)
+        stmt = stmt.where(Session.end_user_id == end_user_id)
     total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
     rows = (
         await db.execute(
@@ -141,6 +170,8 @@ async def list_conversations(
                     "assignee_name": (name or email) if t.assignee_id and email else None,
                 }
 
+    previews = await _last_message_previews(db, [s.id for s in rows])
+
     items = []
     for s in rows:
         item = {
@@ -154,6 +185,7 @@ async def list_conversations(
             "message_count": s.message_count,
             "last_activity_at": s.last_activity_at.isoformat() if s.last_activity_at else None,
             "created_at": s.created_at.isoformat() if s.created_at else None,
+            "last_message": previews.get(s.id),
         }
         if pending_human or attention:
             item["ticket"] = tickets_by_session.get(s.id)
@@ -414,9 +446,52 @@ async def takeover(
     session_id: str, db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_operator),
 ):
-    """Operator takes over: AI pauses, operator chats live with the customer."""
+    """Operator takes over: AI pauses, operator chats live with the customer.
+
+    Guards (operators; admins may override as supervisors): a session someone else is
+    already handling — or whose ticket a colleague claimed — can't be silently grabbed.
+    Taking over also claims the session's open ticket, so the queue, badges and the
+    「我的」list agree that this operator owns it (previously it stayed 「待认领」)."""
     session = await _get_session_or_404(db, session_id)
+    is_admin = user.role == AdminRole.ADMIN
+    if session.status == SessionStatus.CLOSED:
+        raise HTTPException(status_code=409, detail="会话已结束，无法接管")
+    if (
+        session.status == SessionStatus.HUMAN_TAKEOVER
+        and session.takeover_by_id
+        and session.takeover_by_id != user.id
+        and not is_admin
+    ):
+        raise HTTPException(
+            status_code=409, detail=f"{session.takeover_by_name or '同事'} 正在接待该会话"
+        )
+    claimed_by_other = (
+        await db.execute(
+            select(AdminUser.name, AdminUser.email)
+            .join(HandoffTicket, HandoffTicket.assignee_id == AdminUser.id)
+            .where(
+                HandoffTicket.session_id == session.id,
+                HandoffTicket.status == HandoffStatus.IN_PROGRESS,
+                HandoffTicket.assignee_id != user.id,
+            )
+            .limit(1)
+        )
+    ).first()
+    if claimed_by_other and not is_admin:
+        raise HTTPException(
+            status_code=409, detail=f"已被 {claimed_by_other[0] or claimed_by_other[1]} 认领"
+        )
     await tk.start_takeover(db, session, operator=user)
+    await db.execute(
+        update(HandoffTicket)
+        .where(
+            HandoffTicket.session_id == session.id,
+            HandoffTicket.status == HandoffStatus.OPEN,
+            HandoffTicket.assignee_id.is_(None),
+        )
+        .values(assignee_id=user.id, status=HandoffStatus.IN_PROGRESS)
+    )
+    await write_audit(db, user, "conversation.takeover", "session", str(session.id))
     await db.commit()
     return {"ok": True, "status": session.status}
 

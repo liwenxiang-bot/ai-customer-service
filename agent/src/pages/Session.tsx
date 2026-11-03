@@ -14,6 +14,7 @@ import { useAuth } from "../auth";
 import { usePolling } from "../usePolling";
 import { useRealtime } from "../realtime";
 import { EmojiPicker } from "../EmojiPicker";
+import { CustomerPanel } from "./CustomerPanel";
 import { toast } from "../toast";
 import { channelLabel, fmtShort, HANDOFF_STATUS, isImeComposing, sessionStatusMeta } from "../utils";
 
@@ -91,6 +92,7 @@ export function SessionPage() {
   const [ticket, setTicket] = useState<Ticket | undefined>(undefined); // undefined=加载中
   const [canned, setCanned] = useState<any[]>([]);
   const [cannedOpen, setCannedOpen] = useState(false);
+  const [cannedSearch, setCannedSearch] = useState("");
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [pending, setPending] = useState<Attachment[]>([]); // 已上传、待随下一条回复发送
@@ -345,6 +347,21 @@ export function SessionPage() {
     }
   };
 
+  // 「/关键字」唤出快捷回复（Chatwoot 式）：以 / 开头即进入筛选，回车选中第一条。
+  const slashMode = text.startsWith("/") && !text.includes("\n");
+  const cannedQuery = (slashMode ? text.slice(1) : cannedSearch).trim().toLowerCase();
+  const cannedShown = canned.filter(
+    (c: any) =>
+      !cannedQuery ||
+      `${c.title || ""} ${c.content || ""} ${c.category || ""}`.toLowerCase().includes(cannedQuery)
+  );
+  const pickCanned = (c: any) => {
+    setText((t) => (slashMode ? c.content : t ? t + "\n" + c.content : c.content));
+    setCannedOpen(false);
+    setCannedSearch("");
+    requestAnimationFrame(() => taRef.current?.focus());
+  };
+
   const s = detail?.session;
   const inTakeover = s?.status === "human_takeover";
   // 网页渠道渲染附件气泡；企微客户收到「文件名 + 链接」
@@ -373,6 +390,7 @@ export function SessionPage() {
             : "会话当前无需人工接管";
 
   return (
+    <div className="session-layout">
     <div className="app-shell chat-shell">
       <header className="app-header">
         <Link className="back-link" to="/" aria-label="返回收件箱">
@@ -525,20 +543,34 @@ export function SessionPage() {
       </div>
 
       {/* 快捷回复面板 */}
-      {inTakeover && cannedOpen && (
+      {inTakeover && (cannedOpen || slashMode) && (
         <div className="canned-panel">
+          {!slashMode && canned.length > 0 && (
+            <input
+              className="canned-search"
+              placeholder="搜索快捷回复…（也可在输入框里直接输入 / 加关键字）"
+              value={cannedSearch}
+              autoFocus
+              onChange={(e) => setCannedSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setCannedOpen(false);
+                if (e.key === "Enter" && cannedShown[0]) {
+                  e.preventDefault();
+                  pickCanned(cannedShown[0]);
+                }
+              }}
+            />
+          )}
           {canned.length === 0 ? (
-            <div className="muted canned-empty">暂无快捷回复模板</div>
+            <div className="muted canned-empty">暂无快捷回复模板，可在管理后台「快捷回复」中添加</div>
+          ) : cannedShown.length === 0 ? (
+            <div className="muted canned-empty">没有匹配「{cannedQuery}」的快捷回复</div>
           ) : (
-            canned.map((c: any) => (
+            cannedShown.map((c: any, i: number) => (
               <button
                 key={c.id}
-                className="canned-item"
-                onClick={() => {
-                  setText((t) => (t ? t + "\n" + c.content : c.content));
-                  setCannedOpen(false);
-                  taRef.current?.focus();
-                }}
+                className={`canned-item${slashMode && i === 0 ? " canned-item-hint" : ""}`}
+                onClick={() => pickCanned(c)}
               >
                 <span className="canned-title">{c.title || c.content.slice(0, 20)}</span>
                 <span className="canned-preview">{c.content}</span>
@@ -632,7 +664,7 @@ export function SessionPage() {
               ref={taRef}
               className="composer-input"
               rows={1}
-              placeholder="输入回复，回车发送"
+              placeholder="输入回复；/ 快捷回复"
               title="回车发送，Shift+回车换行"
               value={text}
               onChange={(e) => {
@@ -641,9 +673,17 @@ export function SessionPage() {
                 onComposerTyping();
               }}
               onKeyDown={(e) => {
+                if (e.key === "Escape" && slashMode) {
+                  setText("");
+                  return;
+                }
                 if (e.key !== "Enter" || e.shiftKey) return;
                 if (isImeComposing(e)) return; // 输入法选词上屏的回车不发送
                 e.preventDefault();
+                if (slashMode) {
+                  if (cannedShown[0]) pickCanned(cannedShown[0]);
+                  return;
+                }
                 submit();
               }}
             />
@@ -684,6 +724,8 @@ export function SessionPage() {
           </div>
         </div>
       )}
+    </div>
+    <CustomerPanel detail={detail} ticket={ticket} />
     </div>
   );
 }

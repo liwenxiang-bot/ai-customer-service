@@ -5,6 +5,7 @@ import { useAuth } from "../auth";
 import { usePolling } from "../usePolling";
 import { useRealtime } from "../realtime";
 import { currentTheme, toggleTheme, ThemeMode } from "../theme";
+import { alertActivity, notifyEnabled, setNotifyEnabled } from "../notify";
 import { toast } from "../toast";
 import { channelLabel, fmtShort, HANDOFF_STATUS, sessionStatusMeta } from "../utils";
 
@@ -48,6 +49,8 @@ function Avatar({ name, unread }: { name: string; unread: boolean }) {
   );
 }
 
+const FROM_LABEL: Record<string, string> = { customer: "", ai: "AI：", agent: "我方：" };
+
 const newer = (a?: string | null, b?: string | null) =>
   !!a && !!b && Date.parse(a) > Date.parse(b);
 
@@ -64,6 +67,7 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
   const [claiming, setClaiming] = useState<string>(""); // 认领中的工单 id（按钮防连点）
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => currentTheme());
   const [unread, setUnread] = useState<Set<string>>(new Set());
+  const [notifyOn, setNotifyOn] = useState<boolean>(() => notifyEnabled());
 
   const tabRef = useRef(tab);
   tabRef.current = tab;
@@ -207,7 +211,19 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
       loadList();
     }, 400);
   };
-  useRealtime({ onQueue: scheduleLoad });
+  useRealtime({
+    onQueue: scheduleLoad,
+    onActivity: (msg: any) => {
+      const sid = msg?.session_id;
+      if (!sid) return;
+      // Mark unread across ALL tabs at once (not only the list currently shown), then refresh.
+      if (sid !== activeIdRef.current) {
+        setUnread((prev) => (prev.has(sid) ? prev : new Set(prev).add(sid)));
+      }
+      alertActivity("客户有新消息", "有待处理的客服会话收到新消息", () => nav(`/s/${sid}`));
+      scheduleLoad();
+    },
+  });
   useEffect(() => () => {
     if (queueTimerRef.current) clearTimeout(queueTimerRef.current);
   }, []);
@@ -263,6 +279,23 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
                 <path d="M17.4 12.3A7.5 7.5 0 0 1 7.7 2.6a.5.5 0 0 0-.65-.62 8.3 8.3 0 1 0 10.97 10.97.5.5 0 0 0-.62-.65z" />
               </svg>
             )}
+          </button>
+          <button
+            className={`btn btn-ghost btn-icon${notifyOn ? " btn-on" : ""}`}
+            onClick={async () => {
+              const next = await setNotifyEnabled(!notifyOn);
+              if (!notifyOn && !next) toast("浏览器未允许通知，请在地址栏左侧的站点设置中开启", "error");
+              setNotifyOn(next);
+            }}
+            title={notifyOn ? "已开启新消息提醒（页面在后台时弹通知并提示音）" : "开启新消息提醒"}
+            aria-label={notifyOn ? "关闭新消息提醒" : "开启新消息提醒"}
+            aria-pressed={notifyOn}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              {!notifyOn && <line x1="3" y1="3" x2="21" y2="21" />}
+            </svg>
           </button>
           <button className="btn btn-ghost btn-sm" onClick={doLogout}>退出</button>
         </div>
@@ -330,7 +363,16 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
                     <span className="conv-name">{name}</span>
                     <span className="conv-time">{fmtShort(it.last_activity_at)}</span>
                   </div>
-                  <div className="conv-summary">{it.title || "（无内容）"}</div>
+                  <div className="conv-summary">
+                    {it.last_message ? (
+                      <>
+                        <span className="conv-from">{FROM_LABEL[it.last_message.from] || ""}</span>
+                        {it.last_message.text || "（无内容）"}
+                      </>
+                    ) : (
+                      it.title || "（无内容）"
+                    )}
+                  </div>
                   <div className="conv-meta">
                     <span className="badge badge-plain">{channelLabel(it.channel_type)}</span>
                     <span className={`badge badge-${st.cls}`}>{st.label}</span>
