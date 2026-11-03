@@ -54,6 +54,10 @@ app = FastAPI(
     version="0.1.0",
     description="多渠道智能客服系统（起步版）",
     lifespan=lifespan,
+    # The full API map is a recon gift on a public domain: only expose it outside production.
+    docs_url=None if settings.is_production else "/docs",
+    redoc_url=None if settings.is_production else "/redoc",
+    openapi_url=None if settings.is_production else "/openapi.json",
 )
 
 # The widget is embedded on arbitrary merchant origins, so the public chat/embed
@@ -91,7 +95,19 @@ async def observability_mw(request: Request, call_next):
         http_latency.labels(request.method, path).observe(time.monotonic() - start)
     http_requests.labels(request.method, path, str(status)).inc()
     response.headers["x-trace-id"] = trace_id
+    _security_headers(path, response)
     return response
+
+
+def _security_headers(path: str, response) -> None:
+    h = response.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # The agent console and API docs must never be framed (clickjacking). /chat stays
+    # frameable on purpose: merchants may embed it with an <iframe>.
+    if path.startswith(("/agent", "/docs", "/redoc")):
+        h.setdefault("X-Frame-Options", "DENY")
+        h.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
 
 # ---- Routers ----

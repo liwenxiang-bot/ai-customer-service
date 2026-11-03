@@ -24,9 +24,10 @@ async def _check(key: str, limit: int, window_sec: int = 60) -> tuple[bool, int]
     if limit <= 0:
         return True, 0
     r = get_redis()
-    count = await r.incr(key)
-    if count == 1:
-        await r.expire(key, window_sec)
+    async with r.pipeline(transaction=True) as pipe:
+        pipe.incr(key)
+        pipe.expire(key, window_sec, nx=True)  # set the window once; never a key without TTL
+        count, _ = await pipe.execute()
     if count > limit:
         ttl = await r.ttl(key)
         return False, max(ttl, 1)

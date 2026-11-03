@@ -88,7 +88,7 @@ function UsersTab() {
           <Form.Item name="role" label="角色" rules={[{ required: true }]}>
             <Select options={[{ value: "admin", label: "管理员" }, { value: "operator", label: "运营" }, { value: "readonly", label: "只读" }]} />
           </Form.Item>
-          <Form.Item name="password" label={modal?.id ? "重置密码（留空不改）" : "密码"} rules={modal?.id ? [] : [{ required: true, min: 6 }]}>
+          <Form.Item name="password" label={modal?.id ? "重置密码（留空不改）" : "密码"} rules={modal?.id ? [{ min: 8, message: "密码至少 8 位" }] : [{ required: true, min: 8, message: "密码至少 8 位" }]}>
             <Input.Password autoComplete="new-password" />
           </Form.Item>
           {modal?.id && (

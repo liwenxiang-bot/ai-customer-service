@@ -43,6 +43,11 @@ COPY backend/ /app/
 COPY --from=widget-build /widget/dist /widget/dist
 COPY --from=agent-build /agent/dist /agent/dist
 
+# Run as an unprivileged user: a compromise of the app must not mean root in the container.
+RUN useradd --system --uid 10001 --home-dir /app --shell /usr/sbin/nologin acs \
+    && chown -R acs:acs /app /widget /agent
+USER acs
+
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD curl -fsS http://localhost:8000/health/live || exit 1

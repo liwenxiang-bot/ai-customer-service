@@ -204,7 +204,7 @@ async def chat_ws(
         ip_limit = channel.rate_limit_ip_per_min
 
     await websocket.accept()
-    end_user_id = uid or f"anon-{uuid.uuid4().hex[:12]}"
+    end_user_id = (uid or f"anon-{uuid.uuid4().hex[:12]}")[:128]
     ip = _client_ip(websocket)
     # A session id from the URL is only honoured if this uid owns it; otherwise behave as a
     # fresh visitor (no history, no push subscription, no end/escalate on someone else's chat).
@@ -304,7 +304,7 @@ async def chat_ws(
             channel_type=ChannelType.WEB,
             channel_key=channel_key,
             end_user_id=end_user_id,
-            end_user_display=payload.get("display", ""),
+            end_user_display=str(payload.get("display") or "")[:200],
             text=text,
             session_id=session_id or None,
             meta={"ip": ip, "ua": websocket.headers.get("user-agent", "")},
@@ -434,7 +434,7 @@ async def chat_ws(
                 continue
 
             if mtype == "history":
-                await _send_history(send, session_id, int(payload.get("limit", 50)))
+                await _send_history(send, session_id, _bounded_int(payload.get("limit"), 50, 1, 200))
                 continue
 
             if mtype == "feedback":
@@ -510,6 +510,14 @@ async def chat_ws(
 async def _session_owned_by(session_id: str, end_user_id: str) -> bool:
     async with session_scope() as db:
         return await owned_session(db, session_id, end_user_id, "web") is not None
+
+
+def _bounded_int(value, default: int, lo: int, hi: int) -> int:
+    """Client frames are untrusted: a bad/huge number must not break or bloat the reply."""
+    try:
+        return max(lo, min(hi, int(value)))
+    except (TypeError, ValueError):
+        return default
 
 
 PUSH_RECONNECT_MAX_SEC = 10.0

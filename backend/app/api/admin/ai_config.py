@@ -6,6 +6,8 @@ Changing the embedding model or dimension triggers a full vector rebuild.
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -14,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_admin
 from app.config import settings
 from app.core.encryption import decrypt_secret, encrypt_secret, mask_secret
+from app.core.net import UnsafeURL, check_outbound_url
 from app.db.session import get_db
 from app.llm.base import LLMSettings
 from app.llm.factory import get_provider
@@ -113,6 +116,12 @@ async def update_config(
 
     data = body.model_dump(exclude_unset=True)
     confirm_rebuild = data.pop("confirm_rebuild", False)
+    for field in ("llm_base_url", "embedding_base_url", "rerank_base_url"):
+        if data.get(field):
+            try:
+                await asyncio.to_thread(check_outbound_url, data[field])
+            except UnsafeURL as exc:
+                raise HTTPException(status_code=400, detail=f"{field}：{exc}")
 
     # Precheck before mutating anything: an embedding model/dim change clears every
     # stored vector and triggers a full rebuild (vector search degrades meanwhile), so
@@ -207,10 +216,16 @@ async def test_llm(body: TestLLMIn, db: AsyncSession = Depends(get_db), user: Ad
         raise HTTPException(status_code=400, detail="未配置 LLM API Key")
     provider = get_provider(settings_)
     try:
+        await asyncio.to_thread(check_outbound_url, cfg.llm_base_url)
+    except UnsafeURL as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    try:
         result = await provider.complete([{"role": "user", "content": body.message}], max_tokens=64)
         return {"ok": True, "reply": result.text, "model": cfg.llm_model}
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"调用失败：{exc}")
+        # Short, typed message only — never echo the remote response body (an internal service
+        # behind base_url would otherwise be readable through this endpoint).
+        raise HTTPException(status_code=502, detail=f"调用失败：{type(exc).__name__}（请检查地址、Key 与模型名）")
 
 
 @router.post("/rebuild")

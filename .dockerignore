@@ -1,0 +1,25 @@
+# Build context is the repository root (see backend/Dockerfile, admin/Dockerfile).
+# Never ship secrets, local environments or VCS history into an image.
+.git
+.github
+.claude
+**/.env
+**/.env.*
+!.env.example
+backups
+.last_release_*
+
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/node_modules
+**/dist
+**/.vite
+**/*.log
+.DS_Store
+
+backend/tests
+docs
