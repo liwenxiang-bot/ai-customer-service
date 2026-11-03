@@ -919,6 +919,63 @@ input[type="radio"] {
   border-color: var(--primary);
   color: var(--primary);
 }
+.composer-emoji {
+  padding: 7px;
+  width: 42px;
+}
+.emoji-panel {
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 6px 12px 8px;
+  flex-shrink: 0;
+}
+.emoji-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  overflow-x: auto;
+}
+.emoji-tab {
+  border: 0;
+  background: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.emoji-tab-on {
+  background: var(--primary-weak);
+  color: var(--primary);
+  font-weight: 600;
+}
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+  gap: 2px;
+  max-height: 180px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.emoji-item {
+  border: 0;
+  background: none;
+  border-radius: 8px;
+  font-size: 22px;
+  line-height: 1;
+  padding: 7px 0;
+  cursor: pointer;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+.emoji-item:hover {
+  background: var(--line);
+}
+.emoji-tab:focus-visible,
+.emoji-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+}
+
 .composer-attach {
   padding: 7px;
   width: 42px;

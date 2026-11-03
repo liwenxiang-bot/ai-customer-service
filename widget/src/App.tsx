@@ -1,6 +1,7 @@
 import { Component, Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ChatClient, ServerEvent } from "./client";
+import { EMOJI_GROUPS, insertAtCaret, loadRecentEmoji, rememberEmoji } from "./emoji";
 import { renderMarkdown } from "./markdown";
 
 export interface WidgetConfig {
@@ -130,6 +131,19 @@ export function App({ config }: { config: WidgetConfig }) {
   const sessionKey = `acs_session_${channelKey}`;
   const listRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const pickEmoji = (e: string) => {
+    const { value, caret } = insertAtCaret(taRef.current, input, e);
+    setInput(value);
+    rememberEmoji(e);
+    requestAnimationFrame(() => {
+      const el = taRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(caret, caret);
+      autoGrow(el);
+    });
+  };
   const fileRef = useRef<HTMLInputElement>(null);
   const stoppedRef = useRef<Set<string>>(new Set());
   const atBottomRef = useRef(true); // 用户是否停留在消息列表底部附近（±40px）
@@ -602,6 +616,7 @@ export function App({ config }: { config: WidgetConfig }) {
 
   function send() {
     if (busy) return;
+    setEmojiOpen(false);
     const text = input.trim();
     const ready = pending.filter((p) => p.url && !p.error);
     if (!text && ready.length === 0) return;
@@ -836,6 +851,8 @@ export function App({ config }: { config: WidgetConfig }) {
                 </div>
               )}
 
+              {emojiOpen && <EmojiPicker onPick={pickEmoji} onClose={() => setEmojiOpen(false)} />}
+
               <div class="acs-input">
                 {b.file_upload_enabled !== false && (
                   <>
@@ -852,6 +869,16 @@ export function App({ config }: { config: WidgetConfig }) {
                     </button>
                   </>
                 )}
+                <button
+                  type="button"
+                  class={"acs-attach acs-emoji-btn" + (emojiOpen ? " on" : "")}
+                  onClick={() => setEmojiOpen((v) => !v)}
+                  aria-label="表情"
+                  aria-expanded={emojiOpen}
+                  title="表情"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><line x1="9" y1="9" x2="9.01" y2="9" /><line x1="15" y1="9" x2="15.01" y2="9" /></svg>
+                </button>
                 <textarea
                   ref={taRef}
                   rows={1}
@@ -1059,4 +1086,69 @@ function statusNotice(status?: string): string | null {
     case "human_handled": return "本次人工服务已结束，感谢咨询。";
     default: return null;
   }
+}
+
+/** Inline emoji panel above the composer (WeChat-style), with a 最近使用 row. */
+function EmojiPicker({ onPick, onClose }: { onPick: (e: string) => void; onClose: () => void }) {
+  const [recent, setRecent] = useState<string[]>(loadRecentEmoji);
+  const tabs = [...(recent.length ? [{ name: "最近", items: recent }] : []), ...EMOJI_GROUPS];
+  // Track the tab by name: picking the first emoji makes 「最近」 appear and shifts indexes.
+  const [tabName, setTabName] = useState(tabs[0].name);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    // The widget lives in a shadow root: use composedPath() so clicks inside it aren't
+    // mistaken for outside clicks (event.target is retargeted to the host element).
+    const onDown = (ev: Event) => {
+      const path = ev.composedPath();
+      if (ref.current && path.includes(ref.current)) return;
+      if (path.some((n) => n instanceof Element && n.classList?.contains("acs-emoji-btn"))) return;
+      onClose();
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") onClose();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, []);
+
+  const current = tabs.find((t) => t.name === tabName) || tabs[0];
+  return (
+    <div class="acs-emoji" ref={ref} role="dialog" aria-label="选择表情">
+      <div class="acs-emoji-tabs" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.name}
+            type="button"
+            role="tab"
+            aria-selected={t.name === current.name}
+            class={"acs-emoji-tab" + (t.name === current.name ? " on" : "")}
+            onClick={() => setTabName(t.name)}
+          >
+            {t.name}
+          </button>
+        ))}
+      </div>
+      <div class="acs-emoji-grid">
+        {current.items.map((e) => (
+          <button
+            key={e}
+            type="button"
+            class="acs-emoji-item"
+            aria-label={e}
+            onClick={() => {
+              onPick(e);
+              setRecent(loadRecentEmoji());
+            }}
+          >
+            {e}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }

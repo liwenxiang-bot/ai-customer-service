@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   apiError,
@@ -13,6 +13,7 @@ import {
 import { useAuth } from "../auth";
 import { usePolling } from "../usePolling";
 import { useRealtime } from "../realtime";
+import { EmojiPicker } from "../EmojiPicker";
 import { toast } from "../toast";
 import { channelLabel, fmtShort, HANDOFF_STATUS, isImeComposing, sessionStatusMeta } from "../utils";
 
@@ -95,6 +96,7 @@ export function SessionPage() {
   const [pending, setPending] = useState<Attachment[]>([]); // 已上传、待随下一条回复发送
   const [uploading, setUploading] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [emojiOpen, setEmojiOpen] = useState(false);
   const [acting, setActing] = useState(""); // 进行中的操作 key，各按钮独立显示 loading 文案
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [customerTyping, setCustomerTyping] = useState(false);
@@ -281,6 +283,20 @@ export function SessionPage() {
     }
   };
 
+  const closeEmoji = useCallback(() => setEmojiOpen(false), []);
+  const insertEmoji = (e: string) => {
+    const el = taRef.current;
+    const start = el?.selectionStart ?? text.length;
+    const end = el?.selectionEnd ?? text.length;
+    setText(text.slice(0, start) + e + text.slice(end));
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(start + e.length, start + e.length);
+      autoGrow(el);
+    });
+  };
+
   const submit = async () => {
     const c = text.trim();
     const sid = idRef.current;
@@ -299,6 +315,7 @@ export function SessionPage() {
         });
         setText("");
         setPending([]);
+        setEmojiOpen(false);
         atBottomRef.current = true; // 自己发消息始终回到底部
         taRef.current?.focus();
       }
@@ -554,6 +571,8 @@ export function SessionPage() {
         </div>
       )}
 
+      {inTakeover && emojiOpen && <EmojiPicker onPick={insertEmoji} onClose={closeEmoji} />}
+
       {/* 输入区 */}
       <div className="composer">
         {inTakeover ? (
@@ -594,6 +613,20 @@ export function SessionPage() {
                 />
               </>
             )}
+            <button
+              className={`btn btn-ghost btn-icon composer-emoji${emojiOpen ? " composer-canned-on" : ""}`}
+              onClick={() => setEmojiOpen((v) => !v)}
+              title="表情"
+              aria-label="表情"
+              aria-expanded={emojiOpen}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                <line x1="9" y1="9" x2="9.01" y2="9" />
+                <line x1="15" y1="9" x2="15.01" y2="9" />
+              </svg>
+            </button>
             {/* 发送中不 disable：双发已由 submit 的 sending 守卫兜住，保持可输入且焦点不丢 */}
             <textarea
               ref={taRef}

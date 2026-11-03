@@ -253,6 +253,18 @@ export function buildStyles(themeColor: string): string {
 .acs-attach:hover { background:var(--acs-bot-bubble); color:var(--acs-primary); }
 .acs-attach svg { width:20px; height:20px; }
 .acs-attach:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
+.acs-emoji-btn.on { color:var(--acs-primary); background:var(--acs-bot-bubble); }
+.acs-emoji { background:var(--acs-composer-bg); border-top:1px solid var(--acs-border); padding:6px 10px 8px; }
+.acs-emoji-tabs { display:flex; gap:4px; margin-bottom:6px; overflow-x:auto; }
+.acs-emoji-tab { background:none; border:none; padding:4px 10px; border-radius:999px; font-size:12px; color:var(--acs-sub);
+  cursor:pointer; white-space:nowrap; }
+.acs-emoji-tab.on { background:var(--acs-primary-soft); color:var(--acs-primary); font-weight:600; }
+.acs-emoji-tab:focus-visible, .acs-emoji-item:focus-visible { outline:2px solid var(--acs-primary-soft); outline-offset:1px; }
+.acs-emoji-grid { display:grid; grid-template-columns:repeat(8, 1fr); gap:2px; max-height:172px; overflow-y:auto;
+  overscroll-behavior:contain; }
+.acs-emoji-item { background:none; border:none; border-radius:8px; font-size:22px; line-height:1; padding:6px 0; cursor:pointer;
+  font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif; }
+.acs-emoji-item:hover { background:var(--acs-bot-bubble); }
 .acs-pending { display:flex; flex-wrap:wrap; gap:8px; padding:10px 12px 8px; background:var(--acs-composer-bg); }
 .acs-pend { position:relative; display:flex; align-items:center; gap:7px; background:var(--acs-bot-bubble); border:1px solid var(--acs-border);
   border-radius:10px; padding:5px 8px; font-size:12px; color:var(--acs-text); max-width:180px; }
