@@ -31,6 +31,7 @@ export function useRealtime(handlers: Handlers) {
       wsRef.current = ws;
 
       ws.onopen = () => {
+        if (retry > 0) hRef.current.onQueue?.(); // reconnected: catch up on missed events
         retry = 0;
         if (watchRef.current) ws.send(JSON.stringify({ type: "watch", session_id: watchRef.current }));
         pingTimer = setInterval(() => {
@@ -40,7 +41,7 @@ export function useRealtime(handlers: Handlers) {
       ws.onmessage = (e) => {
         let msg: any;
         try { msg = JSON.parse(e.data); } catch { return; }
-        if (msg.type === "queue") hRef.current.onQueue?.();
+        if (msg.type === "queue" || msg.type === "activity") hRef.current.onQueue?.();
         else if (msg.type === "customer_typing") hRef.current.onTyping?.(msg);
         else if (["customer_message", "human_message", "human_takeover", "ai_resumed", "human_ended"].includes(msg.type)) {
           hRef.current.onSession?.(msg);

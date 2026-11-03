@@ -164,7 +164,7 @@ export function App() {
       <Suspense fallback={<PageLoading full />}>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="*" element={<Navigate to="/login" state={{ from: loc.pathname }} />} />
+          <Route path="*" element={<Navigate to="/login" state={{ from: loc.pathname + loc.search }} />} />
         </Routes>
       </Suspense>
     );

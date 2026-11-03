@@ -67,3 +67,39 @@ def scope_instruction(cfg: AIConfig) -> str:
         "打招呼、致谢、简单寒暄可以简短友好地回应；与服务范围沾边、"
         "或你不确定是否相关的问题，按正常客服流程处理，不要误拒。"
     )
+
+
+# ---- Daily counters (dashboard) ----
+# Prometheus counters are per-process; the dashboard needs a shared, per-day number, so each
+# block is also tallied in a Redis hash per business day (kept ~40 days).
+
+GUARD_KINDS = ("too_long", "jailbreak", "off_topic")
+
+
+def _daily_key(day) -> str:
+    return f"guard:daily:{day.isoformat()}"
+
+
+async def count_block(kind: str) -> None:
+    from app.core.clock import app_today
+    from app.core.redis_client import get_redis
+
+    try:
+        r = get_redis()
+        key = _daily_key(app_today())
+        await r.hincrby(key, kind, 1)
+        await r.expire(key, 40 * 86400)
+    except Exception:  # noqa: BLE001 — statistics must never break a turn
+        pass
+
+
+async def blocks_today() -> dict:
+    from app.core.clock import app_today
+    from app.core.redis_client import get_redis
+
+    try:
+        raw = await get_redis().hgetall(_daily_key(app_today()))
+    except Exception:  # noqa: BLE001
+        raw = {}
+    by_kind = {k: int(raw.get(k, 0) or 0) for k in GUARD_KINDS}
+    return {"total": sum(by_kind.values()), "by_kind": by_kind}

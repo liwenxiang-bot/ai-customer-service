@@ -16,6 +16,7 @@ from app.models.conversation import Message, Session
 from app.models.enums import FeedbackKind, MessageRole, SessionStatus
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem
 from app.models.usage import UsageDaily
+from app.services.abuse_guard import blocks_today
 from app.services.usage import get_today_cost
 
 router = APIRouter(prefix="/dashboard", tags=["admin-dashboard"])
@@ -98,6 +99,7 @@ async def overview(db: AsyncSession = Depends(get_db), user: AdminUser = Depends
         "satisfaction": satisfaction,
         "feedback": {"up": up, "down": down},
         "backlog": {"pending_human": pending_human, "in_takeover": in_takeover},
+        "guard": await blocks_today(),
         "knowledge": {
             "items": knowledge_items,
             "chunks_total": chunks_total,

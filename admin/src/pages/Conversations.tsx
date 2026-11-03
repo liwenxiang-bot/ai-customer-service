@@ -10,6 +10,7 @@ import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 import { useDebounce } from "../hooks/useDebounce";
 import { usePolling } from "../hooks/usePolling";
+import { useRealtime } from "../hooks/useRealtime";
 import { fmtTime } from "../utils/time";
 import { isImeComposing } from "../utils/ime";
 import { CHANNEL_TYPE, SESSION_STATUS, statusMeta } from "../utils/status";
@@ -22,6 +23,7 @@ const sessionTag = (status: string, escalated?: boolean) => {
 
 export function Conversations() {
   const { user } = useAuth();
+  const { token } = theme.useToken();
   const { message } = AntApp.useApp();
   const editable = canEdit(user?.role);
   const [data, setData] = useState<any>({ items: [], total: 0 });
@@ -51,6 +53,14 @@ export function Conversations() {
       .finally(() => { if (seq === loadSeq.current) setLoading(false); });
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Live: queue changes / new customer activity → refresh (coalesced), instead of a stale list.
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useRealtime({
+    onQueue: () => {
+      if (liveTimer.current) return;
+      liveTimer.current = setTimeout(() => { liveTimer.current = null; load(); }, 800);
+    },
+  });
   useEffect(() => { load(); }, [params.page, params.page_size, params.channel_type, params.pending_human, params.status, params.q, params.date_from, params.date_to, params.feedback, params.degraded]);
 
   // 抽屉只记录会话 id：首拉与轮询统一由 ConversationDetail 内的 usePolling 负责
@@ -65,7 +75,13 @@ export function Conversations() {
   }, []);
 
   const columns = [
-    { title: "标题", dataIndex: "title", render: (t: string) => t || "—" },
+    {
+      title: "标题",
+      dataIndex: "title",
+      ellipsis: true,
+      render: (t: string, r: any) =>
+        t || (r.last_message?.text ? <span style={{ color: token.colorTextSecondary }}>{r.last_message.text}</span> : <span style={{ color: token.colorTextTertiary }}>（未留言，直接转人工）</span>),
+    },
     { title: "渠道", dataIndex: "channel_type", width: 110, render: (c: string) => <Tag>{statusMeta(CHANNEL_TYPE, c).label}</Tag> },
     { title: "用户", dataIndex: "end_user_id", width: 160, ellipsis: true, render: (u: string, r: any) => r.end_user_display || u },
     { title: "轮数", dataIndex: "message_count", width: 70 },
@@ -221,7 +237,7 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
                 <div style={{ whiteSpace: "pre-wrap", marginBottom: 6 }}>{m.content}</div>
                 {m.attachments?.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
-                    {m.attachments.map((a: any, i: number) =>
+                    {m.attachments.filter((a: any) => safeUrl(a?.url)).map((a: any, i: number) =>
                       a.kind === "image" || (a.content_type || "").startsWith("image/") ? (
                         <a key={i} href={a.url} target="_blank" rel="noreferrer">
                           <img src={a.url} alt={a.name} style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 6, border: `1px solid ${token.colorBorderSecondary}` }} />
@@ -313,4 +329,17 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
       </Modal>
     </Drawer>
   );
+}
+
+/** Attachment descriptors come from customers: only render http(s) or same-site URLs, never
+ *  javascript:/data: (stored XSS in the admin origin). */
+function safeUrl(url: unknown): boolean {
+  if (typeof url !== "string" || !url.trim()) return false;
+  if (url.startsWith("/") && !url.startsWith("//")) return true;
+  try {
+    const p = new URL(url, location.origin).protocol;
+    return p === "http:" || p === "https:";
+  } catch {
+    return false;
+  }
 }

@@ -219,6 +219,7 @@ async def handle_turn(
     cap = abuse_guard.too_long(ai_config, inbound.text)
     if cap:
         guard_blocks.labels("too_long").inc()
+        await abuse_guard.count_block("too_long")
         notice = f"消息有点长啦，请精简到 {cap} 字以内再发给我～"
         yield AgentEvent(kind="text", text=notice)
         yield AgentEvent(
@@ -272,6 +273,7 @@ async def handle_turn(
     # ---- Guard layer 2: obvious jailbreak / prompt-injection phrasing → canned refusal ----
     if abuse_guard.is_jailbreak(ai_config, inbound.text):
         guard_blocks.labels("jailbreak").inc()
+        await abuse_guard.count_block("jailbreak")
         log.warning("guard_jailbreak_blocked", session_id=str(session.id))
         reply = abuse_guard.off_topic_reply(ai_config)
         msg = await _persist_assistant_text(db, session, reply, [])

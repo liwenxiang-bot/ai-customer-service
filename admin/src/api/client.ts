@@ -55,17 +55,31 @@ api.interceptors.request.use((cfg) => {
 
 let refreshing: Promise<string> | null = null;
 
+/** Refresh tokens are single-use and rotate. Several tabs share them via localStorage, so
+ *  another tab may rotate the pair while this one's request is in flight: if our refresh is
+ *  rejected but storage already holds a NEWER pair, adopt it instead of logging out. */
 async function doRefresh(): Promise<string> {
   const refresh = tokenStore.refresh;
   if (!refresh) throw new Error("no refresh token");
-  const resp = await axios.post(
-    "/api/admin/auth/refresh",
-    { refresh_token: refresh },
-    tenantStore.slug ? { headers: { "X-Tenant-Slug": tenantStore.slug } } : undefined,
-  );
-  tokenStore.set(resp.data.access_token, resp.data.refresh_token);
-  return resp.data.access_token;
+  try {
+    const resp = await axios.post(
+      "/api/admin/auth/refresh",
+      { refresh_token: refresh },
+      tenantStore.slug ? { headers: { "X-Tenant-Slug": tenantStore.slug } } : undefined,
+    );
+    tokenStore.set(resp.data.access_token, resp.data.refresh_token);
+    return resp.data.access_token;
+  } catch (e) {
+    const rotatedElsewhere = tokenStore.refresh && tokenStore.refresh !== refresh && tokenStore.access;
+    if (isAuthRejection(e) && rotatedElsewhere) return tokenStore.access;
+    throw e;
+  }
 }
+
+const isAuthRejection = (e: unknown) => {
+  const status = (e as AxiosError)?.response?.status;
+  return status === 401 || status === 403;
+};
 
 api.interceptors.response.use(
   (r) => r,
@@ -73,14 +87,28 @@ api.interceptors.response.use(
     const original = error.config as AxiosRequestConfig & { _retry?: boolean };
     if (error.response?.status === 401 && original && !original._retry && tokenStore.refresh) {
       original._retry = true;
+      // Another tab already refreshed since this request was sent: just retry with that token.
+      const sent = String(original.headers?.Authorization || "");
+      const current = tokenStore.access;
+      if (current && sent && sent !== `Bearer ${current}`) {
+        original.headers = { ...original.headers, Authorization: `Bearer ${current}` };
+        return api(original);
+      }
       try {
         if (!refreshing) refreshing = doRefresh().finally(() => (refreshing = null));
         const newToken = await refreshing;
         original.headers = { ...original.headers, Authorization: `Bearer ${newToken}` };
         return api(original);
-      } catch {
-        tokenStore.clear();
-        if (location.pathname !== "/login") location.href = "/login";
+      } catch (refreshErr) {
+        // Only a definitive rejection ends the session. A network blip / 5xx / timeout while
+        // refreshing keeps the tokens so the next action can simply retry.
+        if (isAuthRejection(refreshErr)) {
+          tokenStore.clear();
+          if (location.pathname !== "/login") {
+            const back = location.pathname + location.search;
+            location.href = `/login?from=${encodeURIComponent(back)}`;
+          }
+        }
       }
     }
     return Promise.reject(error);

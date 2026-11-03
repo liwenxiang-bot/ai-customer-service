@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Checkbox, Form, Input, App as AntApp } from "antd";
 import { LockOutlined, UserOutlined, RobotOutlined, ApartmentOutlined } from "@ant-design/icons";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth";
 import { apiError, tenantStore } from "../api/client";
 
@@ -13,6 +13,7 @@ const REMEMBER_KEY = "acs_login_remember";
 export function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
+  const loc = useLocation();
   const { message } = AntApp.useApp();
   const [loading, setLoading] = useState(false);
   const [showTenant, setShowTenant] = useState(false);
@@ -53,7 +54,7 @@ export function Login() {
       } else {
         localStorage.removeItem(REMEMBER_KEY);
       }
-      nav("/dashboard");
+      nav(safeReturnPath((loc.state as any)?.from || params.get("from")), { replace: true });
     } catch (e) {
       message.error(apiError(e));
     } finally {
@@ -101,4 +102,11 @@ export function Login() {
       </div>
     </div>
   );
+}
+
+/** Only same-app relative paths (never "//evil" or absolute URLs) — avoids an open redirect. */
+function safeReturnPath(p: unknown): string {
+  return typeof p === "string" && p.startsWith("/") && !p.startsWith("//") && !p.startsWith("/login")
+    ? p
+    : "/dashboard";
 }

@@ -98,6 +98,7 @@ export function Dashboard() {
   }
   const t = data.today;
   const backlog = data.backlog || {};
+  const guard = data.guard || {};
   const kb = data.knowledge || {};
   const vecPct = kb.chunks_total ? Math.round((kb.chunks_ready / kb.chunks_total) * 100) : 100;
 
@@ -145,6 +146,11 @@ export function Dashboard() {
             <Space size="large">
               <Statistic title="待人工" value={backlog.pending_human ?? 0} valueStyle={{ color: backlog.pending_human ? "#DC2626" : undefined, fontSize: 26 }} />
               <Statistic title="接管中" value={backlog.in_takeover ?? 0} valueStyle={{ color: backlog.in_takeover ? "#16A34A" : undefined, fontSize: 26 }} />
+              <AntdTooltip
+                title={`离题 ${guard.by_kind?.off_topic ?? 0} · 越狱话术 ${guard.by_kind?.jailbreak ?? 0} · 超长 ${guard.by_kind?.too_long ?? 0}（可在「AI 配置 → 防滥用」调整）`}
+              >
+                <Statistic title="今日拦截" value={guard.total ?? 0} valueStyle={{ fontSize: 26 }} />
+              </AntdTooltip>
             </Space>
           </Card>
         </Col>
