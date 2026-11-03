@@ -16,6 +16,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
 from alembic import op
+from app.db.migration_utils import add_column_if_missing, create_index_if_missing
 
 revision = "0012"
 down_revision = "0011"
@@ -24,15 +25,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "sessions",
+    add_column_if_missing("sessions",
         sa.Column("takeover_by_id", PG_UUID(as_uuid=True), nullable=True),
     )
-    op.add_column(
-        "sessions",
+    add_column_if_missing("sessions",
         sa.Column("takeover_by_name", sa.String(length=120), nullable=True, server_default=""),
     )
-    op.create_index("ix_sessions_takeover_by_id", "sessions", ["takeover_by_id"])
+    create_index_if_missing("ix_sessions_takeover_by_id", "sessions", ["takeover_by_id"])
 
 
 def downgrade() -> None:

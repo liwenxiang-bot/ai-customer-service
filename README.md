@@ -13,7 +13,7 @@
 | **Web 对话窗口** | 可嵌入 `<script>`（右下角弹窗）+ 独立页面；WebSocket 流式打字机；亮/暗主题、Markdown、移动端适配；历史恢复、断线重连补齐、👍/👎 反馈；**域名白名单 + 多维限流 + 每日成本熔断 + 空闲超时** |
 | **企业微信渠道** | 回调验签 / 解密（WXBizMsgCrypt）、先 ACK 异步处理再主动推送、access_token 缓存 |
 | **Agent 核心** | 原生调用 LLM（无 LangChain）；上下文管理（摘要压缩 + 截断）；**带边界的工具循环**；工具失败交回模型；优雅降级 |
-| **工具** | `search_knowledge`（RAG）、`escalate_to_human`（转人工）、`get_order`（业务工具示例）；可扩展 |
+| **工具** | `search_knowledge`（RAG）、`escalate_to_human`（转人工）、`get_order`（业务工具示例，返回模拟数据，默认关闭，`ENABLE_DEMO_TOOLS=true` 开启）；可扩展 |
 | **知识库 RAG** | 分块（带重叠）→ 异步生成向量 → 全文索引；**混合检索（向量 + 关键词）+ RRF 融合 + 可选重排**；检索失败降级纯 LLM；**Embedding 迁移：全量重建 + 进度 + 降级** |
 | **LLM 抽象** | OpenAI 兼容统一接口，配置即可切换 OpenAI / DeepSeek / 通义 / GLM / 本地模型等 |
 | **运营后台** | 登录（JWT + RBAC）、概览 Dashboard、知识库 CRUD + 版本/回滚 + 批量导入 + 待审核、对话记录（工具调用/引用/trace）、AI 配置、渠道配置、转人工工单（认领/退回）、账号权限 + 操作日志 |

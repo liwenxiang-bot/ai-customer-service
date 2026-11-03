@@ -167,8 +167,10 @@ async def close_session(
     return resolved_ids
 
 
-async def operator_reply(db: AsyncSession, session: Session, content: str) -> DBMessage:
-    """Persist an operator message and push it live to the customer."""
+async def operator_reply(
+    db: AsyncSession, session: Session, content: str, attachments: list[dict] | None = None
+) -> DBMessage:
+    """Persist an operator message (text and/or attachments) and push it live to the customer."""
     # Atomic per-session seq: an operator reply can race an AI turn that started before
     # takeover but is still streaming, so a Python-level `message_count += 1` would
     # collide (duplicate seq / undercount). next_seq pushes the increment into Postgres.
@@ -183,6 +185,7 @@ async def operator_reply(db: AsyncSession, session: Session, content: str) -> DB
         seq=seq,
         role=MessageRole.ASSISTANT,
         content=content,
+        attachments=attachments or [],
         model="human",  # marks this bubble as a human agent (not the AI)
     )
     db.add(msg)
@@ -195,6 +198,7 @@ async def operator_reply(db: AsyncSession, session: Session, content: str) -> DB
             # drop pushes that don't belong to the conversation on screen.
             "session_id": str(session.id),
             "content": content,
+            "attachments": attachments or [],
             "message_id": str(msg.id),
         },
     )

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +37,7 @@ _AGENT_DIST = os.path.join(os.path.dirname(__file__), "..", "..", "agent", "dist
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("startup", env=settings.app_env)
+    settings.enforce_secure_defaults()
     try:
         await ensure_bucket()
     except Exception as exc:  # noqa: BLE001
@@ -125,7 +128,16 @@ if os.path.isdir(_AGENT_DIST):
 @app.get("/chat", response_class=HTMLResponse, tags=["chat"])
 async def standalone_chat(channel_key: str = "default"):
     """Standalone full-page chat (loads the same widget in fullscreen mode)."""
-    return HTMLResponse(_STANDALONE_HTML.replace("__CHANNEL_KEY__", channel_key))
+    # channel_key is reflected into an inline <script>: whitelist its shape (tenant slugs are
+    # [a-z0-9-], column is String(64)) and JSON-encode it with `<` escaped so it can never
+    # close the script element, even if the whitelist is widened later.
+    if not _CHANNEL_KEY_RE.fullmatch(channel_key):
+        raise HTTPException(status_code=400, detail="invalid channel_key")
+    config = json.dumps({"channelKey": channel_key, "mode": "fullscreen"}).replace("<", "\\u003c")
+    return HTMLResponse(_STANDALONE_HTML.replace("__ACS_CONFIG__", config))
+
+
+_CHANNEL_KEY_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 @app.get("/", response_class=PlainTextResponse, include_in_schema=False)
@@ -144,7 +156,7 @@ _STANDALONE_HTML = """<!doctype html>
 <body>
   <div id="acs-root"></div>
   <script>
-    window.ACS_CONFIG = { channelKey: "__CHANNEL_KEY__", mode: "fullscreen" };
+    window.ACS_CONFIG = __ACS_CONFIG__;
   </script>
   <script src="/embed/widget.js"></script>
 </body>

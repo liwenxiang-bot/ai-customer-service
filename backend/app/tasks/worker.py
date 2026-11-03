@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
+from app.config import settings
 from app.core.logging import configure_logging, get_logger, set_trace_id
 from app.db.session import session_scope
 from app.db.tenant_context import DEFAULT_TENANT_ID, tenant_scope
@@ -120,6 +121,7 @@ async def reembed_stragglers(ctx, _tenant: str | None = None) -> int:
 async def on_startup(ctx) -> None:
     configure_logging()
     set_trace_id("worker")
+    settings.enforce_secure_defaults()
     log.info("worker_started")
 
 

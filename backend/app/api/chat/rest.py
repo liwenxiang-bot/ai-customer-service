@@ -38,15 +38,8 @@ from app.services.feedback import set_feedback
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # Attachment upload constraints.
-ALLOWED_UPLOAD_TYPES = {
-    "image/png", "image/jpeg", "image/webp", "image/gif",
-    "application/pdf", "text/plain", "text/csv",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-}
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+ALLOWED_UPLOAD_TYPES = storage.ALLOWED_UPLOAD_TYPES
+MAX_UPLOAD_BYTES = storage.MAX_UPLOAD_BYTES
 
 
 def _ip(request: Request) -> str:
@@ -105,14 +98,7 @@ async def chat_upload(
         raise HTTPException(status_code=413, detail="文件过大（上限 10MB）")
 
     key = await storage.put_object(data, content_type, prefix=f"chat/{channel_key}")
-    return {
-        "url": storage.media_url(key),
-        "key": key,
-        "name": file.filename or "file",
-        "content_type": content_type,
-        "size": len(data),
-        "kind": "image" if content_type.startswith("image/") else "file",
-    }
+    return storage.attachment_descriptor(key, file.filename or "file", content_type, len(data))
 
 
 @router.get("/media/{key:path}")

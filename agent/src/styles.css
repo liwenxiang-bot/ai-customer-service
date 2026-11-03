@@ -919,6 +919,68 @@ input[type="radio"] {
   border-color: var(--primary);
   color: var(--primary);
 }
+.composer-attach {
+  padding: 7px;
+  width: 42px;
+}
+
+/* 待发送附件托盘：位于输入区上方，横向滚动 */
+.pending-tray {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 0;
+  overflow-x: auto;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.pending-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 56px;
+  max-width: 180px;
+  padding: 0 26px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 13px;
+}
+.pending-thumb {
+  height: 48px;
+  max-width: 120px;
+  margin-left: -6px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.pending-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.pending-loading {
+  padding-right: 10px;
+}
+.pending-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pending-remove:hover {
+  color: var(--text);
+  background: var(--line);
+}
+
 .composer-hint {
   flex: 1;
   text-align: center;

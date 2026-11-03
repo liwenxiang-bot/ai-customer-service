@@ -76,6 +76,30 @@ async def fetch_object(key: str) -> tuple[bytes, str]:
     return await asyncio.to_thread(_get_sync, key)
 
 
+# Upload policy shared by customer (/api/chat/upload) and operator (admin conversations) uploads.
+ALLOWED_UPLOAD_TYPES = {
+    "image/png", "image/jpeg", "image/webp", "image/gif",
+    "application/pdf", "text/plain", "text/csv",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+}
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def attachment_descriptor(key: str, name: str, content_type: str, size: int) -> dict:
+    """The attachment shape stored on messages and pushed to clients."""
+    return {
+        "url": media_url(key),
+        "key": key,
+        "name": (name or "file")[:200],
+        "content_type": content_type,
+        "size": int(size),
+        "kind": "image" if content_type.startswith("image/") else "file",
+    }
+
+
 def _ext_for(content_type: str) -> str:
     return {
         "image/png": ".png",
@@ -85,4 +109,9 @@ def _ext_for(content_type: str) -> str:
         "application/pdf": ".pdf",
         "text/csv": ".csv",
         "application/json": ".json",
+        "text/plain": ".txt",
+        "application/msword": ".doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.ms-excel": ".xls",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
     }.get(content_type, "")

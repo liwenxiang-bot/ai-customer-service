@@ -15,6 +15,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from alembic import op
+from app.db.migration_utils import add_column_if_missing
 
 revision = "0016"
 down_revision = "0015"
@@ -23,13 +24,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("knowledge_versions", sa.Column("status", sa.String(32), nullable=True))
-    op.add_column(
-        "knowledge_versions",
+    add_column_if_missing("knowledge_versions", sa.Column("status", sa.String(32), nullable=True))
+    add_column_if_missing("knowledge_versions",
         sa.Column("effective_from", sa.DateTime(timezone=True), nullable=True),
     )
-    op.add_column(
-        "knowledge_versions",
+    add_column_if_missing("knowledge_versions",
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
     )
 

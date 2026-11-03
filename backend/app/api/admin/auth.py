@@ -8,6 +8,8 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.logging import get_logger
+from app.core.ratelimit import clear_login_failures, login_locked_for, record_login_failure
 from app.core.security import decode_token
 from app.db.session import get_db, session_scope
 from app.db.tenant_context import set_current_tenant
@@ -17,6 +19,7 @@ from app.services.auth import AuthError, authenticate, issue_tokens, revoke_all,
 from app.services.tenant import tenant_for_admin_email
 
 router = APIRouter(prefix="/auth", tags=["admin-auth"])
+log = get_logger("admin.auth")
 
 
 class LoginIn(BaseModel):
@@ -26,6 +29,14 @@ class LoginIn(BaseModel):
 
 @router.post("/login")
 async def login(body: LoginIn, request: Request, db: AsyncSession = Depends(get_db)):
+    ip = _ip(request)
+    wait = await login_locked_for(body.email, ip)
+    if wait:
+        raise HTTPException(
+            status_code=429,
+            detail=f"登录失败次数过多，请 {max(wait // 60, 1)} 分钟后再试",
+            headers={"Retry-After": str(wait)},
+        )
     # No explicit tenant slug? Route by email (only when it maps to exactly one tenant) so the
     # slug field stays optional. Resolve in a separate session, then pin before the auth query
     # (the per-transaction GUC reads the context at transaction start).
@@ -37,9 +48,12 @@ async def login(body: LoginIn, request: Request, db: AsyncSession = Depends(get_
     try:
         user = await authenticate(db, body.email, body.password)
     except AuthError as exc:
+        await record_login_failure(body.email, ip)
+        log.warning("auth.login_failed", email=body.email, ip=ip)
         raise HTTPException(status_code=401, detail=str(exc))
+    await clear_login_failures(body.email)
     tokens = await issue_tokens(db, user)
-    await write_audit(db, user, "auth.login", "admin_user", str(user.id), ip=_ip(request))
+    await write_audit(db, user, "auth.login", "admin_user", str(user.id), ip=ip)
     await db.commit()
     return tokens
 
