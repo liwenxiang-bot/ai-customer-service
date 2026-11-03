@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node scripts/markdown-security.test.mjs"
+    "test": "node scripts/markdown-security.test.mjs && node scripts/no-global-leak.test.mjs"
   },
   "dependencies": {
     "marked": "^15.0.4",
