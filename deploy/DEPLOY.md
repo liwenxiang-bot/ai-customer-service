@@ -92,8 +92,9 @@ make release
 
 ## 三、`make release` 做了什么
 
-1. 记录当前版本到 `.last_release_commit`(回滚锚点)
-2. `pg_dump` 备份数据库到 `backups/`
+1. 记录回滚锚点：代码版本 → `.last_release_commit`，数据库迁移版本 → `.last_release_db_rev`
+2. `pg_dump` 备份数据库到 `backups/`，并**校验备份完整**（gzip 完整 + pg_dump 结束标记），不通过直接中止、不更新代码；
+   路径记入 `.last_release_backup`；按 `KEEP_BACKUPS`（默认 14）轮转；配置了 `BACKUP_UPLOAD_CMD` 时同步上传异地
 3. `git pull --ff-only`
 4. `docker compose --profile app up -d --build`(migrate 容器自动跑 alembic 迁移)
 5. 轮询 backend `/health/live` 直到健康(~60s 超时则报错并提示看日志)
@@ -101,22 +102,27 @@ make release
 
 任一步失败即停下,不会带着半成品继续。
 
+```bash
+# 例：保留 30 份并同步到对象存储
+KEEP_BACKUPS=30 BACKUP_UPLOAD_CMD="ossutil cp -f" make release
+```
+
 ---
 
 ## 四、回滚
 
 ```bash
-# 首次那次:用 ① 记下的旧版本号
-git reset --hard <旧版本号> && make stack-up
+bash deploy/rollback.sh               # 推荐：代码回退 + 数据库结构降级到发版前版本，数据保留
+bash deploy/rollback.sh --restore-db  # 用发版前备份整库恢复（发版后产生的新数据会丢失）
+```
 
-# 以后:直接用锚点文件
-git reset --hard $(cat .last_release_commit) && make stack-up
-```
-历次迁移(含最新的坐席归属列 `0012`,加的是可空列)均向后兼容,**代码回滚无需动数据库**——旧代码忽略新列即可。仅当数据真出问题才用备份恢复:
-```bash
-gunzip -c backups/acs_YYYY-MM-DD_HHMMSS.sql.gz \
-  | docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
-```
+> ⚠️ 不要只做 `git reset --hard`：新版本若带数据库迁移，旧代码的 migrate 容器不认识库里的新版本号，
+> `alembic upgrade head` 直接失败，backend/worker 起不来。`rollback.sh` 会先用**当前镜像**把库结构
+> 降级回 `.last_release_db_rev`，再回退代码。`--restore-db` 只在迁移本身把数据弄坏时使用，执行前会先
+> 额外备份一次当前库（`backups/acs_before_rollback_*`）。两种方式都需要手动输入 `yes` 确认。
+
+首次通过 `make release` 发版之前没有锚点文件，此时只能手动：`git reset --hard <发版前记下的版本号> && make stack-up`
+（确认这次发版没有新增迁移；有的话先 `docker compose --profile app run --rm --no-deps migrate alembic downgrade <旧版本>`）。
 
 ---
 
