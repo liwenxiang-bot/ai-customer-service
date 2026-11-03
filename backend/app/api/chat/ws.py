@@ -205,11 +205,21 @@ async def chat_ws(
 
     # Background task that relays operator (takeover) messages to this socket.
     push_task: asyncio.Task | None = None
+    push_sid = ""
 
     def ensure_push_listener(sid: str) -> None:
-        nonlocal push_task
-        if sid and push_task is None:
-            push_task = asyncio.create_task(_push_listener(send, sid))
+        # Follow the connection's *current* session: after "end session" the widget starts a
+        # new one on the same socket, and operator pushes for it must still arrive. Also
+        # restart a listener that exited (e.g. its Redis connection was lost for good).
+        nonlocal push_task, push_sid
+        if not sid:
+            return
+        if push_task is not None and push_sid == sid and not push_task.done():
+            return
+        if push_task is not None:
+            push_task.cancel()
+        push_sid = sid
+        push_task = asyncio.create_task(_push_listener(send, sid))
 
     if session_id:
         ensure_push_listener(session_id)
@@ -452,33 +462,41 @@ async def chat_ws(
                 task.cancel()
 
 
+PUSH_RECONNECT_MAX_SEC = 10.0
+
+
 async def _push_listener(send, session_id: str) -> None:
     """Subscribe to the session's Redis channel and forward operator pushes to the WS.
 
     `send` is the connection's locked writer (not the raw socket) so these pushes can't
     interleave with the main loop's frames.
     """
-    pubsub = get_redis().pubsub()
     channel = push_channel(session_id)
-    try:
-        await pubsub.subscribe(channel)
-        async for message in pubsub.listen():
-            if message.get("type") != "message":
-                continue
-            try:
-                await send(json.loads(message["data"]))
-            except Exception:  # noqa: BLE001 — socket gone
-                break
-    except asyncio.CancelledError:
-        pass
-    except Exception as exc:  # noqa: BLE001
-        log.debug("push_listener_error", error=str(exc))
-    finally:
+    backoff = 1.0
+    while True:
+        pubsub = get_redis().pubsub()
         try:
-            await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
-        except Exception:  # noqa: BLE001
-            pass
+            await pubsub.subscribe(channel)
+            backoff = 1.0
+            async for message in pubsub.listen():
+                if message.get("type") != "message":
+                    continue
+                try:
+                    await send(json.loads(message["data"]))
+                except Exception:  # noqa: BLE001 — socket gone: stop for good
+                    return
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001 — Redis hiccup: resubscribe, don't go silent
+            log.warning("push_listener_reconnect", session_id=session_id, error=str(exc))
+        finally:
+            try:
+                await pubsub.unsubscribe(channel)
+                await pubsub.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+        await asyncio.sleep(backoff)
+        backoff = min(backoff * 2, PUSH_RECONNECT_MAX_SEC)
 
 
 async def _run_turn(send, inbound: InboundMessage, state: dict, client_msg_id: str = "") -> str:
