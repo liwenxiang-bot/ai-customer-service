@@ -60,8 +60,12 @@ jobs:
           cache-dependency-path: "**/pnpm-lock.yaml"
       - name: Build widget
         run: cd widget && pnpm install --no-frozen-lockfile && pnpm build
+      - name: Widget markdown XSS regression
+        run: cd widget && pnpm test
       - name: Build admin
         run: cd admin && pnpm install --no-frozen-lockfile && pnpm build
+      - name: Build agent console
+        run: cd agent && pnpm install --no-frozen-lockfile && pnpm build
 
   docker:
     runs-on: ubuntu-latest
