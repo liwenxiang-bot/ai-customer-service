@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.channels.base import InboundMessage
 from app.core import storage
+from app.core.net import client_ip
 from app.core.ratelimit import check_chat_limits
 from app.db.session import get_db
 from app.models.conversation import Message as DBMessage
@@ -43,8 +44,7 @@ MAX_UPLOAD_BYTES = storage.MAX_UPLOAD_BYTES
 
 
 def _ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for")
-    return xff.split(",")[0].strip() if xff else (request.client.host if request.client else "")
+    return client_ip(request)
 
 
 @router.get("/config")

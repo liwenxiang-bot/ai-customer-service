@@ -18,6 +18,7 @@ from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_admin, require_operator
+from app.core.net import client_ip
 from app.core.strings import escape_like
 from app.db.session import get_db
 from app.models.admin import AdminUser
@@ -47,7 +48,7 @@ StatusLiteral = Literal["draft", "published", "archived"]
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else ""
+    return client_ip(request)
 
 
 _escape_like = escape_like  # shared with canned/conversations search (app.core.strings)

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.core.logging import get_logger
+from app.core.net import client_ip
 from app.core.ratelimit import clear_login_failures, login_locked_for, record_login_failure
 from app.core.security import decode_token
 from app.db.session import get_db, session_scope
@@ -101,5 +102,4 @@ async def logout(user: AdminUser = Depends(get_current_user), db: AsyncSession =
 
 
 def _ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for")
-    return xff.split(",")[0].strip() if xff else (request.client.host if request.client else "")
+    return client_ip(request)

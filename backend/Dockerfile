@@ -24,6 +24,10 @@ FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
+# uvicorn only honours X-Forwarded-For from these peers (host nginx/Caddy reaches the
+# container via the docker gateway; the admin nginx container is on the compose network).
+# Override in .env if your proxy sits elsewhere.
+ENV FORWARDED_ALLOW_IPS="127.0.0.1,172.16.0.0/12,192.168.0.0/16,10.0.0.0/8"
 WORKDIR /app
 
 RUN apt-get update \

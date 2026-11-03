@@ -35,6 +35,7 @@ from sqlalchemy import select
 from app.channels.base import InboundMessage
 from app.channels.web import web_adapter
 from app.core.logging import get_logger
+from app.core.net import client_ip
 from app.core.ratelimit import check_chat_limits
 from app.core.redis_client import get_redis
 from app.db.session import session_scope
@@ -138,10 +139,7 @@ async def _client_msg_seen(session_id: str, client_msg_id: str) -> bool:
 
 
 def _client_ip(ws: WebSocket) -> str:
-    xff = ws.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return ws.client.host if ws.client else ""
+    return client_ip(ws)
 
 
 async def _reject_ws(websocket: WebSocket) -> None:

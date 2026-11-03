@@ -133,3 +133,36 @@ def test_get_order_stub_not_registered_by_default(monkeypatch):
     monkeypatch.setattr(settings, "enable_demo_tools", True)
     names = set(build_default_registry().names())
     assert "get_order" in names
+
+
+# ---- client IP cannot be spoofed via X-Forwarded-For ----
+
+
+async def test_direct_client_cannot_spoof_ip_with_xff():
+    """Without a trusted proxy in front, a client-sent X-Forwarded-For is ignored."""
+    from fastapi import Request
+
+    from app.api.chat.rest import _ip
+
+    scope = {"type": "http", "headers": [(b"x-forwarded-for", b"6.6.6.6")], "client": ("203.0.113.9", 5000)}
+    assert _ip(Request(scope)) == "203.0.113.9"
+
+
+async def test_trusted_proxy_chain_resolves_real_client():
+    """Deployment contract: behind nginx (docker gateway, trusted CIDR) uvicorn resolves the
+    right-most untrusted hop, so a forged left-most XFF entry is ignored."""
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    seen = {}
+
+    async def inner(scope, receive, send):
+        seen["client"] = scope["client"][0]
+
+    mw = ProxyHeadersMiddleware(inner, trusted_hosts="127.0.0.1,172.16.0.0/12")
+    scope = {
+        "type": "http",
+        "client": ("172.18.0.1", 40000),
+        "headers": [(b"x-forwarded-for", b"6.6.6.6, 203.0.113.9")],
+    }
+    await mw(scope, None, None)
+    assert seen["client"] == "203.0.113.9"
