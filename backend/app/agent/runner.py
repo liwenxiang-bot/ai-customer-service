@@ -21,7 +21,7 @@ from app.agent.events import AgentEvent
 from app.agent.tools.base import ToolContext, ToolRegistry
 from app.config import settings
 from app.core.logging import get_logger
-from app.core.metrics import llm_calls, llm_tokens
+from app.core.metrics import guard_blocks, llm_calls, llm_tokens
 from app.core.metrics import tool_calls as tool_calls_metric
 from app.llm.base import LLMProvider
 from app.llm.pricing import estimate_cost
@@ -30,6 +30,7 @@ from app.models.config import AIConfig
 from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
 from app.models.enums import MessageRole
+from app.services.abuse_guard import guard_on, off_topic_reply
 from app.services.usage import record_turn_cost
 
 log = get_logger("agent.runner")
@@ -69,7 +70,10 @@ class AgentRunner:
         has_image_input = messages_have_image_parts(messages)
         image_tools_disabled = False
         vision_fallback_used = False
-        tool_schemas = self.registry.schemas()
+        tool_schemas = [
+            t for t in self.registry.schemas()
+            if t["function"]["name"] != "decline_off_topic" or guard_on(self.ai_config)
+        ]
         ctx = ToolContext(db=db, session=session, ai_config=self.ai_config, trace_id=trace_id)
 
         usage = Usage()
@@ -197,6 +201,12 @@ class AgentRunner:
                     kind="tool_status", tool=tc.name, status="done" if ok else "failed"
                 )
 
+            if ctx.off_topic:
+                # Out of scope: canned refusal, no further LLM call for this turn.
+                guard_blocks.labels(f"off_topic:{ctx.off_topic}").inc()
+                final_text = off_topic_reply(self.ai_config)
+                yield AgentEvent(kind="text", text=final_text)
+                break
             if ctx.citations:
                 yield AgentEvent(kind="citations", citations=list(ctx.citations))
             if ctx.escalation:

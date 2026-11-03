@@ -14,6 +14,7 @@ llm_calls = Counter("acs_llm_calls_total", "LLM calls", ["model", "outcome"])
 llm_tokens = Counter("acs_llm_tokens_total", "LLM tokens", ["model", "kind"])
 tool_calls = Counter("acs_tool_calls_total", "Tool invocations", ["tool", "status"])
 escalations = Counter("acs_escalations_total", "Human handoffs", ["reason"])
+guard_blocks = Counter("acs_guard_blocks_total", "Abuse/off-topic guard refusals", ["kind"])
 # tenant is the tenant_id UUID — one series per tenant per outcome, bounded by the
 # (small) tenant count, so cardinality stays safe.
 retrieval_calls = Counter(
