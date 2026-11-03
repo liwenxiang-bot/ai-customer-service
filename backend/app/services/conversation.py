@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,12 +24,13 @@ from app.agent.events import AgentEvent
 from app.agent.runner import AgentRunner
 from app.agent.tools import default_registry
 from app.channels.base import InboundMessage
+from app.config import settings
 from app.core.logging import get_logger, set_trace_id
 from app.llm.factory import get_provider
 from app.models.config import ChannelConfig
 from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
-from app.models.enums import MessageRole, SessionStatus
+from app.models.enums import ChannelType, MessageRole, SessionStatus
 from app.services import semantic_cache
 from app.services.ai_config import get_active_ai_config, to_llm_settings
 from app.services.content_safety import check_input
@@ -68,6 +69,27 @@ async def get_or_create_session(db: AsyncSession, inbound: InboundMessage) -> tu
         if existing is None:
             log.warning("session_owner_mismatch", session_id=inbound.session_id,
                         channel=inbound.channel_type)
+    elif inbound.end_user_id and inbound.channel_type != ChannelType.WEB:
+        # Channels without a client-held session id (WeChat): continue the user's latest open
+        # conversation within the idle window, instead of starting a new session — and losing
+        # all context — on every single message.
+        cutoff = datetime.now(UTC) - timedelta(minutes=settings.session_idle_timeout_minutes)
+        recent = (
+            await db.execute(
+                select(Session)
+                .where(
+                    Session.channel_type == inbound.channel_type,
+                    Session.channel_key == inbound.channel_key,
+                    Session.end_user_id == inbound.end_user_id,
+                    Session.status != SessionStatus.CLOSED,
+                    Session.last_activity_at >= cutoff,
+                )
+                .order_by(Session.last_activity_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if recent is not None:
+            return recent, False
 
     session = Session(
         channel_type=inbound.channel_type,
