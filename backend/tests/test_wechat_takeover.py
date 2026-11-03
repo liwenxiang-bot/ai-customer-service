@@ -208,3 +208,30 @@ async def test_handle_turn_is_silent_during_takeover(monkeypatch, real_db):
     s = await real_db.get(Session, uuid.UUID(inbound.session_id))
     await real_db.delete(s)
     await real_db.commit()
+
+
+# ---- workbench list: last message preview (one query per page) ----
+
+
+async def test_conversation_list_has_last_message_preview(real_db):
+    from datetime import UTC, datetime
+
+    from app.api.admin.conversations import _last_message_previews
+    from app.models.conversation import Message, Session
+    from app.models.enums import MessageRole, SessionStatus
+
+    s = Session(channel_type="web", channel_key="default", end_user_id=f"u-{uuid.uuid4().hex[:8]}",
+                status=SessionStatus.ESCALATED, last_activity_at=datetime.now(UTC))
+    real_db.add(s)
+    await real_db.flush()
+    real_db.add_all([
+        Message(tenant_id=s.tenant_id, session_id=s.id, seq=1, role=MessageRole.USER, content="退货流程？"),
+        Message(tenant_id=s.tenant_id, session_id=s.id, seq=2, role=MessageRole.ASSISTANT, model="human",
+                content="您好，\n请提供订单号"),
+        Message(tenant_id=s.tenant_id, session_id=s.id, seq=3, role=MessageRole.USER, content="",
+                attachments=[{"kind": "image", "url": "/x.png"}]),
+    ])
+    await real_db.flush()
+    previews = await _last_message_previews(real_db, [s.id])
+    assert previews[s.id] == {"from": "customer", "text": "[图片]"}
+    await real_db.rollback()

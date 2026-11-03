@@ -35,7 +35,7 @@ from app.models.enums import ChannelType, MessageRole, SessionStatus
 from app.services import abuse_guard, semantic_cache
 from app.services.ai_config import get_active_ai_config, to_llm_settings
 from app.services.content_safety import check_input
-from app.services.takeover import is_takeover, publish
+from app.services.takeover import is_takeover, publish, publish_admin_event
 from app.services.usage import is_cost_capped, mark_escalation, mark_new_conversation
 
 log = get_logger("conversation")
@@ -244,6 +244,10 @@ async def handle_turn(
     # on the next transaction's BEGIN (db.session._pin_tenant_on_begin).
     inbound.session_id = str(session.id)
     await db.commit()
+    if session.status in (SessionStatus.ESCALATED, SessionStatus.HUMAN_TAKEOVER):
+        # Sessions in the operators' queue: tell every workbench there's new activity
+        # (unread marker + refresh) without waiting for its polling interval.
+        await publish_admin_event({"type": "activity", "session_id": str(session.id)})
 
     # ---- Human takeover: the AI stays silent on EVERY channel ----
     # (The WebSocket path checks this before calling us; REST and WeChat rely on this gate.)
