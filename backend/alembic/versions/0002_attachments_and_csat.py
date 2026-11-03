@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
 from alembic import op
+from app.db.migration_utils import add_column_if_missing
 
 revision = "0002"
 down_revision = "0001"
@@ -18,13 +19,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "messages",
+    add_column_if_missing("messages",
         sa.Column("attachments", JSONB, nullable=False, server_default="[]"),
     )
-    op.add_column("sessions", sa.Column("satisfaction_rating", sa.Integer(), nullable=True))
-    op.add_column(
-        "sessions",
+    add_column_if_missing("sessions", sa.Column("satisfaction_rating", sa.Integer(), nullable=True))
+    add_column_if_missing("sessions",
         sa.Column("satisfaction_note", sa.Text(), nullable=False, server_default=""),
     )
 

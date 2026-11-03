@@ -9,6 +9,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from alembic import op
+from app.db.migration_utils import add_column_if_missing
 
 revision = "0008"
 down_revision = "0007"
@@ -17,8 +18,7 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "admin_users",
+    add_column_if_missing("admin_users",
         sa.Column("is_super_admin", sa.Boolean(), nullable=False, server_default="false"),
     )
     # Promote the existing default-tenant admin(s) so there is a super-admin out of the box.
