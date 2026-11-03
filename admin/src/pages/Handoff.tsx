@@ -5,6 +5,7 @@ import { handoffApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit, agentSessionLink } from "../auth";
 import { CHANNEL_TYPE, HANDOFF_REASON, HANDOFF_STATUS, statusMeta } from "../utils/status";
+import { useRealtime } from "../hooks/useRealtime";
 
 const PRIO: any = {
   urgent: { c: "red", t: "紧急" }, high: { c: "orange", t: "高" }, normal: { c: "blue", t: "普通" }, low: { c: "default", t: "低" },
@@ -33,6 +34,13 @@ export function Handoff() {
       .finally(() => { if (seq === loadSeq.current) setLoading(false); });
   };
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  const liveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useRealtime({
+    onQueue: () => {
+      if (liveTimer.current) return;
+      liveTimer.current = setTimeout(() => { liveTimer.current = null; load(); }, 800);
+    },
+  });
   useEffect(() => { load(); }, [params.status, params.priority, params.mine, params.page, params.page_size]);
 
   const act = async (fn: () => Promise<any>, ok: string) => {

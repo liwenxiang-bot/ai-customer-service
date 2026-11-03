@@ -3,14 +3,18 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { ConfigProvider, App as AntApp, theme as antdTheme } from "antd";
 import zhCN from "antd/locale/zh_CN";
+import dayjs from "dayjs";
+import "dayjs/locale/zh-cn";
 import "antd/dist/reset.css";
 import { AuthProvider } from "./auth";
 import { ThemeModeCtx } from "./theme";
 import { App } from "./App";
 import "./index.css";
 
+dayjs.locale("zh-cn"); // 日期控件周起始/星期与 antd 中文语言包一致
+
 const FONT =
-  '"IBM Plex Sans", "Source Han Sans SC", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif';
+  'system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif';
 
 function Root() {
   const [dark, setDark] = useState(() => localStorage.getItem("acs_admin_dark") === "1");

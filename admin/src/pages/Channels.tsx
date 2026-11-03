@@ -23,9 +23,33 @@ export function Channels() {
 function useChannelForm(get: () => Promise<any>, mapIn: (d: any) => any) {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const load = async () => form.setFieldsValue(mapIn(await get()));
+  // A failed load leaves the form empty — saving it would overwrite the real config with
+  // blanks. Track the error so the tab disables the form and offers a retry instead.
+  const [loadError, setLoadError] = useState("");
+  const load = async () => {
+    try {
+      form.setFieldsValue(mapIn(await get()));
+      setLoadError("");
+    } catch (e) {
+      setLoadError(apiError(e));
+    }
+  };
   useEffect(() => { load(); }, []);
-  return { form, loading, setLoading, load };
+  return { form, loading, setLoading, load, loadError };
+}
+
+function LoadError({ err, onRetry }: { err: string; onRetry: () => void }) {
+  if (!err) return null;
+  return (
+    <Alert
+      type="error"
+      showIcon
+      style={{ marginBottom: 16, maxWidth: 720 }}
+      message="配置加载失败，为避免用空白内容覆盖现有配置，已暂停编辑"
+      description={err}
+      action={<Button size="small" onClick={onRetry}>重试</Button>}
+    />
+  );
 }
 
 function WebTab() {
@@ -34,7 +58,7 @@ function WebTab() {
   const { message } = AntApp.useApp();
   // channelKey + public base URL drive the embed snippet (both tenant-specific).
   const [embed, setEmbed] = useState({ key: "default", base: location.origin });
-  const { form, loading, setLoading } = useChannelForm(channelApi.getWeb, (d) => {
+  const { form, loading, setLoading, load, loadError } = useChannelForm(channelApi.getWeb, (d) => {
     setEmbed({ key: d.key || "default", base: (d.app_base_url || location.origin).replace(/\/$/, "") });
     return {
       enabled: d.enabled,
@@ -71,7 +95,8 @@ function WebTab() {
 
   return (
     <Card>
-      <Form form={form} layout="vertical" disabled={!admin} style={{ maxWidth: 720 }}>
+      <LoadError err={loadError} onRetry={load} />
+      <Form form={form} layout="vertical" disabled={!admin || !!loadError} style={{ maxWidth: 720 }}>
         <Form.Item name="enabled" label="启用 Web 渠道" valuePropName="checked"><Switch /></Form.Item>
         <Divider orientation="left">品牌化</Divider>
         <Form.Item name="brand_name" label="品牌名称"><Input /></Form.Item>
@@ -119,7 +144,7 @@ function NotifyTab() {
   const { user } = useAuth();
   const admin = isAdmin(user?.role);
   const { message } = AntApp.useApp();
-  const { form, loading, setLoading } = useChannelForm(channelApi.getNotify, (d) => ({ enabled: d.enabled, ...d.settings }));
+  const { form, loading, setLoading, load, loadError } = useChannelForm(channelApi.getNotify, (d) => ({ enabled: d.enabled, ...d.settings }));
   const save = async () => {
     const v = await form.validateFields();
     setLoading(true);
@@ -128,7 +153,8 @@ function NotifyTab() {
   };
   return (
     <Card>
-      <Form form={form} layout="vertical" disabled={!admin} style={{ maxWidth: 640 }}>
+      <LoadError err={loadError} onRetry={load} />
+      <Form form={form} layout="vertical" disabled={!admin || !!loadError} style={{ maxWidth: 640 }}>
         <Alert type="info" showIcon style={{ marginBottom: 16 }} message="转人工时通过以下方式通知运营者，至少配置一种。" />
         <Form.Item name="enabled" label="启用通知" valuePropName="checked"><Switch /></Form.Item>
         <Divider orientation="left">企业微信群机器人</Divider>
@@ -155,7 +181,7 @@ function WeChatTab() {
   const { user } = useAuth();
   const admin = isAdmin(user?.role);
   const { message } = AntApp.useApp();
-  const { form, loading, setLoading } = useChannelForm(channelApi.getWeChat, (d) => ({ enabled: d.enabled, ...d.settings, secret: "", secret_enc: undefined }));
+  const { form, loading, setLoading, load, loadError } = useChannelForm(channelApi.getWeChat, (d) => ({ enabled: d.enabled, ...d.settings, secret: "", secret_enc: undefined }));
   const save = async () => {
     const v = await form.validateFields();
     setLoading(true);
@@ -164,7 +190,8 @@ function WeChatTab() {
   };
   return (
     <Card>
-      <Form form={form} layout="vertical" disabled={!admin} style={{ maxWidth: 640 }}>
+      <LoadError err={loadError} onRetry={load} />
+      <Form form={form} layout="vertical" disabled={!admin || !!loadError} style={{ maxWidth: 640 }}>
         <Alert type="info" showIcon style={{ marginBottom: 16 }}
           message="配置企业微信自建应用的回调参数。回调 URL："
           description={<code>{location.origin}/api/wechat/callback</code>} />

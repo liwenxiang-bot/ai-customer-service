@@ -30,7 +30,7 @@ from app.models.config import AIConfig
 from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
 from app.models.enums import MessageRole
-from app.services.abuse_guard import guard_on, off_topic_reply
+from app.services.abuse_guard import count_block, guard_on, off_topic_reply
 from app.services.usage import record_turn_cost
 
 log = get_logger("agent.runner")
@@ -219,6 +219,7 @@ class AgentRunner:
             if ctx.off_topic:
                 # Out of scope: canned refusal, no further LLM call for this turn.
                 guard_blocks.labels(f"off_topic:{ctx.off_topic}").inc()
+                await count_block("off_topic")
                 final_text = off_topic_reply(self.ai_config)
                 yield AgentEvent(kind="text", text=final_text)
                 break
