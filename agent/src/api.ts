@@ -31,32 +31,66 @@ api.interceptors.request.use((cfg) => {
 
 let refreshing: Promise<string> | null = null;
 
+/** Shared with other tabs via localStorage: if our (single-use) refresh is rejected but
+ *  storage already holds a newer pair, another tab rotated it — adopt that instead. */
 async function doRefresh(): Promise<string> {
   const refresh = tokenStore.refresh;
   if (!refresh) throw new Error("no refresh token");
-  const resp = await axios.post("/api/admin/auth/refresh", { refresh_token: refresh });
-  tokenStore.set(resp.data.access_token, resp.data.refresh_token);
-  return resp.data.access_token;
+  try {
+    const resp = await axios.post("/api/admin/auth/refresh", { refresh_token: refresh });
+    tokenStore.set(resp.data.access_token, resp.data.refresh_token);
+    return resp.data.access_token;
+  } catch (e) {
+    if (isAuthRejection(e) && tokenStore.refresh && tokenStore.refresh !== refresh && tokenStore.access) {
+      return tokenStore.access;
+    }
+    throw e;
+  }
+}
+
+const isAuthRejection = (e: unknown) => {
+  const status = (e as AxiosError)?.response?.status;
+  return status === 401 || status === 403;
+};
+
+/** The session is over: clear tokens AND tell the auth context (via an event) so `user`
+ *  resets — otherwise the login page sees a stale user, bounces straight back into the app,
+ *  and every request 401s in a loop. */
+export const AUTH_EXPIRED_EVENT = "acs:auth-expired";
+function endSession() {
+  tokenStore.clear();
+  window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  if (!location.hash.startsWith("#/login")) location.hash = "#/login"; // HashRouter
 }
 
 api.interceptors.response.use(
   (r) => r,
   async (error: AxiosError) => {
     const original = error.config as AxiosRequestConfig & { _retry?: boolean };
-    if (error.response?.status === 401 && original && !original._retry && tokenStore.refresh) {
-      original._retry = true;
-      try {
-        if (!refreshing) refreshing = doRefresh().finally(() => (refreshing = null));
-        const newToken = await refreshing;
-        original.headers = { ...original.headers, Authorization: `Bearer ${newToken}` };
-        return api(original);
-      } catch {
-        tokenStore.clear();
-        // HashRouter：登录页在 hash 路由里
-        if (!location.hash.startsWith("#/login")) location.hash = "#/login";
-      }
+    if (error.response?.status !== 401 || !original) return Promise.reject(error);
+    if (!tokenStore.refresh) {
+      endSession(); // nothing to refresh with
+      return Promise.reject(error);
     }
-    return Promise.reject(error);
+    if (original._retry) return Promise.reject(error);
+    original._retry = true;
+    const sent = String(original.headers?.Authorization || "");
+    const current = tokenStore.access;
+    if (current && sent && sent !== `Bearer ${current}`) {
+      // another tab refreshed while this request was in flight
+      original.headers = { ...original.headers, Authorization: `Bearer ${current}` };
+      return api(original);
+    }
+    try {
+      if (!refreshing) refreshing = doRefresh().finally(() => (refreshing = null));
+      const newToken = await refreshing;
+      original.headers = { ...original.headers, Authorization: `Bearer ${newToken}` };
+      return api(original);
+    } catch (refreshErr) {
+      // Only a definitive rejection ends the session; a network blip / 5xx keeps the tokens.
+      if (isAuthRejection(refreshErr)) endSession();
+      return Promise.reject(error);
+    }
   }
 );
 

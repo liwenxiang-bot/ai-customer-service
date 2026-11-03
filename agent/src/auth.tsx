@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { authApi, tokenStore } from "./api";
+import { AUTH_EXPIRED_EVENT, authApi, tokenStore } from "./api";
 
 export interface User {
   id: string;
@@ -20,6 +20,14 @@ const Ctx = createContext<AuthCtx>(null as any);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // api.ts announces an ended session (refresh rejected / no tokens left): drop the user so
+  // routing goes to the login page and stays there.
+  useEffect(() => {
+    const onExpired = () => setUser(null);
+    window.addEventListener(AUTH_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onExpired);
+  }, []);
 
   useEffect(() => {
     (async () => {
