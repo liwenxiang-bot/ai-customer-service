@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +37,7 @@ async def list_users(db: AsyncSession = Depends(get_db), user: AdminUser = Depen
 class UserCreate(BaseModel):
     email: EmailStr
     name: str = ""
-    password: str
+    password: str = Field(min_length=8, max_length=128)
     role: str = AdminRole.OPERATOR
 
 
@@ -64,7 +64,7 @@ class UserUpdate(BaseModel):
     name: str | None = None
     role: str | None = None
     is_active: bool | None = None
-    password: str | None = None
+    password: str | None = Field(None, min_length=8, max_length=128)
 
 
 @router.put("/users/{user_id}")
@@ -77,6 +77,8 @@ async def update_user(
     data = body.model_dump(exclude_unset=True)
     if target.id == user.id and data.get("is_active") is False:
         raise HTTPException(status_code=400, detail="不能停用当前登录账号")
+    if "role" in data and data["role"] not in (AdminRole.ADMIN, AdminRole.OPERATOR, AdminRole.READONLY):
+        raise HTTPException(status_code=400, detail="非法角色")
     if "password" in data and data["password"]:
         target.password_hash = hash_password(data.pop("password"))
     else:

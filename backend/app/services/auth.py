@@ -12,6 +12,7 @@ from app.config import settings
 from app.core.security import (
     create_access_token,
     create_refresh_token,
+    hash_password,
     verify_password,
 )
 from app.models.admin import AdminUser, RefreshToken
@@ -21,11 +22,18 @@ class AuthError(Exception):
     pass
 
 
+_DUMMY_HASH = hash_password("timing-equalizer-not-a-real-password")
+
+
 async def authenticate(db: AsyncSession, email: str, password: str) -> AdminUser:
     user = (
         await db.execute(select(AdminUser).where(AdminUser.email == email.lower().strip()))
     ).scalar_one_or_none()
-    if not user or not user.is_active or not verify_password(password, user.password_hash):
+    # Always run one bcrypt check so "unknown email" isn't measurably faster than "wrong
+    # password" (account enumeration via response time).
+    hashed = user.password_hash if user else _DUMMY_HASH
+    ok = verify_password(password, hashed)
+    if not user or not user.is_active or not ok:
         raise AuthError("邮箱或密码错误")
     user.last_login_at = datetime.now(UTC)
     return user

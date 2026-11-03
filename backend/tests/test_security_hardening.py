@@ -166,3 +166,84 @@ async def test_trusted_proxy_chain_resolves_real_client():
     }
     await mw(scope, None, None)
     assert seen["client"] == "203.0.113.9"
+
+
+# ---- outbound URL guard (SSRF) ----
+
+
+@pytest.mark.parametrize("url", [
+    "file:///etc/passwd", "gopher://x", "http://169.254.169.254/latest/meta-data/",
+    "http://100.100.100.200/latest/meta-data/", "http://metadata.google.internal/",
+])
+def test_outbound_url_blocks_metadata_and_odd_schemes(url):
+    from app.core.net import UnsafeURL, check_outbound_url
+
+    with pytest.raises(UnsafeURL):
+        check_outbound_url(url)
+
+
+@pytest.mark.parametrize("url", ["http://localhost:8100/v1", "http://192.168.1.20:11434/v1", "https://api.openai.com/v1"])
+def test_outbound_url_allows_local_models_and_public_apis(url):
+    from app.core.net import check_outbound_url
+
+    check_outbound_url(url)  # self-hosted local / LAN model servers are legitimate
+
+
+# ---- account password policy ----
+
+
+def test_account_password_must_be_8_chars():
+    from pydantic import ValidationError
+
+    from app.api.admin.accounts import UserCreate, UserUpdate
+
+    with pytest.raises(ValidationError):
+        UserCreate(email="a@b.co", name="a", password="")
+    with pytest.raises(ValidationError):
+        UserUpdate(password="short")
+    assert UserCreate(email="a@b.co", name="a", password="longenough").password
+
+
+# ---- media proxy & security headers ----
+
+
+async def test_media_documents_download_and_never_sniff(monkeypatch):
+    import app.api.chat.rest as rest_mod
+
+    async def fake_fetch(key):
+        return (b"%PDF-1.4", "application/pdf") if key.endswith(".pdf") else (b"\x89PNG", "image/png")
+
+    monkeypatch.setattr(rest_mod.storage, "fetch_object", fake_fetch)
+    async with await _client() as c:
+        pdf = await c.get("/api/chat/media/chat/x/a.pdf")
+        png = await c.get("/api/chat/media/chat/x/a.png")
+    assert pdf.headers["content-disposition"] == "attachment"
+    assert pdf.headers["x-content-type-options"] == "nosniff"
+    assert "content-disposition" not in png.headers  # images still render inline
+
+
+async def test_security_headers_agent_unframable_chat_frameable():
+    async with await _client() as c:
+        chat = await c.get("/chat")
+        health = await c.get("/health/live")
+    assert health.headers["x-content-type-options"] == "nosniff"
+    assert "x-frame-options" not in chat.headers  # merchants may iframe /chat
+    from app.main import _security_headers
+
+    class R:
+        headers: dict = {}
+
+    r = R()
+    r.headers = {}
+    _security_headers("/agent/", r)
+    assert r.headers["X-Frame-Options"] == "DENY"
+
+
+# ---- rate limit window is atomic ----
+
+
+async def test_rate_limit_key_always_gets_a_ttl(fresh_redis):
+    key = f"rl:test:{uuid.uuid4().hex}"
+    ok, _ = await rl._check(key, 5, window_sec=30)
+    assert ok and 0 < await fresh_redis.ttl(key) <= 30
+    await fresh_redis.delete(key)

@@ -34,6 +34,9 @@ async def _seed_admin(db) -> None:
         password_hash=hash_password(settings.bootstrap_admin_password),
         role=AdminRole.ADMIN,
         is_active=True,
+        # Fresh installs previously had NO super-admin (0008 only promoted pre-existing rows),
+        # leaving tenant management unreachable.
+        is_super_admin=True,
     )
     db.add(admin)
     log.info("admin_created", email=settings.bootstrap_admin_email)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -10,10 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_current_user, require_admin
 from app.config import settings
 from app.core.encryption import encrypt_secret, mask_secret
+from app.core.net import UnsafeURL, check_outbound_url
 from app.db.session import get_db
 from app.models.admin import AdminUser
 from app.models.config import ChannelConfig
-from app.models.enums import ChannelType
+from app.models.enums import AdminRole, ChannelType
 from app.services.audit import write_audit
 from app.services.channel import get_tenant_web_channel
 
@@ -90,6 +93,8 @@ async def get_notify(db: AsyncSession = Depends(get_db), user: AdminUser = Depen
     c = await _get_channel(db, "notify")
     s = dict(c.settings)
     s["smtp_password_enc"] = mask_secret(s.get("smtp_password_enc"))
+    if user.role != AdminRole.ADMIN:  # the webhook URL embeds its key
+        s["wechat_webhook_url"] = mask_secret(s.get("wechat_webhook_url"))
     return {"id": str(c.id), "enabled": c.enabled, "settings": s}
 
 
@@ -108,6 +113,11 @@ class NotifyUpdate(BaseModel):
 
 @router.put("/notify")
 async def update_notify(body: NotifyUpdate, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
+    if body.wechat_webhook_url and body.wechat_webhook_url != _MASK:
+        try:
+            await asyncio.to_thread(check_outbound_url, body.wechat_webhook_url)
+        except UnsafeURL as exc:
+            raise HTTPException(status_code=400, detail=f"企微机器人地址：{exc}")
     c = await _get_channel(db, "notify")
     data = body.model_dump(exclude_unset=True)
     settings_ = dict(c.settings)
@@ -131,6 +141,8 @@ async def get_wechat(db: AsyncSession = Depends(get_db), user: AdminUser = Depen
     s = dict(c.settings)
     s["secret_enc"] = mask_secret(s.get("secret_enc"))
     s["encoding_aes_key"] = mask_secret(s.get("encoding_aes_key"))
+    if user.role != AdminRole.ADMIN:
+        s["token"] = mask_secret(s.get("token"))
     return {"id": str(c.id), "enabled": c.enabled, "settings": s}
 
 

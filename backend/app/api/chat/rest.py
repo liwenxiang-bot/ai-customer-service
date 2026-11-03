@@ -109,7 +109,13 @@ async def chat_media(key: str):
         data, content_type = await storage.fetch_object(key)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=404, detail="附件不存在") from exc
-    return Response(content=data, media_type=content_type, headers={"Cache-Control": "public, max-age=86400"})
+    headers = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
+    if not content_type.startswith("image/") or content_type == "image/svg+xml":
+        # Documents (and SVG, which can carry script) download instead of rendering in the
+        # backend's origin.
+        headers["Content-Disposition"] = "attachment"
+        headers["Content-Security-Policy"] = "sandbox"
+    return Response(content=data, media_type=content_type, headers=headers)
 
 
 class MessageIn(BaseModel):
