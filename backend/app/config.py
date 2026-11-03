@@ -220,6 +220,41 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.app_env.lower() == "production"
 
+    def insecure_defaults(self) -> list[str]:
+        """Secrets still at their shipped placeholder (or too short to be safe).
+
+        `app_secret_key` also derives the Fernet key that encrypts stored API keys / WeChat /
+        SMTP secrets, and `jwt_secret` signs every admin token — a default here means stored
+        secrets are effectively plaintext and tokens are forgeable.
+        """
+        problems: list[str] = []
+        for name in ("app_secret_key", "jwt_secret"):
+            value = getattr(self, name)
+            if value.startswith("change-me") or len(value) < 32:
+                problems.append(f"{name.upper()} 仍为默认值或长度 < 32")
+        if self.bootstrap_admin_password in _DEFAULT_ADMIN_PASSWORDS:
+            problems.append("BOOTSTRAP_ADMIN_PASSWORD 仍为默认值")
+        return problems
+
+    def enforce_secure_defaults(self) -> None:
+        """Refuse to start in production with placeholder secrets; warn loudly elsewhere."""
+        problems = self.insecure_defaults()
+        if not problems:
+            return
+        if self.is_production:
+            raise RuntimeError(
+                "生产环境检测到不安全配置，拒绝启动：" + "；".join(problems)
+                + "。请用 `openssl rand -hex 32` 生成后写入 .env。"
+            )
+        import logging
+
+        logging.getLogger("acs.config").critical(
+            "insecure_defaults (allowed outside production): %s", "；".join(problems)
+        )
+
+
+_DEFAULT_ADMIN_PASSWORDS = {"admin12345"}
+
 
 @lru_cache
 def get_settings() -> Settings:

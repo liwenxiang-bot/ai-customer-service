@@ -54,3 +54,52 @@ async def check_chat_limits(
         if not ok:
             return RateDecision(False, retry, "ip")
     return RateDecision(True)
+
+
+# ---- Admin login brute-force protection ----
+# Failures are counted per email (primary: independent of proxies / spoofable IP headers)
+# and per IP (secondary, generous). A success clears the email counter. Redis being down
+# must not lock every admin out, so these helpers fail open.
+
+LOGIN_WINDOW_SEC = 15 * 60
+LOGIN_MAX_FAILS_PER_EMAIL = 5
+LOGIN_MAX_FAILS_PER_IP = 30
+
+
+def _login_keys(email: str, ip: str) -> list[tuple[str, int]]:
+    keys = [(f"login:fail:email:{email.strip().lower()}", LOGIN_MAX_FAILS_PER_EMAIL)]
+    if ip:
+        keys.append((f"login:fail:ip:{ip}", LOGIN_MAX_FAILS_PER_IP))
+    return keys
+
+
+async def login_locked_for(email: str, ip: str) -> int:
+    """Seconds until login is allowed again (0 = not locked)."""
+    try:
+        r = get_redis()
+        for key, limit in _login_keys(email, ip):
+            count = await r.get(key)
+            if count is not None and int(count) >= limit:
+                return max(await r.ttl(key), 1)
+    except Exception:  # noqa: BLE001 — fail open
+        return 0
+    return 0
+
+
+async def record_login_failure(email: str, ip: str) -> None:
+    try:
+        r = get_redis()
+        async with r.pipeline(transaction=True) as pipe:
+            for key, _ in _login_keys(email, ip):
+                pipe.incr(key)
+                pipe.expire(key, LOGIN_WINDOW_SEC, nx=True)
+            await pipe.execute()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def clear_login_failures(email: str) -> None:
+    try:
+        await get_redis().delete(f"login:fail:email:{email.strip().lower()}")
+    except Exception:  # noqa: BLE001
+        pass
