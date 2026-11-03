@@ -20,11 +20,9 @@ _pool: ArqRedis | None = None
 
 
 def redis_settings() -> RedisSettings:
-    return RedisSettings(
-        host=settings.redis_host,
-        port=settings.redis_port,
-        database=settings.redis_db,
-    )
+    # Same DSN as the API's client (honours REDIS_URL): a split here means jobs are enqueued
+    # into one Redis while the worker listens on another — and silently never run.
+    return RedisSettings.from_dsn(settings.redis_dsn)
 
 
 async def get_pool() -> ArqRedis:

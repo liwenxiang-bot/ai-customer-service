@@ -89,11 +89,16 @@ async def observability_mw(request: Request, call_next):
         response = await call_next(request)
         status = response.status_code
     except Exception:
-        http_requests.labels(request.method, path, "500").inc()
+        http_requests.labels(request.method, "error", "500").inc()
         raise
     finally:
-        http_latency.labels(request.method, path).observe(time.monotonic() - start)
-    http_requests.labels(request.method, path, str(status)).inc()
+        _route = request.scope.get("route")
+        http_latency.labels(request.method, getattr(_route, "path", None) or "other").observe(
+            time.monotonic() - start
+        )
+    route = request.scope.get("route")
+    label = getattr(route, "path", None) or ("/agent" if path.startswith("/agent") else ("/embed" if path.startswith("/embed") else "other"))
+    http_requests.labels(request.method, label, str(status)).inc()
     response.headers["x-trace-id"] = trace_id
     _security_headers(path, response)
     return response

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,9 +27,28 @@ from app.services.knowledge import reembed_item
 log = get_logger("embedding_rebuild")
 
 
+ACTIVE_JOB_WINDOW = timedelta(hours=3)  # = the worker's rebuild timeout
+
+
 async def start_rebuild(
     db: AsyncSession, from_model: str, from_dim: int, to_model: str, to_dim: int
 ) -> EmbeddingRebuildJob:
+    # Single-flight: a second click / config save while a rebuild is pending or running reuses
+    # it instead of starting a concurrent full rebuild that fights over the same rows.
+    active = (
+        await db.execute(
+            select(EmbeddingRebuildJob)
+            .where(
+                EmbeddingRebuildJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+                EmbeddingRebuildJob.created_at >= datetime.now(UTC) - ACTIVE_JOB_WINDOW,
+            )
+            .order_by(EmbeddingRebuildJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if active is not None and active.to_model == to_model and active.to_dim == to_dim:
+        log.info("rebuild_already_active", job_id=str(active.id))
+        return active
     job = EmbeddingRebuildJob(
         status=JobStatus.PENDING,
         from_model=from_model,
@@ -39,10 +58,28 @@ async def start_rebuild(
     )
     db.add(job)
     await db.flush()
+    from app.db.session import run_after_commit
     from app.tasks.queue import enqueue
 
-    await enqueue("rebuild_embeddings", str(job.id))
+    # Enqueue only once the job row is committed: a fast worker would otherwise load a job that
+    # doesn't exist yet and leave it PENDING forever.
+    jid = str(job.id)
+    run_after_commit(db, lambda: enqueue("rebuild_embeddings", jid, _job_id=f"rebuild:{jid}"))
     return job
+
+
+async def fail_stale_jobs(db: AsyncSession) -> int:
+    """Called at worker start: jobs left RUNNING/PENDING by a crash or timeout would show as
+    「重建中」 forever and block new rebuilds — mark them failed with a clear reason."""
+    res = await db.execute(
+        update(EmbeddingRebuildJob)
+        .where(
+            EmbeddingRebuildJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+            EmbeddingRebuildJob.created_at < datetime.now(UTC) - ACTIVE_JOB_WINDOW,
+        )
+        .values(status=JobStatus.FAILED, error="重建被中断（worker 重启或超时），请重新发起")
+    )
+    return res.rowcount or 0
 
 
 async def latest_job(db: AsyncSession) -> EmbeddingRebuildJob | None:
