@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_admin
+from app.config import settings
 from app.core.encryption import decrypt_secret, encrypt_secret, mask_secret
 from app.db.session import get_db
 from app.llm.base import LLMSettings
@@ -118,6 +119,18 @@ async def update_config(
     # it must be an explicit two-step — 409 carries the blast radius for the UI to show.
     new_embed_model = data.get("embedding_model", old_embed_model)
     new_embed_dim = data.get("embedding_dim", old_embed_dim)
+    # The vector columns' dimension is fixed by the deployment (EMBEDDING_DIM drives the ORM
+    # column type and pgvector asserts it client-side). Accepting another dim here commits
+    # the config and then every rebuild/ingest fails — refuse with the correct procedure.
+    if new_embed_dim != old_embed_dim and new_embed_dim != settings.embedding_dim:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"向量维度必须与部署配置 EMBEDDING_DIM 一致（当前 {settings.embedding_dim}）。"
+                "更换为不同维度的模型：先修改服务器 .env 的 EMBEDDING_DIM 并重启 backend 与 worker，"
+                "再回到这里切换模型与维度（会触发全量重建）。"
+            ),
+        )
     if (new_embed_model != old_embed_model or new_embed_dim != old_embed_dim) and not confirm_rebuild:
         items = (
             await db.execute(

@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.tenant_context import get_current_tenant
+from app.db.tenant_context import get_current_tenant, set_current_tenant
 from app.models.config import ChannelConfig
 from app.models.enums import ChannelType
 
@@ -78,6 +78,13 @@ async def resolve_active_web_channel(db: AsyncSession, channel_key: str) -> Chan
     tid = await tenant_for_channel(db, "web", channel_key)
     if tid is None:
         return None
+    # REST callers carry channel_key in the body, so the request-level tenant (from the query
+    # string) may be the default one. Switch to the channel's tenant for the rest of the
+    # request AND re-pin the already-open transaction (the GUC is set per transaction), or
+    # RLS hides this channel and get_web_channel would auto-create a duplicate → 500.
+    if get_current_tenant() != tid:
+        set_current_tenant(tid)
+        await db.execute(text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tid)})
     return await get_web_channel(db, channel_key)
 
 

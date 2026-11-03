@@ -194,7 +194,7 @@ export function AIConfig() {
               <Form.Item name="embedding_api_key" label="API Key"><Input.Password placeholder="留空表示不修改" autoComplete="new-password" /></Form.Item>
               <Space size="large">
                 <Form.Item name="embedding_model" label="模型"><Input placeholder="text-embedding-3-small" /></Form.Item>
-                <Form.Item name="embedding_dim" label="维度"><InputNumber min={64} max={4096} /></Form.Item>
+                <Form.Item name="embedding_dim" label="维度" tooltip="必须与服务器 .env 的 EMBEDDING_DIM 一致（向量列按它建表）。换不同维度的模型：先改 EMBEDDING_DIM 并重启 backend 与 worker，再回这里切换。"><InputNumber min={64} max={4096} /></Form.Item>
               </Space>
               {admin && (
                 <div style={{ marginTop: 8 }}>

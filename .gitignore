@@ -44,3 +44,5 @@ widget/dist/
 # 发版产物
 backups/
 .last_release_commit
+.last_release_db_rev
+.last_release_backup
