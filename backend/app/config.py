@@ -154,6 +154,8 @@ class Settings(BaseSettings):
     daily_cost_cap_usd: float = 10.0
     session_idle_timeout_minutes: int = 30
     max_tool_calls_per_turn: int = 6
+    # Register demo tools (get_order returns fabricated data). Off by default — never for real customers.
+    enable_demo_tools: bool = False
 
     # ---- Optional features ----
     content_safety_enabled: bool = False

@@ -117,3 +117,19 @@ async def test_login_success_clears_failure_counter(fresh_redis):
     assert await fresh_redis.get(f"login:fail:email:{email}") == "1"
     await rl.clear_login_failures(email)
     assert await fresh_redis.get(f"login:fail:email:{email}") is None
+
+
+# ---- demo tools ----
+
+
+def test_get_order_stub_not_registered_by_default(monkeypatch):
+    from app.agent.tools import build_default_registry
+
+    monkeypatch.setattr(settings, "enable_demo_tools", False)
+    names = set(build_default_registry().names())
+    assert "get_order" not in names
+    assert {"search_knowledge", "escalate_to_human"} <= names
+
+    monkeypatch.setattr(settings, "enable_demo_tools", True)
+    names = set(build_default_registry().names())
+    assert "get_order" in names
