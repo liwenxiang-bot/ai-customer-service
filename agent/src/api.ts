@@ -83,14 +83,37 @@ export const authApi = {
   },
 };
 
+/** 后端 attachment_descriptor 的形状（坐席上传与客户上传一致）。 */
+export type Attachment = {
+  url: string;
+  key: string;
+  name: string;
+  content_type: string;
+  size: number;
+  kind: "image" | "file";
+};
+
+/** 与后端 storage.ALLOWED_UPLOAD_TYPES / MAX_UPLOAD_BYTES 保持一致。 */
+export const UPLOAD_ACCEPT =
+  "image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/csv," +
+  "application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
+  "application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENTS = 5;
+
 export const conversationApi = {
   list: (params: any) => api.get("/conversations", { params }).then((r) => r.data),
   // 契约 A：{waiting, mine, takeover, all}
   queueCounts: () => api.get("/conversations/queue-counts").then((r) => r.data),
   detail: (id: string) => api.get(`/conversations/${id}`).then((r) => r.data),
   takeover: (id: string) => api.post(`/conversations/${id}/takeover`).then((r) => r.data),
-  reply: (id: string, content: string) =>
-    api.post(`/conversations/${id}/reply`, { content }).then((r) => r.data),
+  reply: (id: string, content: string, attachments: Attachment[] = []) =>
+    api.post(`/conversations/${id}/reply`, { content, attachments }).then((r) => r.data),
+  upload: (id: string, file: File): Promise<Attachment> => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return api.post(`/conversations/${id}/upload`, fd).then((r) => r.data);
+  },
   release: (id: string, resumeAi: boolean) =>
     api.post(`/conversations/${id}/release`, { resume_ai: resumeAi }).then((r) => r.data),
   markHandled: (id: string) => api.post(`/conversations/${id}/mark-handled`).then((r) => r.data),

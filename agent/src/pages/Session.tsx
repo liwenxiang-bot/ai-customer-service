@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiError, cannedApi, conversationApi, handoffApi } from "../api";
+import {
+  apiError,
+  cannedApi,
+  conversationApi,
+  handoffApi,
+  MAX_ATTACHMENTS,
+  MAX_UPLOAD_BYTES,
+  UPLOAD_ACCEPT,
+  type Attachment,
+} from "../api";
 import { useAuth } from "../auth";
 import { usePolling } from "../usePolling";
 import { useRealtime } from "../realtime";
@@ -83,6 +92,9 @@ export function SessionPage() {
   const [cannedOpen, setCannedOpen] = useState(false);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [pending, setPending] = useState<Attachment[]>([]); // 已上传、待随下一条回复发送
+  const [uploading, setUploading] = useState(0);
+  const fileRef = useRef<HTMLInputElement>(null);
   const [acting, setActing] = useState(""); // 进行中的操作 key，各按钮独立显示 loading 文案
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [customerTyping, setCustomerTyping] = useState(false);
@@ -134,6 +146,7 @@ export function SessionPage() {
     setLoadError("");
     setTicket(undefined);
     setText("");
+    setPending([]);
     setConfirmEnd(false);
     setCustomerTyping(false);
     setCannedOpen(false);
@@ -200,7 +213,13 @@ export function SessionPage() {
       if (msg?.session_id && msg.session_id !== idRef.current) return;
       setCustomerTyping(false);
       if (msg?.type === "human_message" && msg.message_id)
-        appendMsg({ id: msg.message_id, role: "assistant", model: "human", content: msg.content });
+        appendMsg({
+          id: msg.message_id,
+          role: "assistant",
+          model: "human",
+          content: msg.content,
+          attachments: msg.attachments || [],
+        });
       else if (msg?.type === "customer_message" && msg.message_id)
         appendMsg({ id: msg.message_id, role: "user", content: msg.content, attachments: msg.attachments || [] });
       else {
@@ -239,16 +258,47 @@ export function SessionPage() {
   /** 操作按钮文案：进行中换 loading 文案，其余操作进行中时只置灰。 */
   const actLabel = (key: string, idle: string, busy: string) => (acting === key ? busy : idle);
 
+  const pickFiles = async (files: FileList | null) => {
+    const sid = idRef.current;
+    if (!files || !files.length || !sid) return;
+    const room = MAX_ATTACHMENTS - pending.length - uploading;
+    const list = Array.from(files);
+    if (list.length > room) toast(`一次最多发送 ${MAX_ATTACHMENTS} 个附件`, "error");
+    for (const f of list.slice(0, Math.max(room, 0))) {
+      if (f.size > MAX_UPLOAD_BYTES) {
+        toast(`「${f.name}」超过 10MB`, "error");
+        continue;
+      }
+      setUploading((n) => n + 1);
+      try {
+        const att = await conversationApi.upload(sid, f);
+        if (idRef.current === sid) setPending((p) => [...p, att]);
+      } catch (e) {
+        toast(`「${f.name}」上传失败：${apiError(e)}`, "error");
+      } finally {
+        setUploading((n) => n - 1);
+      }
+    }
+  };
+
   const submit = async () => {
     const c = text.trim();
     const sid = idRef.current;
-    if (!c || sending || !sid) return;
+    const atts = pending;
+    if ((!c && !atts.length) || sending || uploading || !sid) return;
     setSending(true);
     try {
-      const res = await conversationApi.reply(sid, c);
+      const res = await conversationApi.reply(sid, c, atts);
       if (idRef.current === sid) {
-        appendMsg({ id: res?.message_id, role: "assistant", model: "human", content: c });
+        appendMsg({
+          id: res?.message_id,
+          role: "assistant",
+          model: "human",
+          content: c,
+          attachments: res?.attachments || atts,
+        });
         setText("");
+        setPending([]);
         atBottomRef.current = true; // 自己发消息始终回到底部
         taRef.current?.focus();
       }
@@ -280,6 +330,8 @@ export function SessionPage() {
 
   const s = detail?.session;
   const inTakeover = s?.status === "human_takeover";
+  // 目前只有网页渠道能把坐席附件推给客户（企微推送尚未打通）
+  const canAttach = s?.channel_type === "web";
   const ticketOpen = !!ticket && ticket.status === "open";
   const ticketMine = !!ticket && ticket.status === "in_progress" && !!ticket.assignee_id && ticket.assignee_id === user?.id;
   const ticketOther = !!ticket && ticket.status === "in_progress" && !ticketMine;
@@ -479,6 +531,29 @@ export function SessionPage() {
         </div>
       )}
 
+      {/* 待发送附件 */}
+      {inTakeover && (pending.length > 0 || uploading > 0) && (
+        <div className="pending-tray">
+          {pending.map((a, i) => (
+            <div key={a.key} className="pending-item" title={a.name}>
+              {a.kind === "image" ? (
+                <img className="pending-thumb" src={a.url} alt={a.name} />
+              ) : (
+                <span className="pending-name">{a.name}</span>
+              )}
+              <button
+                className="pending-remove"
+                aria-label={`移除 ${a.name}`}
+                onClick={() => setPending((p) => p.filter((_, j) => j !== i))}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+          {uploading > 0 && <div className="pending-item pending-loading muted">上传中…</div>}
+        </div>
+      )}
+
       {/* 输入区 */}
       <div className="composer">
         {inTakeover ? (
@@ -493,6 +568,32 @@ export function SessionPage() {
                 <path d="M11.3 1.6 4 11h4.4l-1 7.4L14.9 9h-4.5l.9-7.4z" />
               </svg>
             </button>
+            {canAttach && (
+              <>
+                <button
+                  className="btn btn-ghost btn-icon composer-attach"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={pending.length + uploading >= MAX_ATTACHMENTS}
+                  title="发送图片或文件"
+                  aria-label="发送图片或文件"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept={UPLOAD_ACCEPT}
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    pickFiles(e.target.files);
+                    e.target.value = ""; // 允许重复选择同一文件
+                  }}
+                />
+              </>
+            )}
             {/* 发送中不 disable：双发已由 submit 的 sending 守卫兜住，保持可输入且焦点不丢 */}
             <textarea
               ref={taRef}
@@ -513,7 +614,11 @@ export function SessionPage() {
                 submit();
               }}
             />
-            <button className="btn btn-primary btn-sm" disabled={sending || !text.trim()} onClick={submit}>
+            <button
+              className="btn btn-primary btn-sm"
+              disabled={sending || uploading > 0 || (!text.trim() && !pending.length)}
+              onClick={submit}
+            >
               {sending ? "发送中…" : "发送"}
             </button>
           </>

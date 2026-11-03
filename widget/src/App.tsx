@@ -338,7 +338,14 @@ export function App({ config }: { config: WidgetConfig }) {
         if (!openRef.current) setUnread((n) => n + 1);
         setMessages((prev) => capMessages([
           ...prev,
-          { id: ev.message_id || "h-" + Date.now(), role: "assistant", content: ev.content, fromHuman: true, ts: Date.now() },
+          {
+            id: ev.message_id || "h-" + Date.now(),
+            role: "assistant",
+            content: ev.content || "",
+            attachments: Array.isArray(ev.attachments) && ev.attachments.length ? ev.attachments : undefined,
+            fromHuman: true,
+            ts: Date.now(),
+          },
         ]));
         break;
       case "received":
@@ -941,7 +948,8 @@ function MessageBody({ m, sep, copied, retryDisabled, onRetry, onFeedback, onCop
               人工客服
             </div>
           )}
-          {(m.role === "assistant" || m.content) && (
+          {/* 只有附件的坐席消息不渲染空气泡；AI 流式中的空助手消息仍保留气泡位 */}
+          {(m.content || (m.role === "assistant" && !(m.attachments && m.attachments.length))) && (
             <div
               class="acs-bubble"
               dangerouslySetInnerHTML={{

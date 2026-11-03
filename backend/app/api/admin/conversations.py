@@ -9,13 +9,14 @@ import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, text, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, require_operator
+from app.core import storage
 from app.core.strings import escape_like
 from app.db.session import get_db
 from app.models.admin import AdminUser
@@ -420,8 +421,49 @@ async def takeover(
     return {"ok": True, "status": session.status}
 
 
+class ReplyAttachmentIn(BaseModel):
+    key: str = Field(max_length=300)
+    name: str = Field("", max_length=200)
+    content_type: str = Field("", max_length=120)
+    size: int = Field(0, ge=0)
+
+
 class ReplyIn(BaseModel):
-    content: str
+    content: str = Field("", max_length=8000)
+    attachments: list[ReplyAttachmentIn] = Field(default_factory=list, max_length=5)
+
+
+def _operator_upload_prefix(session: Session) -> str:
+    return f"agent/{session.id}/"
+
+
+def _require_web_session(session: Session) -> None:
+    # Only the web widget renders pushed attachments today; WeChat delivery of operator
+    # messages is not wired yet, so refuse rather than silently dropping the file.
+    if session.channel_type != "web":
+        raise HTTPException(status_code=400, detail="该渠道暂不支持坐席发送附件")
+
+
+@router.post("/{session_id}/upload")
+async def upload_attachment(
+    session_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """Store a file the operator wants to send; returns a descriptor for /reply."""
+    session = await _get_session_or_404(db, session_id)
+    _require_web_session(session)
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in storage.ALLOWED_UPLOAD_TYPES:
+        raise HTTPException(status_code=415, detail="不支持的文件类型")
+    data = await file.read(storage.MAX_UPLOAD_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > storage.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="文件过大（上限 10MB）")
+    key = await storage.put_object(data, content_type, prefix=_operator_upload_prefix(session).rstrip("/"))
+    return storage.attachment_descriptor(key, file.filename or "file", content_type, len(data))
 
 
 @router.post("/{session_id}/reply")
@@ -429,14 +471,28 @@ async def reply(
     session_id: str, body: ReplyIn, db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_operator),
 ):
-    """Operator sends a message; it is pushed live to the customer's chat window."""
+    """Operator sends a message (text and/or attachments); pushed live to the customer."""
     content = (body.content or "").strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="内容不能为空")
     session = await _get_session_or_404(db, session_id)
-    msg = await tk.operator_reply(db, session, content)
+    # Only accept files uploaded through /upload for THIS session, and rebuild the descriptor
+    # server-side — never trust a client-supplied url.
+    prefix = _operator_upload_prefix(session)
+    attachments: list[dict] = []
+    for a in body.attachments:
+        if (
+            not a.key.startswith(prefix)
+            or ".." in a.key
+            or a.content_type not in storage.ALLOWED_UPLOAD_TYPES
+        ):
+            raise HTTPException(status_code=400, detail="附件无效，请重新上传")
+        attachments.append(storage.attachment_descriptor(a.key, a.name, a.content_type, a.size))
+    if attachments:
+        _require_web_session(session)
+    if not content and not attachments:
+        raise HTTPException(status_code=400, detail="内容不能为空")
+    msg = await tk.operator_reply(db, session, content, attachments)
     await db.commit()
-    return {"ok": True, "message_id": str(msg.id)}
+    return {"ok": True, "message_id": str(msg.id), "attachments": attachments}
 
 
 class ReleaseIn(BaseModel):

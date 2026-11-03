@@ -103,7 +103,8 @@ async def _content_for(m: DBMessage, *, vision: bool, latest: bool) -> str | lis
         if files:
             parts.append({"type": "text", "text": f"（另附文件：{'、'.join(files)}）"})
         return parts or [{"type": "text", "text": "（图片）"}]
-    note = f"（用户上传了 {len(atts)} 个附件：{names}）"
+    who = "客服发送了" if m.role == MessageRole.ASSISTANT else "用户上传了"
+    note = f"（{who} {len(atts)} 个附件：{names}）"
     return f"{m.content}\n{note}".strip() if m.content else note
 
 
