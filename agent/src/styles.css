@@ -1,6 +1,6 @@
 /* 坐席站全局样式：移动优先（375px 单列），桌面 ≥1024px 双栏（左收件箱 340px + 右会话面板）。
  * 品牌主色与 admin 保持一致（#0F766E teal）。
- * 亮/暗主题：CSS 变量全部走 light-dark() 双值，由 <html data-theme> 控制 color-scheme；
+ * 亮/暗主题：浅色为默认值，深色在 prefers-color-scheme / <html data-theme="dark"> 下覆盖；
  * 未手动选择时跟随系统（index.html 内联脚本负责首屏防闪，theme.ts 负责运行时切换）。 */
 
 /* ---------- 设计令牌 ---------- */
@@ -9,40 +9,106 @@
 
   /* 品牌色：solid 底固定深 teal（两种主题下白字对比度都够），强调文字暗色下提亮 */
   --brand: #0f766e;
-  --brand-strong: light-dark(#0b5c56, #0d9488);
-  --primary: light-dark(#0f766e, #2dd4bf);
-  --primary-weak: light-dark(#e7f2f0, rgba(45, 212, 191, 0.12));
-  --focus-ring: light-dark(rgba(15, 118, 110, 0.18), rgba(45, 212, 191, 0.28));
+  --brand-strong: #0b5c56;
+  --primary: #0f766e;
+  --primary-weak: #e7f2f0;
+  --focus-ring: rgba(15, 118, 110, 0.18);
 
-  --bg: light-dark(#f5f6fa, #0e1114);
-  --panel: light-dark(#ffffff, #161a1f);
-  --panel-2: light-dark(#f6f7f9, #1d2229);
-  --line: light-dark(#e5e7eb, #272e37);
-  --text: light-dark(#1f2329, #e6eaf0);
-  --muted: light-dark(#6b7280, #98a2b0);
-  --faint: light-dark(#9ca3af, #68727f);
+  --bg: #f5f6fa;
+  --panel: #ffffff;
+  --panel-2: #f6f7f9;
+  --line: #e5e7eb;
+  --text: #1f2329;
+  --muted: #6b7280;
+  --faint: #9ca3af;
 
   /* 状态色（badge 文字 / 浅底），语义对齐 admin utils/status.ts */
-  --red: light-dark(#d92d20, #f87171);
-  --red-bg: light-dark(#feeceb, rgba(248, 113, 113, 0.14));
-  --orange: light-dark(#c2410c, #fb923c);
-  --orange-bg: light-dark(#fff0e4, rgba(251, 146, 60, 0.14));
-  --blue: light-dark(#1d4ed8, #60a5fa);
-  --blue-bg: light-dark(#e8effd, rgba(96, 165, 250, 0.14));
-  --green: light-dark(#0f9d6e, #34d399);
-  --green-bg: light-dark(#e6f7f0, rgba(52, 211, 153, 0.14));
-  --purple: light-dark(#7c3aed, #a78bfa);
-  --purple-bg: light-dark(#f1e9fe, rgba(167, 139, 250, 0.14));
-  --gray: light-dark(#6b7280, #9aa3b1);
-  --gray-bg: light-dark(#f0f1f3, rgba(148, 163, 184, 0.14));
+  --red: #d92d20;
+  --red-bg: #feeceb;
+  --orange: #c2410c;
+  --orange-bg: #fff0e4;
+  --blue: #1d4ed8;
+  --blue-bg: #e8effd;
+  --green: #0f9d6e;
+  --green-bg: #e6f7f0;
+  --purple: #7c3aed;
+  --purple-bg: #f1e9fe;
+  --gray: #6b7280;
+  --gray-bg: #f0f1f3;
 
-  --danger-solid: light-dark(#d92d20, #dc2626);
-  --sk: light-dark(#edeff2, #212730);
-  --overlay: light-dark(rgba(15, 20, 25, 0.45), rgba(0, 0, 0, 0.62));
-  --toast-bg: light-dark(rgba(31, 35, 41, 0.92), rgba(58, 66, 76, 0.96));
+  --danger-solid: #d92d20;
+  --sk: #edeff2;
+  --overlay: rgba(15, 20, 25, 0.45);
+  --toast-bg: rgba(31, 35, 41, 0.92);
   --radius: 10px;
-  --shadow: light-dark(0 4px 16px rgba(15, 23, 32, 0.08), 0 6px 20px rgba(0, 0, 0, 0.45));
-  --shadow-sm: light-dark(0 1px 2px rgba(15, 23, 32, 0.05), 0 1px 3px rgba(0, 0, 0, 0.35));
+  --shadow: 0 4px 16px rgba(15, 23, 32, 0.08);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 32, 0.05);
+}
+/* 深色：跟随系统（未手动选择浅色时）或手动选择深色。
+   不用 light-dark()：它要求 Chrome 123+ / Safari 17.5+，微信内置浏览器与旧 iOS 上整套配色会失效。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --brand-strong: #0d9488;
+    --primary: #2dd4bf;
+    --primary-weak: rgba(45, 212, 191, 0.12);
+    --focus-ring: rgba(45, 212, 191, 0.28);
+    --bg: #0e1114;
+    --panel: #161a1f;
+    --panel-2: #1d2229;
+    --line: #272e37;
+    --text: #e6eaf0;
+    --muted: #98a2b0;
+    --faint: #68727f;
+    --red: #f87171;
+    --red-bg: rgba(248, 113, 113, 0.14);
+    --orange: #fb923c;
+    --orange-bg: rgba(251, 146, 60, 0.14);
+    --blue: #60a5fa;
+    --blue-bg: rgba(96, 165, 250, 0.14);
+    --green: #34d399;
+    --green-bg: rgba(52, 211, 153, 0.14);
+    --purple: #a78bfa;
+    --purple-bg: rgba(167, 139, 250, 0.14);
+    --gray: #9aa3b1;
+    --gray-bg: rgba(148, 163, 184, 0.14);
+    --danger-solid: #dc2626;
+    --sk: #212730;
+    --overlay: rgba(0, 0, 0, 0.62);
+    --toast-bg: rgba(58, 66, 76, 0.96);
+    --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  --brand-strong: #0d9488;
+  --primary: #2dd4bf;
+  --primary-weak: rgba(45, 212, 191, 0.12);
+  --focus-ring: rgba(45, 212, 191, 0.28);
+  --bg: #0e1114;
+  --panel: #161a1f;
+  --panel-2: #1d2229;
+  --line: #272e37;
+  --text: #e6eaf0;
+  --muted: #98a2b0;
+  --faint: #68727f;
+  --red: #f87171;
+  --red-bg: rgba(248, 113, 113, 0.14);
+  --orange: #fb923c;
+  --orange-bg: rgba(251, 146, 60, 0.14);
+  --blue: #60a5fa;
+  --blue-bg: rgba(96, 165, 250, 0.14);
+  --green: #34d399;
+  --green-bg: rgba(52, 211, 153, 0.14);
+  --purple: #a78bfa;
+  --purple-bg: rgba(167, 139, 250, 0.14);
+  --gray: #9aa3b1;
+  --gray-bg: rgba(148, 163, 184, 0.14);
+  --danger-solid: #dc2626;
+  --sk: #212730;
+  --overlay: rgba(0, 0, 0, 0.62);
+  --toast-bg: rgba(58, 66, 76, 0.96);
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -105,6 +171,7 @@ input[type="radio"] {
 
 /* ---------- 布局骨架：workspace 双栏 ---------- */
 .workspace {
+  height: 100vh;
   height: 100dvh;
   display: flex;
   background: var(--bg);
@@ -318,6 +385,7 @@ input[type="radio"] {
 
 /* ---------- 登录页 ---------- */
 .login-page {
+  min-height: 100vh;
   min-height: 100dvh;
   display: flex;
   align-items: center;
