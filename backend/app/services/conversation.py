@@ -38,11 +38,36 @@ from app.services.usage import is_cost_capped, mark_escalation, mark_new_convers
 log = get_logger("conversation")
 
 
+async def owned_session(
+    db: AsyncSession, session_id: str | None, end_user_id: str, channel_type: str | None = None
+) -> Session | None:
+    """The session, only if it belongs to this end user (and channel, when given).
+
+    A session id alone is not a credential: it shows up in operator deep links, admin URLs
+    and logs. The end user's id (a random per-browser uid for the widget, the openid for
+    WeChat) must match too, otherwise the caller is treated as having no session.
+    """
+    sid = _as_uuid(session_id or "")
+    if sid is None or not end_user_id:
+        return None
+    s = await db.get(Session, sid)
+    if s is None or s.end_user_id != end_user_id:
+        return None
+    if channel_type and s.channel_type != channel_type:
+        return None
+    return s
+
+
 async def get_or_create_session(db: AsyncSession, inbound: InboundMessage) -> tuple[Session, bool]:
     if inbound.session_id:
-        existing = await db.get(Session, _as_uuid(inbound.session_id))
+        existing = await owned_session(
+            db, inbound.session_id, inbound.end_user_id, inbound.channel_type
+        )
         if existing and existing.status != SessionStatus.CLOSED:
             return existing, False
+        if existing is None:
+            log.warning("session_owner_mismatch", session_id=inbound.session_id,
+                        channel=inbound.channel_type)
 
     session = Session(
         channel_type=inbound.channel_type,

@@ -71,6 +71,11 @@ def _patch_connection_deps(monkeypatch) -> None:
     monkeypatch.setattr(ws_mod, "is_takeover", is_takeover)
     monkeypatch.setattr(ws_mod, "_push_listener", push_listener)
 
+    async def owned(sid, uid):  # ownership has its own tests; keep the harness DB-free
+        return True
+
+    monkeypatch.setattr(ws_mod, "_session_owned_by", owned)
+
 
 # ------------------------------------------------------- ping / stop while generating
 def test_ping_and_stop_while_generating(monkeypatch):

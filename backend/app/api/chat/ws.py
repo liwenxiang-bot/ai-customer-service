@@ -50,6 +50,7 @@ from app.services.conversation import (
     _record_client_msg_id,
     get_or_create_session,
     handle_turn,
+    owned_session,
 )
 from app.services.feedback import set_feedback
 from app.services.handoff import create_handoff
@@ -188,6 +189,11 @@ async def chat_ws(
     await websocket.accept()
     end_user_id = uid or f"anon-{uuid.uuid4().hex[:12]}"
     ip = _client_ip(websocket)
+    # A session id from the URL is only honoured if this uid owns it; otherwise behave as a
+    # fresh visitor (no history, no push subscription, no end/escalate on someone else's chat).
+    if session_id and not await _session_owned_by(session_id, end_user_id):
+        log.warning("ws_session_owner_mismatch", session_id=session_id)
+        session_id = ""
 
     # Single-writer guard: the main loop and the _push_listener task both emit on this socket,
     # and Starlette's send_json writes multiple frames and isn't concurrency-safe. Serialize
@@ -391,9 +397,9 @@ async def chat_ws(
 
             if mtype == "feedback":
                 async with session_scope() as db:
-                    ok = await set_feedback(
+                    ok = bool(session_id) and await set_feedback(
                         db, payload.get("message_id", ""), payload.get("kind", ""),
-                        payload.get("note", ""),
+                        str(payload.get("note", ""))[:1000], session_id=session_id,
                     )
                 await send({"type": "feedback_ack", "ok": ok})
                 continue
@@ -458,6 +464,11 @@ async def chat_ws(
         for task in (worker_task, gen_task, push_task):
             if task is not None:
                 task.cancel()
+
+
+async def _session_owned_by(session_id: str, end_user_id: str) -> bool:
+    async with session_scope() as db:
+        return await owned_session(db, session_id, end_user_id, "web") is not None
 
 
 PUSH_RECONNECT_MAX_SEC = 10.0

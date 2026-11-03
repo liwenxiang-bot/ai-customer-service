@@ -33,7 +33,7 @@ from app.services.channel import (
     public_branding,
     resolve_active_web_channel,
 )
-from app.services.conversation import handle_turn
+from app.services.conversation import handle_turn, owned_session
 from app.services.feedback import set_feedback
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
@@ -239,12 +239,16 @@ async def chat_message(
 class FeedbackIn(BaseModel):
     message_id: str
     kind: str  # up | down
-    note: str = ""
+    note: str = Field("", max_length=1000)
+    session_id: str
+    uid: str
 
 
 @router.post("/feedback")
 async def chat_feedback(body: FeedbackIn, db: AsyncSession = Depends(get_db)):
-    ok = await set_feedback(db, body.message_id, body.kind, body.note)
+    if await owned_session(db, body.session_id, body.uid) is None:
+        raise HTTPException(status_code=400, detail="invalid feedback")
+    ok = await set_feedback(db, body.message_id, body.kind, body.note, session_id=body.session_id)
     await db.commit()
     if not ok:
         raise HTTPException(status_code=400, detail="invalid feedback")
@@ -254,13 +258,14 @@ async def chat_feedback(body: FeedbackIn, db: AsyncSession = Depends(get_db)):
 @router.get("/history")
 async def chat_history(
     session_id: str,
-    limit: int = Query(50, le=200),
+    uid: str = "",
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
-    try:
-        sid = uuid.UUID(session_id)
-    except (ValueError, TypeError):
+    owned = await owned_session(db, session_id, uid)
+    if owned is None:
         return {"messages": []}
+    sid = owned.id
     rows = (
         await db.execute(
             select(DBMessage)
