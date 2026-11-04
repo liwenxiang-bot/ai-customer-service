@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Button, Card, Drawer, Form, Input, Select, Space, Table, Tag, Tabs, Modal,
   Upload, Tooltip, List, Popconfirm, App as AntApp, Badge, Alert, Progress, theme,
-  Checkbox, AutoComplete, DatePicker,
+  Checkbox, AutoComplete, DatePicker, Segmented,
 } from "antd";
 import {
   PlusOutlined, SearchOutlined, UploadOutlined, ExperimentOutlined,
@@ -25,6 +25,8 @@ export function Knowledge() {
   const editable = canEdit(user?.role);
   const { message } = AntApp.useApp();
   const [tab, setTab] = useState("items");
+  // 从「未命中问题」带过来的新建标题；nonce 保证同一问题可以反复触发
+  const [prefill, setPrefill] = useState<{ title: string; nonce: number } | null>(null);
   const [reviewCount, setReviewCount] = useState(0);
   // 待打开的条目 id：来自 URL 深链 ?item=<id>，或站内跳转（审核撞重、通过后查看条目）
   const [openItemId, setOpenItemId] = useState<string | null>(null);
@@ -41,6 +43,10 @@ export function Knowledge() {
     const id = new URLSearchParams(location.search).get("item");
     if (id) { setOpenItemId(id); setTab("items"); }
   }, [location.search]);
+  useEffect(() => {
+    const t = new URLSearchParams(location.search).get("tab");
+    if (t === "items" || t === "review" || t === "gaps") setTab(t);
+  }, [location.search]);
 
   const jumpToItem = (id: string) => { setOpenItemId(id); setTab("items"); };
 
@@ -54,12 +60,16 @@ export function Knowledge() {
         items={[
           {
             key: "items", label: "知识条目",
-            children: <ItemsTab editable={editable} openItemId={openItemId} onOpenedItem={() => setOpenItemId(null)} />,
+            children: <ItemsTab editable={editable} openItemId={openItemId} onOpenedItem={() => setOpenItemId(null)} prefill={prefill} />,
           },
           {
             key: "review",
             label: <Badge count={reviewCount} size="small" offset={[10, 0]}>待审核</Badge>,
             children: <ReviewTab editable={editable} onCount={setReviewCount} onOpenItem={jumpToItem} />,
+          },
+          {
+            key: "gaps", label: "未命中问题",
+            children: <GapsTab editable={editable} onCreate={(title: string) => { setPrefill({ title, nonce: Date.now() }); setTab("items"); }} />,
           },
         ]}
       />
@@ -67,7 +77,112 @@ export function Knowledge() {
   );
 }
 
-function ItemsTab({ editable, openItemId, onOpenedItem }: { editable: boolean; openItemId?: string | null; onOpenedItem?: () => void }) {
+const GAP_KIND: Record<string, { label: string; color: string; tip: string }> = {
+  miss: { label: "检索未命中", color: "red", tip: "知识库检索没有返回任何资料" },
+  no_info: { label: "回答说没资料", color: "orange", tip: "检索有返回，但 AI 判断资料不能回答这个问题" },
+  unsearched: { label: "未检索", color: "default", tip: "AI 没有查知识库就直接回答了（新版本已改为每轮必查）" },
+};
+
+/** 未命中问题：知识库答不上的客户问题，按语义归并，作为补知识的工作台。 */
+function GapsTab({ editable, onCreate }: { editable: boolean; onCreate: (title: string) => void }) {
+  const { message } = AntApp.useApp();
+  const { token } = theme.useToken();
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setData(await knowledgeApi.gaps(days));
+    } catch (e) {
+      message.error(apiError(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [days]);
+
+  const ignore = async (q: string) => {
+    try {
+      await knowledgeApi.gapIgnore(q);
+      message.success("已忽略，相近问法也不再显示");
+      load();
+    } catch (e) {
+      message.error(apiError(e));
+    }
+  };
+
+  const groups: any[] = data?.groups || [];
+  return (
+    <Card>
+      <Space wrap style={{ marginBottom: 12, width: "100%", justifyContent: "space-between" }}>
+        <Space wrap>
+          <Segmented value={days} onChange={(v) => setDays(Number(v))} options={[{ label: "近 7 天", value: 7 }, { label: "近 30 天", value: 30 }, { label: "近 90 天", value: 90 }]} />
+          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+        </Space>
+        {data && (
+          <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
+            扫描 {data.scanned_answers} 条回答，其中 {data.gap_answers} 条没答上，归并为 {groups.length} 个问题{data.ignored ? ` · 已忽略 ${data.ignored} 个` : ""}
+          </span>
+        )}
+      </Space>
+      <Alert
+        style={{ marginBottom: 12 }} type="info" showIcon
+        message="这里是客户问过、但知识库答不上的问题，相近问法已合并。点「新建知识」会把问题带入标题，写上答案并发布即可；一次性或无关的问题点「忽略」。"
+      />
+      <Table
+        rowKey="question" loading={loading} dataSource={groups} size="middle"
+        pagination={{ pageSize: 20, showSizeChanger: false }}
+        locale={{ emptyText: "这个时间段内没有答不上的问题" }}
+        columns={[
+          {
+            title: "客户问题", dataIndex: "question",
+            render: (q: string, r: any) => (
+              <div>
+                <div style={{ fontWeight: 500 }}>{q}</div>
+                {r.examples?.length > 1 && (
+                  <div style={{ fontSize: 12, color: token.colorTextTertiary, marginTop: 2 }}>
+                    其他问法：{r.examples.slice(1).join("　/　")}
+                  </div>
+                )}
+              </div>
+            ),
+          },
+          { title: "次数", dataIndex: "count", width: 80, align: "right" as const, sorter: (a: any, b: any) => a.count - b.count, defaultSortOrder: "descend" as const },
+          {
+            title: "原因", dataIndex: "kinds", width: 220,
+            render: (kinds: Record<string, number>) => (
+              <Space size={4} wrap>
+                {Object.entries(kinds || {}).map(([k, n]) => {
+                  const m = GAP_KIND[k] || { label: k, color: "default", tip: "" };
+                  return <Tooltip key={k} title={m.tip}><Tag color={m.color}>{m.label}{n > 1 ? ` ×${n}` : ""}</Tag></Tooltip>;
+                })}
+              </Space>
+            ),
+          },
+          { title: "最近", dataIndex: "last_at", width: 120, render: (t: string) => fmtShort(t) },
+          {
+            title: "操作", width: 240,
+            render: (_: any, r: any) => (
+              <Space size={4} wrap>
+                {editable && <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => onCreate(r.question)}>新建知识</Button>}
+                {r.session_id && <Link to={`/conversations?session=${r.session_id}`}>查看对话</Link>}
+                {editable && (
+                  <Popconfirm title="忽略这个问题？" description="相近的问法也不再显示" onConfirm={() => ignore(r.question)}>
+                    <Button type="link" size="small" danger>忽略</Button>
+                  </Popconfirm>
+                )}
+              </Space>
+            ),
+          },
+        ]}
+      />
+    </Card>
+  );
+}
+
+function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: boolean; openItemId?: string | null; onOpenedItem?: () => void; prefill?: { title: string; nonce: number } | null }) {
   const { message, modal } = AntApp.useApp();
   const { token } = theme.useToken();
   const [data, setData] = useState<any>({ items: [], total: 0 });
@@ -227,6 +342,15 @@ function ItemsTab({ editable, openItemId, onOpenedItem }: { editable: boolean; o
     onOpenedItem?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openItemId]);
+
+  // 「未命中问题」→ 新建知识：打开新建抽屉并把客户问题带入标题
+  useEffect(() => {
+    if (!prefill) return;
+    form.resetFields();
+    form.setFieldsValue({ status: "published", tags: [], title: prefill.title });
+    setDrawer({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill?.nonce]);
 
   const [saving, setSaving] = useState(false);
   const save = async () => {

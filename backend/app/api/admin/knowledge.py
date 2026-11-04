@@ -36,6 +36,7 @@ from app.services.ai_config import get_active_ai_config
 from app.services.audit import write_audit
 from app.services.embedding_rebuild import start_rebuild
 from app.services.import_knowledge import import_document, import_knowledge, import_url
+from app.services.knowledge_gaps import collect_gaps, ignore_question
 
 router = APIRouter(prefix="/knowledge", tags=["admin-knowledge"])
 
@@ -449,6 +450,39 @@ async def _get_or_404(db: AsyncSession, item_id: str) -> KnowledgeItem:
     if not item:
         raise HTTPException(status_code=404, detail="知识条目不存在")
     return item
+
+
+# ----------------------------------------------------------------- knowledge gaps
+@router.get("/gaps")
+async def knowledge_gaps(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(get_current_user),
+):
+    """Customer questions the knowledge base could not answer, grouped by meaning —
+    the worklist for adding knowledge (see services.knowledge_gaps)."""
+    return await collect_gaps(db, days)
+
+
+class GapIgnoreIn(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/gaps/ignore", status_code=201)
+async def knowledge_gap_ignore(
+    body: GapIgnoreIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """Dismiss a gap (and its rephrasings) from the list."""
+    row = await ignore_question(db, body.question, getattr(user, "email", "") or "")
+    await write_audit(
+        db, user, "knowledge.gap_ignore", "knowledge_gap_ignore", str(row.id),
+        {"question": body.question[:200]}, ip=_client_ip(request),
+    )
+    await db.commit()
+    return {"ok": True, "id": str(row.id)}
 
 
 @router.get("/{item_id}")

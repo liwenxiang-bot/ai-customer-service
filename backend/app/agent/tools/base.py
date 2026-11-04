@@ -29,6 +29,9 @@ class ToolContext:
     citations: list[dict[str, Any]] = field(default_factory=list)
     escalation: dict[str, Any] | None = None
     off_topic: str | None = None  # set by decline_off_topic: the runner replies with the canned text
+    # The customer's current message, verbatim. search_knowledge runs it as a second
+    # query next to the model's rewrite, so a rewrite that drifts never loses the hit.
+    user_text: str = ""
 
 
 class Tool(abc.ABC):

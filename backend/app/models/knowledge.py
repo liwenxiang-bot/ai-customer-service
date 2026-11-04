@@ -161,3 +161,16 @@ class EmbeddingRebuildJob(Base, TimestampMixin, TenantMixin):
     progress: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class KnowledgeGapIgnore(Base, TimestampMixin, TenantMixin):
+    """A customer question an operator dismissed from the "未命中问题" (knowledge gap)
+    list — not worth a knowledge item (one-off, nonsense, already handled elsewhere).
+    Matching against new gaps is fuzzy (same token overlap rule as the grouping), so one
+    dismissal also hides its rephrasings."""
+
+    __tablename__ = "knowledge_gap_ignores"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="")

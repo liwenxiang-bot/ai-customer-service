@@ -14,12 +14,16 @@ Beyond running hybrid_search, this tool owns three prompt-side concerns:
 
 from __future__ import annotations
 
+import re
+import unicodedata
+from itertools import zip_longest
 from typing import Any
 
 from app.agent.context import estimate_tokens
 from app.agent.tools.base import Tool, ToolContext
 from app.core.logging import get_logger
 from app.rag.retrieval import hybrid_search
+from app.services.abuse_guard import guard_on
 from app.services.ai_config import merged_retrieval
 
 log = get_logger("tool.search_knowledge")
@@ -41,10 +45,10 @@ class SearchKnowledgeTool(Tool):
             "query": {
                 "type": "string",
                 "description": (
-                    "要检索的查询语句，必须【自包含、可独立理解】。结合上文把指代词"
-                    "（这个/那款/它/上面说的）替换为具体名称、补全省略的主体；保留用户"
-                    "原话中的关键术语、产品型号、错误码。例如上文在说“X1 手机”、用户接着"
-                    "问“它防水吗”，应检索“X1 手机 是否防水”，而不是“它防水吗”。"
+                    "要检索的问题，保留用户原话的自然问句，只做两件事：把指代词"
+                    "（这个/那款/它/上面说的）替换为具体名称、补全省略的主体。保留用户"
+                    "原话中的关键术语、产品型号、错误码；不要堆砌关键词或改写成长串。"
+                    "例如上文在说“X1 手机”、用户接着问“它防水吗”，应检索“X1 手机防水吗”。"
                 ),
             }
         },
@@ -63,6 +67,19 @@ class SearchKnowledgeTool(Tool):
         ctx.rag_search_calls = attempt
 
         results = await hybrid_search(ctx.db, ctx.ai_config, query)
+        # Dual query on the first attempt: the customer's own words next to the model's
+        # rewrite. A rewrite that drifts ("卡密在哪" → "充值卡 卡密 获取 查看 购买后")
+        # still lands when the raw message matches; costs one cached embedding.
+        raw = (getattr(ctx, "user_text", "") or "").strip()
+        if attempt == 1 and raw and len(raw) <= 200 and _norm(raw) != _norm(query):
+            try:
+                extra = await hybrid_search(ctx.db, ctx.ai_config, raw)
+            except Exception as exc:  # noqa: BLE001 — the rewrite's results stand on their own
+                log.warning("dual_query_degraded", error=str(exc))
+                extra = []
+            if extra:
+                top_k = int(merged_retrieval(ctx.ai_config)["top_k"])
+                results = _merge_results(results, extra, top_k)
         if not results:
             misses = getattr(ctx, "rag_search_misses", 0) + 1
             ctx.rag_search_misses = misses
@@ -70,17 +87,23 @@ class SearchKnowledgeTool(Tool):
             # floor — the distinction only exists inside hybrid_search. The query text
             # here is the raw material for spotting recall gaps in the KB.
             log.info("knowledge_miss", query=query, attempt=attempt, misses=misses)
+            decline_hint = (
+                "若这个问题明显不属于本店业务范围（写代码、写作业、闲聊等），"
+                "请直接调用 decline_off_topic，不要再检索。"
+                if guard_on(ctx.ai_config) else ""
+            )
             if misses == 1:
                 return (
                     f"检索「{query}」未在知识库中命中。请换一种表述立即再检索一次，"
                     "不要原样重发相同的查询：把指代词补全为具体的产品/业务名称、"
-                    "换用同义词、去掉语气词和口语词，或只保留最核心的关键词。"
+                    "换用同义词、去掉语气词和口语词，或只保留最核心的关键词。" + decline_hint
                 )
             return (
                 f"检索「{query}」仍未命中，请不要再检索。请基于通用常识谨慎、友好地"
                 "回应用户或追问澄清，涉及本店具体信息时说明「以商家实际为准」；"
+                "不要编造具体的入口、路径、价格或政策。"
                 "仅当用户明确要求人工、连续表达不满、或涉及账户操作/投诉/退款审批等"
-                "必须人工处理的事项时，才调用 escalate_to_human 转人工。"
+                "必须人工处理的事项时，才调用 escalate_to_human 转人工。" + decline_hint
             )
 
         # [来源N] refs stay unique across calls in this turn: reuse the ref of a chunk
@@ -153,6 +176,27 @@ class SearchKnowledgeTool(Tool):
             context_tokens=used,
         )
         return (
-            "以下是检索到的资料，请据此回答并标注引用的[来源N]：\n\n"
+            "以下是检索到的资料。只有当资料直接回答了用户的问题时，才据此作答并在句末"
+            "标注用到的[来源N]；如果资料只是沾边、没有直接回答，请明确告诉用户知识库暂无"
+            "相关资料，不要标注引用，也不要猜测具体的入口、路径、价格或政策。\n\n"
             + "\n\n---\n\n".join(blocks)
         )
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[\s\W_]+", "", unicodedata.normalize("NFKC", text or "")).lower()
+
+
+def _merge_results(primary: list, extra: list, top_k: int) -> list:
+    """Interleave two ranked result lists (rewrite first), dedupe by chunk, keep top_k.
+
+    Rank-interleaving is the scale-free way to merge: fusion and rerank scores from two
+    different queries are not comparable, ranks are."""
+    out: list = []
+    seen: set[str] = set()
+    for pair in zip_longest(primary, extra):
+        for r in pair:
+            if r is not None and r.chunk_id not in seen:
+                seen.add(r.chunk_id)
+                out.append(r)
+    return out[: max(top_k, 1)]

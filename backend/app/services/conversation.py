@@ -190,7 +190,8 @@ async def _persist_user_message(
 
 
 async def _persist_assistant_text(
-    db: AsyncSession, session: Session, content: str, citations: list, cache_hit: bool = False
+    db: AsyncSession, session: Session, content: str, citations: list, cache_hit: bool = False,
+    answer_kind: str = "",
 ) -> DBMessage:
     seq = await next_seq(db, session)
     msg = DBMessage(
@@ -201,6 +202,7 @@ async def _persist_assistant_text(
         content=content,
         citations=citations or [],
         tool_calls=[{"name": "semantic_cache", "status": "ok"}] if cache_hit else [],
+        answer_kind=answer_kind or ("grounded" if citations else "general"),
     )
     db.add(msg)
     await db.flush()
@@ -276,7 +278,7 @@ async def handle_turn(
         await abuse_guard.count_block("jailbreak")
         log.warning("guard_jailbreak_blocked", session_id=str(session.id))
         reply = abuse_guard.off_topic_reply(ai_config)
-        msg = await _persist_assistant_text(db, session, reply, [])
+        msg = await _persist_assistant_text(db, session, reply, [], answer_kind="off_topic")
         yield AgentEvent(kind="text", text=reply)
         yield AgentEvent(
             kind="done", text=reply,

@@ -200,6 +200,7 @@ async def operator_reply(
         content=content,
         attachments=attachments or [],
         model="human",  # marks this bubble as a human agent (not the AI)
+        answer_kind="human",  # excluded from the knowledge hit-rate denominator
     )
     db.add(msg)
     await db.flush()

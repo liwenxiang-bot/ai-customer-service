@@ -17,6 +17,7 @@ from app.models.enums import FeedbackKind, MessageRole, SessionStatus
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem
 from app.models.usage import UsageDaily
 from app.services.abuse_guard import blocks_today
+from app.services.answer_kind import BUSINESS_KINDS
 from app.services.usage import get_today_cost
 
 router = APIRouter(prefix="/dashboard", tags=["admin-dashboard"])
@@ -161,17 +162,56 @@ async def analytics(days: int = 14, db: AsyncSession = Depends(get_db), user: Ad
         round(sum(d["rating"] * d["count"] for d in csat_distribution) / rated, 2) if rated else None
     )
 
-    # ---- Knowledge grounding rate: assistant answers that cited the KB ----
-    grounded, total_answers = (
+    # ---- Knowledge hit rate, by what each answer actually was (services.answer_kind) ----
+    # Effective rate = grounded / business questions (grounded + no_info + general):
+    # greetings, handoffs, guard refusals and failed turns are not in the denominator.
+    # Legacy rows (answer_kind "" before the backfill) show up as "unclassified".
+    kind_rows = (
         await db.execute(
-            select(
-                func.count(Message.id).filter(func.jsonb_array_length(Message.citations) > 0),
-                func.count(Message.id),
-            ).where(Message.role == MessageRole.ASSISTANT, Message.created_at >= start)
+            select(Message.answer_kind, func.count(Message.id))
+            .where(
+                Message.role == MessageRole.ASSISTANT,
+                Message.created_at >= start,
+                Message.model != "human",
+            )
+            .group_by(Message.answer_kind)
+        )
+    ).all()
+    by_kind = {(k or "unclassified"): int(n) for k, n in kind_rows}
+    by_kind.pop("human", None)
+    total_answers = sum(by_kind.values())
+    business = sum(by_kind.get(k, 0) for k in BUSINESS_KINDS)
+    grounded = by_kind.get("grounded", 0)
+    effective_rate = round(grounded / business, 3) if business else None
+    # Citation-based rate kept for continuity with older dashboards (inflated: counts
+    # "retrieved something" regardless of what the answer said).
+    cited = (
+        await db.execute(
+            select(func.count(Message.id)).where(
+                Message.role == MessageRole.ASSISTANT,
+                Message.created_at >= start,
+                func.jsonb_array_length(Message.citations) > 0,
+            )
+        )
+    ).scalar_one()
+    grounding_rate = round(int(cited or 0) / total_answers, 3) if total_answers else None
+
+    # ---- Retrieval calls: how often search_knowledge came back empty ----
+    search_calls, search_misses = (
+        await db.execute(
+            text(
+                """
+                SELECT count(*),
+                       count(*) FILTER (WHERE t->>'result' LIKE '%未在知识库中命中%'
+                                           OR t->>'result' LIKE '%仍未命中%')
+                FROM messages m, jsonb_array_elements(m.tool_calls) t
+                WHERE m.created_at >= :start AND t->>'name' = 'search_knowledge'
+                """
+            ),
+            {"start": start},
         )
     ).one()
-    grounded, total_answers = int(grounded or 0), int(total_answers or 0)
-    grounding_rate = round(grounded / total_answers, 3) if total_answers else None
+    search_calls, search_misses = int(search_calls or 0), int(search_misses or 0)
 
     # ---- Most-cited knowledge items (unnest the citations JSONB array) ----
     # citation score carries two incomparable scales depending on config: RRF fusion
@@ -248,9 +288,17 @@ async def analytics(days: int = 14, db: AsyncSession = Depends(get_db), user: Ad
         "days": days,
         "csat": {"distribution": csat_distribution, "average": csat_avg, "rated": rated},
         "knowledge": {
-            "grounding_rate": grounding_rate,
+            "effective_rate": effective_rate,
             "grounded": grounded,
+            "business_answers": business,
+            "by_kind": by_kind,
             "total_answers": total_answers,
+            "grounding_rate": grounding_rate,  # legacy citation-based
+            "search": {
+                "calls": search_calls,
+                "misses": search_misses,
+                "hit_rate": round((search_calls - search_misses) / search_calls, 3) if search_calls else None,
+            },
             "top_items": top_items,
         },
         "cost": {"by_model": cost_by_model, "by_channel": cost_by_channel},

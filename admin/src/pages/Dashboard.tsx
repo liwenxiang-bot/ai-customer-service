@@ -277,12 +277,29 @@ export function Dashboard() {
 
           {/* 知识库命中 */}
           <Col xs={24} lg={8}>
-            <Card size="small" title="知识库命中" extra={<Button type="link" size="small" onClick={() => nav("/knowledge")}>管理 <RightOutlined /></Button>}>
-              <Statistic
-                title="回答引用知识库比例"
-                value={analytics.knowledge.grounding_rate == null ? "—" : (analytics.knowledge.grounding_rate * 100).toFixed(0) + "%"}
-                valueStyle={{ color: "#0F766E", fontSize: 24 }}
-              />
+            <Card size="small" title="知识库命中" extra={<Button type="link" size="small" onClick={() => nav("/knowledge?tab=gaps")}>未命中问题 <RightOutlined /></Button>}>
+              <AntdTooltip title="业务问题中，回答真正用上了知识库资料的比例。分母不含寒暄、转人工、拒答和失败的回答；回答说「没查到」的不算命中。">
+                <Statistic
+                  title="有效命中率（业务问题）"
+                  value={analytics.knowledge.effective_rate == null ? "—" : (analytics.knowledge.effective_rate * 100).toFixed(0) + "%"}
+                  valueStyle={{ color: "#0F766E", fontSize: 24 }}
+                />
+              </AntdTooltip>
+              <div style={{ fontSize: 12, color: token.colorTextSecondary, margin: "2px 0 8px", lineHeight: 1.8 }}>
+                {(() => {
+                  const k = analytics.knowledge.by_kind || {};
+                  const s = analytics.knowledge.search || {};
+                  return (
+                    <>
+                      <div>业务问题 {analytics.knowledge.business_answers ?? 0}：用上资料 {k.grounded ?? 0} · 说没资料 {k.no_info ?? 0} · 未检索 {k.general ?? 0}</div>
+                      <div>
+                        检索调用 {s.calls ?? 0} 次，命中 {s.hit_rate == null ? "—" : (s.hit_rate * 100).toFixed(0) + "%"}
+                        {k.unclassified ? ` · 未分类旧数据 ${k.unclassified}` : ""}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
               <div style={{ fontSize: 12, color: token.colorTextSecondary, margin: "4px 0 8px" }}>Top 引用知识</div>
               <List
                 size="small"

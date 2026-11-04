@@ -99,6 +99,9 @@ class Message(Base, TimestampMixin, TenantMixin):
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     degraded: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # What the assistant turn was (services.answer_kind.KINDS; "" = not classified yet,
+    # "human" = operator message). Drives the knowledge hit-rate and the gap list.
+    answer_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="", index=True)
 
     # User feedback (👍/👎) — a knowledge-distillation signal
     feedback: Mapped[str | None] = mapped_column(String(8), nullable=True)
