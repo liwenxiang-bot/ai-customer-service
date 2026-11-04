@@ -498,6 +498,23 @@ export function SessionPage() {
                         {m.content}
                       </div>
                     )}
+                    {isHuman && m.id && String(m.content || "").length >= 10 && (
+                      <button
+                        type="button"
+                        className="distill-btn"
+                        title="把这条回答和客户的问题提炼成知识，进入后台待审核"
+                        onClick={async () => {
+                          try {
+                            await conversationApi.distill(m.id);
+                            toast("已提交到知识库待审核", "success");
+                          } catch (e) {
+                            toast(apiError(e), "error");
+                          }
+                        }}
+                      >
+                        沉淀为知识
+                      </button>
+                    )}
                     {Array.isArray(m.attachments) && m.attachments.length > 0 && (
                       <div className="attachments">
                         {m.attachments.map((a: any, i: number) => {

@@ -37,6 +37,11 @@ from app.services.audit import write_audit
 from app.services.embedding_rebuild import start_rebuild
 from app.services.import_knowledge import import_document, import_knowledge, import_url
 from app.services.knowledge_gaps import collect_gaps, ignore_question
+from app.services.knowledge_questions import (
+    add_question,
+    generate_questions,
+    items_missing_questions,
+)
 
 router = APIRouter(prefix="/knowledge", tags=["admin-knowledge"])
 
@@ -68,6 +73,8 @@ class ItemIn(BaseModel):
     content: str
     category: str = Field("", max_length=_CATEGORY_MAX)
     tags: list[str] = []
+    # Customer phrasings (rag.questions); each becomes a question chunk on embed.
+    questions: list[str] = Field(default_factory=list, max_length=30)
     status: StatusLiteral = "published"
     # Validity window: NULL = unbounded on that side; retrieval skips items outside it.
     effective_from: datetime | None = None
@@ -90,6 +97,8 @@ class ItemUpdate(BaseModel):
     content: str | None = None
     category: str | None = Field(None, max_length=_CATEGORY_MAX)
     tags: list[str] | None = None
+    questions: list[str] | None = Field(None, max_length=30)
+    questions_auto: list[str] | None = Field(None, max_length=30)  # editor removes suggestions
     status: StatusLiteral | None = None
     # None clears the bound when the field is explicitly sent (checked via fields_set).
     effective_from: datetime | None = None
@@ -115,6 +124,8 @@ def _item_dict(
         "content": it.content,
         "category": it.category,
         "tags": it.tags,
+        "questions": list(it.questions or []),
+        "questions_auto": list(it.questions_auto or []),
         "status": it.status,
         "source": it.source,
         "version": it.version,
@@ -452,6 +463,52 @@ async def _get_or_404(db: AsyncSession, item_id: str) -> KnowledgeItem:
     return item
 
 
+# ----------------------------------------------------------------- customer phrasings
+class QuestionIn(BaseModel):
+    question: str = Field(min_length=1, max_length=120)
+
+
+@router.post("/questions/generate-missing", status_code=202)
+async def generate_missing_questions(
+    db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)
+):
+    """Queue LLM question suggestions for every published item that has none (≤300)."""
+    from app.db.tenant_context import get_current_tenant
+    from app.tasks.queue import enqueue
+
+    ids = await items_missing_questions(db)
+    tenant = get_current_tenant()
+    for iid in ids:
+        await enqueue("suggest_questions", str(iid), _tenant=str(tenant) if tenant else None)
+    await write_audit(db, user, "knowledge.questions_bulk", "knowledge_item", "", {"queued": len(ids)})
+    await db.commit()
+    return {"queued": len(ids)}
+
+
+class DistillIn(BaseModel):
+    message_id: str = Field(min_length=8, max_length=64)
+
+
+@router.post("/distill", status_code=201)
+async def distill_message(
+    body: DistillIn, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_operator)
+):
+    """Operator's "沉淀为知识": turn one (human or AI) answer + its question into a review
+    candidate right away. 409 when nothing usable or already distilled."""
+    from app.services.distill import distill_from_message
+
+    try:
+        uuid.UUID(body.message_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="message_id 无效")
+    ok = await distill_from_message(db, body.message_id)
+    if not ok:
+        raise HTTPException(status_code=409, detail="这条回复已沉淀过，或没有可提炼的问答（需要前面有客户提问）")
+    await write_audit(db, user, "knowledge.distill", "message", body.message_id, {})
+    await db.commit()
+    return {"ok": True}
+
+
 # ----------------------------------------------------------------- knowledge gaps
 @router.get("/gaps")
 async def knowledge_gaps(
@@ -537,6 +594,32 @@ async def update_item(
     await ksvc.update_item(db, item, data, user)
     await db.commit()
     return _item_dict(item)
+
+
+@router.post("/{item_id}/questions/generate")
+async def generate_item_questions(
+    item_id: str, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_operator)
+):
+    """Replace the item's LLM-suggested phrasings (hand-written ones are untouched)."""
+    item = await _get_or_404(db, item_id)
+    try:
+        generated = await generate_questions(db, item, user)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"生成失败：{type(exc).__name__}（请检查 LLM 配置）")
+    await db.commit()
+    return {**_item_dict(item), "generated": generated}
+
+
+@router.post("/{item_id}/questions")
+async def add_item_question(
+    item_id: str, body: QuestionIn, db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """Append one customer phrasing (the gap list's "归入已有知识")."""
+    item = await _get_or_404(db, item_id)
+    questions = await add_question(db, item, body.question, user)
+    await db.commit()
+    return {**_item_dict(item), "questions": questions}
 
 
 @router.delete("/{item_id}")

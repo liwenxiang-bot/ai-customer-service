@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logging import get_logger
@@ -19,6 +19,47 @@ from app.models.knowledge import KnowledgeReviewCandidate
 from app.services.ai_config import get_active_ai_config, to_llm_settings
 
 log = get_logger("distill")
+
+
+async def distill_latest_human_reply(db: AsyncSession, session_id: str) -> bool:
+    """Operator replies are the ground truth for exactly the questions the KB lacks.
+
+    Called when a handoff is resolved / a takeover ends: take the session's last
+    substantial operator message (≥ 10 chars), require a real customer question before
+    it, skip anything already distilled, and hand it to distill_from_message."""
+    from app.services.answer_kind import is_chitchat, wants_human
+
+    sid = uuid.UUID(session_id) if isinstance(session_id, str) else session_id
+    msg = (
+        await db.execute(
+            select(DBMessage)
+            .where(
+                DBMessage.session_id == sid,
+                DBMessage.role == MessageRole.ASSISTANT,
+                DBMessage.model == "human",
+                func.length(DBMessage.content) >= 10,
+            )
+            .order_by(DBMessage.seq.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not msg:
+        return False
+    question = (
+        await db.execute(
+            select(DBMessage.content)
+            .where(
+                DBMessage.session_id == sid,
+                DBMessage.seq < msg.seq,
+                DBMessage.role == MessageRole.USER,
+            )
+            .order_by(DBMessage.seq.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if not question or is_chitchat(question) or wants_human(question):
+        return False
+    return await distill_from_message(db, str(msg.id))
 
 
 async def distill_from_message(db: AsyncSession, message_id: str) -> bool:

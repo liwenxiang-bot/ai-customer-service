@@ -1380,3 +1380,17 @@ input[type="radio"] {
 .btn-on {
   color: var(--primary);
 }
+
+/* 人工气泡下的「沉淀为知识」：轻量文字按钮，不抢视线 */
+.distill-btn {
+  margin-top: 4px;
+  padding: 0 6px;
+  border: 1px dashed var(--line, #c9ced6);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted, #6b7280);
+  font-size: 11px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.distill-btn:hover { color: var(--accent, #0f766e); border-color: currentColor; }

@@ -92,6 +92,23 @@ async def publish(session_id: str, payload: dict) -> None:
         log.warning("takeover_publish_failed", error=str(exc))
 
 
+def schedule_human_reply_distill(db: AsyncSession, session_id) -> None:
+    """After the human part of a conversation ends, turn the operator's answer into a
+    knowledge review candidate (services.distill.distill_latest_human_reply). Runs in
+    the worker after commit so the ticket/takeover write never waits on an LLM call."""
+    from app.db.session import run_after_commit
+    from app.db.tenant_context import get_current_tenant
+    from app.tasks.queue import enqueue
+
+    tenant = get_current_tenant()
+    sid = str(session_id)
+
+    async def _fire() -> None:
+        await enqueue("distill_human_reply", sid, _tenant=str(tenant) if tenant else None)
+
+    run_after_commit(db, _fire)
+
+
 async def start_takeover(db: AsyncSession, session: Session, operator=None) -> None:
     session.status = SessionStatus.HUMAN_TAKEOVER
     if operator is not None:
