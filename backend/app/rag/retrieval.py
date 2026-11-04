@@ -50,6 +50,7 @@ from app.core.metrics import retrieval_calls, retrieval_top_score
 from app.llm.embeddings import EmbeddingSettings
 from app.llm.factory import get_embedding_client, get_rerank_client
 from app.models.config import AIConfig
+from app.rag.questions import QUESTION_INDEX_BASE, is_question_index
 from app.rag.segment import segment_query
 from app.services.ai_config import (
     merged_retrieval,
@@ -79,6 +80,7 @@ class RetrievalResult:
     score: float
     context: str = ""  # matched chunk expanded with neighbours (fed to the LLM)
     score_kind: str = "fusion"  # what `score` means: 'fusion' (weighted RRF) or 'rerank'
+    matched_question: str = ""  # set when a customer-phrasing chunk (rag.questions) matched
 
 
 @dataclass
@@ -499,6 +501,7 @@ async def hybrid_search(
     if fused:
         idx_map = await _chunk_indexes(db, [f[1] for f in fused])
         groups = _apply_item_quota(_merge_adjacent(fused, idx_map), per_item_max, top_k)
+        groups = _collapse_question_hits(groups)
 
     if not groups:
         retrieval_calls.labels(outcome="filtered", tenant=tenant).inc()  # recalled, nothing cleared the floor
@@ -524,17 +527,84 @@ async def hybrid_search(
         results=len(groups),
     )
 
-    expanded = await _expand_context(db, groups) if params["expand_context"] else {}
+    body_groups = [g for g in groups if not is_question_index(g.lo)]
+    question_groups = [g for g in groups if is_question_index(g.lo)]
+    expanded = await _expand_context(db, body_groups) if params["expand_context"] else {}
+    bodies = await _item_bodies(db, [g.rep[0] for g in question_groups]) if question_groups else {}
 
-    return [
-        RetrievalResult(
-            item_id=g.rep[0],
-            chunk_id=g.rep[1],
-            title=g.rep[2],
-            content=g.rep[3],
-            score=round(float(g.rep[4]), 4),
-            context=expanded.get(g.rep[1], g.rep[3]),
-            score_kind=score_kind,
-        )
-        for g in groups
-    ]
+    out: list[RetrievalResult] = []
+    for g in groups:
+        if is_question_index(g.lo):
+            # A customer phrasing matched: cite and inject the item's body, not the
+            # question text (which is what the vector/FTS row holds).
+            first, body = bodies.get(g.rep[0], (g.rep[3], g.rep[3]))
+            out.append(
+                RetrievalResult(
+                    item_id=g.rep[0], chunk_id=g.rep[1], title=g.rep[2], content=first,
+                    score=round(float(g.rep[4]), 4), context=body, score_kind=score_kind,
+                    matched_question=g.rep[3],
+                )
+            )
+        else:
+            out.append(
+                RetrievalResult(
+                    item_id=g.rep[0], chunk_id=g.rep[1], title=g.rep[2], content=g.rep[3],
+                    score=round(float(g.rep[4]), 4), context=expanded.get(g.rep[1], g.rep[3]),
+                    score_kind=score_kind,
+                )
+            )
+    return out
+
+
+def _collapse_question_hits(groups: list[_Group]) -> list[_Group]:
+    """One result per item once a question chunk of that item matched.
+
+    A question hit and a body hit of the same item would otherwise occupy two top_k
+    slots and inject the same body twice; keep the best-scoring one (groups arrive
+    score-descending) and let the question's score stand."""
+    with_question = {g.rep[0] for g in groups if is_question_index(g.lo)}
+    out: list[_Group] = []
+    seen: set[str] = set()
+    for g in groups:
+        item = g.rep[0]
+        if item in with_question:
+            if item in seen:
+                continue
+            seen.add(item)
+        out.append(g)
+    return out
+
+
+_BODY_CHARS = 1500
+
+
+async def _item_bodies(db: AsyncSession, item_ids: list[str]) -> dict[str, tuple[str, str]]:
+    """{item_id: (first body chunk, body chunks joined up to _BODY_CHARS)} for question hits."""
+    if not item_ids:
+        return {}
+    try:
+        sql = text(
+            """
+            SELECT item_id::text, content
+            FROM knowledge_chunks
+            WHERE item_id IN :ids AND chunk_index < :base
+            ORDER BY item_id, chunk_index
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+        rows = (
+            await db.execute(
+                sql, {"ids": [uuid.UUID(i) for i in dict.fromkeys(item_ids)], "base": QUESTION_INDEX_BASE}
+            )
+        ).all()
+    except Exception as exc:  # noqa: BLE001 — fall back to the question text itself
+        log.warning("item_body_lookup_degraded", error=str(exc))
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    for item_id, content in rows:
+        first, body = out.get(item_id, ("", ""))
+        if not first:
+            first = content
+        if len(body) < _BODY_CHARS:
+            body = (body + "\n" + content).strip() if body else content
+        out[item_id] = (first, body[:_BODY_CHARS])
+    return out

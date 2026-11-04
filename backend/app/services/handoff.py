@@ -18,7 +18,7 @@ from app.core.metrics import escalations as escalations_metric
 from app.models.conversation import HandoffTicket, Session
 from app.models.enums import HandoffStatus, SessionStatus
 from app.services.notify import notify_operator
-from app.services.takeover import publish, publish_admin_event
+from app.services.takeover import publish, publish_admin_event, schedule_human_reply_distill
 
 log = get_logger("handoff")
 
@@ -172,6 +172,8 @@ async def resolve_handoff(
     if assignee_id:
         ticket.assignee_id = assignee_id
     await db.flush()
+    # The operator's answer in this session is a knowledge candidate (gap → KB loop).
+    schedule_human_reply_distill(db, ticket.session_id)
     # 会话侧回迁：最后一张存活工单解决后，把仍在「待人工」的会话放回 AI 服务。
     # 否则它永远留在待认领计数和列表里，却无单可认领，坐席在收件箱无法处理。
     if not await live_tickets(db, ticket.session_id):

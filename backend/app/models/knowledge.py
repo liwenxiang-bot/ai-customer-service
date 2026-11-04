@@ -43,6 +43,10 @@ class KnowledgeItem(Base, TimestampMixin, TenantMixin):
     source: Mapped[str] = mapped_column(String(32), nullable=False, default=KnowledgeSource.MANUAL)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     extra: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # Customer phrasings of the question this item answers (rag.questions): hand-written
+    # and LLM-suggested. Both are indexed as question chunks on (re)embed.
+    questions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    questions_auto: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
     # Validity window (NULL = unbounded on that side). Time-boxed knowledge — promos,
     # old tariffs — must stop being retrievable once expired, or it competes with
