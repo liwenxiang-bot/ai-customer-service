@@ -18,7 +18,7 @@ from app.db.tenant_context import get_current_tenant
 from app.llm.factory import get_embedding_client
 from app.models.enums import ChunkStatus, KnowledgeStatus
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem, KnowledgeVersion
-from app.rag.chunking import chunk_text
+from app.rag.chunking import Chunk, chunk_markdown
 from app.rag.segment import segment
 from app.services.ai_config import get_active_ai_config, to_embedding_settings
 from app.services.audit import write_audit
@@ -67,6 +67,9 @@ async def create_item(db: AsyncSession, data: dict, actor=None) -> KnowledgeItem
         # row instead, so absent keys simply stay None here.
         effective_from=data.get("effective_from"),
         expires_at=data.get("expires_at"),
+        # Provenance for document/URL imports (source_url, source_name, section); lets
+        # a re-import of the same URL update the item instead of duplicating it.
+        extra=dict(data.get("extra") or {}),
         version=1,
     )
     db.add(item)
@@ -161,19 +164,25 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
     ai_config = await get_active_ai_config(db)
     emb_cfg = to_embedding_settings(ai_config)
     params = ai_config.retrieval or {}
-    pieces = chunk_text(
+    chunks = chunk_markdown(
         item.content, int(params.get("chunk_size", 600)), int(params.get("chunk_overlap", 100))
     )
 
-    # Anchor every chunk to its document: the title joins the embedding and FTS inputs
-    # so heading-style queries ("退货政策") reach chunks deep in a long document, while
-    # `content` stays the raw slice for citation accuracy. Tags are keyword-ish noise
-    # for the vector space, so they only join the FTS side.
+    # Anchor every chunk to its document: the title — and the chunk's heading path
+    # inside the document ("安装 > 第三步") — join the embedding and FTS inputs so
+    # heading-style queries reach chunks deep in a long document, while `content`
+    # stays the raw slice for citation accuracy. Tags are keyword-ish noise for the
+    # vector space, so they only join the FTS side.
     anchor = (item.title or "").strip()
     tags_line = " ".join(str(t) for t in (item.tags or []) if t).strip()
     fts_head = "\n".join(p for p in (anchor, tags_line) if p)
-    if not pieces and anchor:
-        pieces = [anchor]  # title-only item: keep it retrievable
+    if not chunks and anchor:
+        chunks = [Chunk(anchor)]  # title-only item: keep it retrievable
+    pieces = [c.text for c in chunks]
+
+    def _head(c: Chunk) -> str:
+        parts = [anchor] + ([c.heading] if c.heading and c.heading != anchor else [])
+        return "\n".join(p for p in parts if p)
 
     await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.item_id == item.id))
 
@@ -181,20 +190,22 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
     if emb_cfg.api_key and pieces:
         try:
             vectors = await get_embedding_client(emb_cfg).embed(
-                [f"{anchor}\n{p}" if anchor else p for p in pieces]
+                [f"{_head(c)}\n{c.text}" if _head(c) else c.text for c in chunks]
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("embed_failed_storing_unembedded", item_id=str(item.id), error=str(exc))
             vectors = [None] * len(pieces)
 
-    for i, (piece, vec) in enumerate(zip(pieces, vectors, strict=False)):
+    for i, (chunk, vec) in enumerate(zip(chunks, vectors, strict=False)):
+        piece = chunk.text
+        seg_head = "\n".join(p for p in (fts_head, chunk.heading) if p)
         db.add(
             KnowledgeChunk(
                 tenant_id=item.tenant_id,
                 item_id=item.id,
                 chunk_index=i,
                 content=piece,
-                content_seg=segment(f"{fts_head}\n{piece}" if fts_head else piece),
+                content_seg=segment(f"{seg_head}\n{piece}" if seg_head else piece),
                 embedding=vec,
                 embedding_model=emb_cfg.model if vec is not None else "",
                 embedding_dim=emb_cfg.dim if vec is not None else 0,

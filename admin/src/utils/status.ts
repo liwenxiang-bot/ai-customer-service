@@ -34,6 +34,8 @@ export const KNOWLEDGE_STATUS: Record<string, StatusMeta> = {
 export const KNOWLEDGE_SOURCE: Record<string, StatusMeta> = {
   manual: { label: "手动录入", color: "blue" },
   import: { label: "批量导入", color: "cyan" },
+  document: { label: "文档导入", color: "geekblue" },
+  url: { label: "网址导入", color: "volcano" },
   auto_distilled: { label: "对话沉淀", color: "purple" },
 };
 

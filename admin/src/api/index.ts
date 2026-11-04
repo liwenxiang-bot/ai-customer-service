@@ -46,11 +46,21 @@ export const knowledgeApi = {
   reviewList: (status = "pending") => api.get("/knowledge/review/list", { params: { status } }).then((r) => r.data),
   reviewApprove: (id: string, body: any) => api.post(`/knowledge/review/${id}/approve`, body).then((r) => r.data),
   reviewReject: (id: string) => api.post(`/knowledge/review/${id}/reject`).then((r) => r.data),
-  importFile: (file: File, dryRun = false) => {
+  // CSV/JSON → one item per row; md/txt/html/docx/pdf → one item per heading section.
+  // opts (category/status/tags) only apply to document files.
+  importFile: (file: File, dryRun = false, opts: { category?: string; status?: string; tags?: string } = {}) => {
     const fd = new FormData();
     fd.append("file", file);
-    return api.post("/knowledge/import", fd, { params: dryRun ? { dry_run: true } : {} }).then((r) => r.data);
+    const params: Record<string, string | boolean> = {};
+    if (dryRun) params.dry_run = true;
+    if (opts.category) params.category = opts.category;
+    if (opts.status) params.status = opts.status;
+    if (opts.tags) params.tags = opts.tags;
+    return api.post("/knowledge/import", fd, { params }).then((r) => r.data);
   },
+  // One page, or a same-site crawl under it (≤50 pages); re-importing a URL updates changed sections.
+  importUrl: (body: { url: string; crawl?: boolean; max_pages?: number; category?: string; status?: string; tags?: string[]; dry_run?: boolean }) =>
+    api.post("/knowledge/import-url", body).then((r) => r.data),
   // Authenticated blob download — a bare <a href> can't carry the Bearer header.
   importTemplate: () => api.get("/knowledge/import/template", { responseType: "blob" }).then((r) => r.data),
   exportItems: (params: any) => api.get("/knowledge/export", { params, responseType: "blob" }),
