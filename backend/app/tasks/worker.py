@@ -52,6 +52,32 @@ async def distill_from_feedback(ctx, message_id: str, _tenant: str | None = None
             return await distill_from_message(db, message_id)
 
 
+async def distill_human_reply(ctx, session_id: str, _tenant: str | None = None) -> bool:
+    """Handoff resolved / takeover ended → the operator's answer becomes a review candidate."""
+    from app.services.distill import distill_latest_human_reply
+
+    with tenant_scope(_tenant):
+        async with session_scope() as db:
+            return await distill_latest_human_reply(db, session_id)
+
+
+async def suggest_questions(ctx, item_id: str, _tenant: str | None = None) -> int:
+    """LLM-suggested customer phrasings for one knowledge item (rag.questions)."""
+    import uuid
+
+    from app.models.knowledge import KnowledgeItem
+    from app.services.knowledge_questions import generate_questions
+
+    with tenant_scope(_tenant):
+        async with session_scope() as db:
+            item = await db.get(KnowledgeItem, uuid.UUID(item_id))
+            if item is None:
+                return 0
+            generated = await generate_questions(db, item)
+            await db.commit()
+            return len(generated)
+
+
 async def cleanup_expired(ctx, _tenant: str | None = None) -> int:
     """Cron, cross-tenant: clean each active tenant under its own RLS context."""
     from app.services.cleanup import cleanup_expired as _c
@@ -167,6 +193,8 @@ class WorkerSettings:
         func(rebuild_embeddings, timeout=3 * 3600),
         summarize_session,
         distill_from_feedback,
+        distill_human_reply,
+        suggest_questions,
         cleanup_expired,
         reembed_stragglers,
         wechat_handle_inbound,

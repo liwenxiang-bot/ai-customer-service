@@ -58,6 +58,12 @@ export const knowledgeApi = {
   // 未命中问题：知识库答不上的客户问题，按语义归并（补知识的工作台）
   gaps: (days = 30) => api.get("/knowledge/gaps", { params: { days } }).then((r) => r.data),
   gapIgnore: (question: string) => api.post("/knowledge/gaps/ignore", { question }).then((r) => r.data),
+  // 客户问法：LLM 生成 / 手动追加（未命中问题「归入已有知识」）/ 批量补齐
+  generateQuestions: (id: string) => api.post(`/knowledge/${id}/questions/generate`).then((r) => r.data),
+  addQuestion: (id: string, question: string) => api.post(`/knowledge/${id}/questions`, { question }).then((r) => r.data),
+  generateMissingQuestions: () => api.post("/knowledge/questions/generate-missing").then((r) => r.data),
+  // 把一条回复（人工或 AI）连同前面的客户提问提炼成待审核知识
+  distill: (messageId: string) => api.post("/knowledge/distill", { message_id: messageId }).then((r) => r.data),
   renameCategory: (fromName: string, toName: string) =>
     api.post("/knowledge/category/rename", { from_name: fromName, to_name: toName }).then((r) => r.data),
   rebuildAll: () => api.post("/knowledge/rebuild").then((r) => r.data),

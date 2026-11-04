@@ -151,6 +151,8 @@ export const conversationApi = {
   release: (id: string, resumeAi: boolean) =>
     api.post(`/conversations/${id}/release`, { resume_ai: resumeAi }).then((r) => r.data),
   markHandled: (id: string) => api.post(`/conversations/${id}/mark-handled`).then((r) => r.data),
+  // 把一条人工回复连同前面的客户提问沉淀成待审核知识（后台「知识库 → 待审核」）
+  distill: (messageId: string) => api.post("/knowledge/distill", { message_id: messageId }).then((r) => r.data),
 };
 
 export const handoffApi = {

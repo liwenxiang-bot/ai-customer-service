@@ -19,6 +19,7 @@ from app.llm.factory import get_embedding_client
 from app.models.enums import ChunkStatus, KnowledgeStatus
 from app.models.knowledge import KnowledgeChunk, KnowledgeItem, KnowledgeVersion
 from app.rag.chunking import chunk_text
+from app.rag.questions import QUESTION_INDEX_BASE, normalize_questions
 from app.rag.segment import segment
 from app.services.ai_config import get_active_ai_config, to_embedding_settings
 from app.services.audit import write_audit
@@ -32,7 +33,12 @@ log = get_logger("knowledge")
 _AUDIT_CONTENT_MAX = 50_000
 
 # Fields update_item applies from `data`; also drives the changed_fields audit entry.
-_UPDATABLE_FIELDS = ("title", "content", "category", "tags", "status", "effective_from", "expires_at")
+_UPDATABLE_FIELDS = (
+    "title", "content", "category", "tags", "status", "effective_from", "expires_at",
+    "questions", "questions_auto",
+)
+# Fields whose change invalidates the chunks (questions are chunks too).
+_REEMBED_FIELDS = ("title", "content", "questions", "questions_auto")
 
 
 async def _snapshot_version(db: AsyncSession, item: KnowledgeItem, actor, note: str) -> None:
@@ -61,6 +67,7 @@ async def create_item(db: AsyncSession, data: dict, actor=None) -> KnowledgeItem
         content=data.get("content", ""),
         category=data.get("category", ""),
         tags=data.get("tags", []),
+        questions=normalize_questions(data.get("questions") or []),
         status=data.get("status", KnowledgeStatus.PUBLISHED),
         source=data.get("source", "manual"),
         # Validity window arrives on import rows; the admin API sets it on the flushed
@@ -86,7 +93,7 @@ async def update_item(db: AsyncSession, item: KnowledgeItem, data: dict, actor=N
         # No-op edit (e.g. bulk status-set hitting items already in that status):
         # don't bump the version, flood the snapshot table, or re-embed.
         return item
-    content_changed = "content" in changed_fields or "title" in changed_fields
+    content_changed = any(f in changed_fields for f in _REEMBED_FIELDS)
     # Snapshot the pre-edit state, then bump version.
     await _snapshot_version(db, item, actor, data.get("change_note", "edited"))
     item.version += 1
@@ -175,36 +182,50 @@ async def reembed_item(db: AsyncSession, item_id: str) -> int:
     if not pieces and anchor:
         pieces = [anchor]  # title-only item: keep it retrievable
 
+    # Question chunks (rag.questions): one per customer phrasing, embedded on their own so
+    # the match is question-to-question; retrieval swaps in the body when one hits.
+    questions = normalize_questions(
+        list(item.questions or []) + list(item.questions_auto or []), exclude=[anchor]
+    )
+
     await db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.item_id == item.id))
 
     vectors: list = [None] * len(pieces)
-    if emb_cfg.api_key and pieces:
+    q_vectors: list = [None] * len(questions)
+    if emb_cfg.api_key and (pieces or questions):
         try:
-            vectors = await get_embedding_client(emb_cfg).embed(
-                [f"{anchor}\n{p}" if anchor else p for p in pieces]
+            all_vecs = await get_embedding_client(emb_cfg).embed(
+                [f"{anchor}\n{p}" if anchor else p for p in pieces] + questions
             )
+            vectors, q_vectors = all_vecs[: len(pieces)], all_vecs[len(pieces):]
         except Exception as exc:  # noqa: BLE001
             log.warning("embed_failed_storing_unembedded", item_id=str(item.id), error=str(exc))
-            vectors = [None] * len(pieces)
+            vectors, q_vectors = [None] * len(pieces), [None] * len(questions)
+
+    def _row(index: int, content: str, seg_text: str, vec) -> KnowledgeChunk:
+        return KnowledgeChunk(
+            tenant_id=item.tenant_id,
+            item_id=item.id,
+            chunk_index=index,
+            content=content,
+            content_seg=segment(seg_text),
+            embedding=vec,
+            embedding_model=emb_cfg.model if vec is not None else "",
+            embedding_dim=emb_cfg.dim if vec is not None else 0,
+            status=ChunkStatus.READY if vec is not None else ChunkStatus.PENDING,
+            token_count=estimate_tokens(content),
+        )
 
     for i, (piece, vec) in enumerate(zip(pieces, vectors, strict=False)):
-        db.add(
-            KnowledgeChunk(
-                tenant_id=item.tenant_id,
-                item_id=item.id,
-                chunk_index=i,
-                content=piece,
-                content_seg=segment(f"{fts_head}\n{piece}" if fts_head else piece),
-                embedding=vec,
-                embedding_model=emb_cfg.model if vec is not None else "",
-                embedding_dim=emb_cfg.dim if vec is not None else 0,
-                status=ChunkStatus.READY if vec is not None else ChunkStatus.PENDING,
-                token_count=estimate_tokens(piece),
-            )
-        )
+        db.add(_row(i, piece, f"{fts_head}\n{piece}" if fts_head else piece, vec))
+    for i, (q, vec) in enumerate(zip(questions, q_vectors, strict=False)):
+        db.add(_row(QUESTION_INDEX_BASE + i, q, f"{anchor}\n{q}" if anchor else q, vec))
     await db.commit()
-    log.info("item_embedded", item_id=str(item.id), chunks=len(pieces), embedded=bool(emb_cfg.api_key))
-    return len(pieces)
+    log.info(
+        "item_embedded", item_id=str(item.id), chunks=len(pieces), questions=len(questions),
+        embedded=bool(emb_cfg.api_key),
+    )
+    return len(pieces) + len(questions)
 
 
 async def test_retrieval(db: AsyncSession, query: str) -> dict:
@@ -221,7 +242,8 @@ async def test_retrieval(db: AsyncSession, query: str) -> dict:
         "score_kind": results[0].score_kind if results else None,
         "results": [
             {"item_id": r.item_id, "chunk_id": r.chunk_id, "title": r.title,
-             "snippet": r.content[:300], "score": r.score}
+             "snippet": r.content[:300], "score": r.score,
+             "matched_question": getattr(r, "matched_question", "")}
             for r in results
         ],
     }

@@ -83,6 +83,46 @@ const GAP_KIND: Record<string, { label: string; color: string; tip: string }> = 
   unsearched: { label: "未检索", color: "default", tip: "AI 没有查知识库就直接回答了（新版本已改为每轮必查）" },
 };
 
+/** 把一条未命中的客户问题追加为某条已有知识的「客户问法」。 */
+function AttachQuestionModal({ question, onClose, onDone }: { question: string | null; onClose: () => void; onDone: () => void }) {
+  const { message } = AntApp.useApp();
+  const [q, setQ] = useState("");
+  const dq = useDebounce(q, 300);
+  const [options, setOptions] = useState<any[]>([]);
+  const [itemId, setItemId] = useState<string | undefined>();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (question) { setQ(""); setItemId(undefined); setOptions([]); } }, [question]);
+  useEffect(() => {
+    if (!question) return;
+    knowledgeApi.list({ q: dq, status: "published", page: 1, page_size: 10 })
+      .then((d) => setOptions((d.items || []).map((it: any) => ({ value: it.id, label: `${it.title}${it.category ? ` · ${it.category}` : ""}` }))))
+      .catch(() => setOptions([]));
+  }, [dq, question]);
+  const ok = async () => {
+    if (!question || !itemId) return;
+    setBusy(true);
+    try {
+      await knowledgeApi.addQuestion(itemId, question);
+      message.success("已追加为该条目的客户问法，向量将后台重建");
+      onDone();
+    } catch (e) {
+      message.error(apiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal title="归入已有知识" open={!!question} onCancel={onClose} onOk={ok} okText="追加问法" okButtonProps={{ disabled: !itemId, loading: busy }}>
+      <div style={{ marginBottom: 8 }}>客户问题：<b>{question}</b></div>
+      <Select
+        showSearch style={{ width: "100%" }} placeholder="搜索并选择要归入的知识条目"
+        filterOption={false} onSearch={setQ} options={options} value={itemId} onChange={setItemId}
+        notFoundContent={q ? "没有匹配的条目" : "输入关键词搜索"}
+      />
+    </Modal>
+  );
+}
+
 /** 未命中问题：知识库答不上的客户问题，按语义归并，作为补知识的工作台。 */
 function GapsTab({ editable, onCreate }: { editable: boolean; onCreate: (title: string) => void }) {
   const { message } = AntApp.useApp();
@@ -113,9 +153,14 @@ function GapsTab({ editable, onCreate }: { editable: boolean; onCreate: (title: 
     }
   };
 
+  const [attach, setAttach] = useState<string | null>(null);
   const groups: any[] = data?.groups || [];
   return (
     <Card>
+      <AttachQuestionModal
+        question={attach} onClose={() => setAttach(null)}
+        onDone={() => { setAttach(null); load(); }}
+      />
       <Space wrap style={{ marginBottom: 12, width: "100%", justifyContent: "space-between" }}>
         <Space wrap>
           <Segmented value={days} onChange={(v) => setDays(Number(v))} options={[{ label: "近 7 天", value: 7 }, { label: "近 30 天", value: 30 }, { label: "近 90 天", value: 90 }]} />
@@ -167,6 +212,7 @@ function GapsTab({ editable, onCreate }: { editable: boolean; onCreate: (title: 
             render: (_: any, r: any) => (
               <Space size={4} wrap>
                 {editable && <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => onCreate(r.question)}>新建知识</Button>}
+                {editable && <Button type="link" size="small" onClick={() => setAttach(r.question)}>归入已有知识</Button>}
                 {r.session_id && <Link to={`/conversations?session=${r.session_id}`}>查看对话</Link>}
                 {editable && (
                   <Popconfirm title="忽略这个问题？" description="相近的问法也不再显示" onConfirm={() => ignore(r.question)}>
@@ -353,6 +399,7 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
   }, [prefill?.nonce]);
 
   const [saving, setSaving] = useState(false);
+  const [genLoading, setGenLoading] = useState(false);
   const save = async () => {
     let v: any;
     try {
@@ -569,6 +616,20 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
         {editable && (
           <Tooltip title="为所有缺向量/未分块的条目重新生成向量；系统每 10 分钟也会自动补齐，此按钮用于立即触发">
             <Button icon={<ReloadOutlined />} onClick={reembedPending}>重嵌待处理</Button>
+            <Popconfirm
+              title="为没有问法的已发布条目生成客户问法？"
+              description="每条调用一次大模型（最多 300 条），后台排队执行，完成后自动重建向量。"
+              onConfirm={async () => {
+                try {
+                  const r = await knowledgeApi.generateMissingQuestions();
+                  message.success(r.queued ? `已排队 ${r.queued} 条，稍后自动生成` : "所有条目都已有问法");
+                } catch (e) {
+                  message.error(apiError(e));
+                }
+              }}
+            >
+              <Button icon={<ThunderboltOutlined />}>批量生成问法</Button>
+            </Popconfirm>
           </Tooltip>
         )}
         {editable && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>新增条目</Button>}
@@ -650,6 +711,54 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
           <Form.Item name="tags" label="标签">
             <Select mode="tags" placeholder="回车添加标签" options={allTags.map((t) => ({ value: t }))} />
           </Form.Item>
+          <Form.Item
+            name="questions" label="客户问法"
+            tooltip="客户可能怎么问这条知识。每种问法单独做向量，按「问题对问题」匹配，比正文匹配准得多；保存后生效。"
+          >
+            <Select mode="tags" placeholder="回车添加一种问法，如：显示限额了怎么办" tokenSeparators={["\n"]} />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(p, c) => p.questions_auto !== c.questions_auto}>
+            {() => {
+              const auto: string[] = form.getFieldValue("questions_auto") || [];
+              return (
+                <div style={{ marginTop: -12, marginBottom: 16 }}>
+                  <Space size={4} wrap style={{ alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: token.colorTextSecondary }}>自动生成的问法{auto.length ? `（${auto.length}）` : ""}：</span>
+                    {auto.map((q) => (
+                      <Tag
+                        key={q} color="geekblue" closable={editable}
+                        onClose={(e) => { e.preventDefault(); form.setFieldsValue({ questions_auto: auto.filter((x) => x !== q) }); }}
+                      >
+                        {q}
+                      </Tag>
+                    ))}
+                    {editable && drawer?.id && (
+                      <Button
+                        size="small" type="link" loading={genLoading}
+                        onClick={async () => {
+                          setGenLoading(true);
+                          try {
+                            const r = await knowledgeApi.generateQuestions(drawer.id);
+                            form.setFieldsValue({ questions_auto: r.questions_auto || [] });
+                            setDrawer((d: any) => ({ ...d, version: r.version, questions_auto: r.questions_auto }));
+                            message.success(`已生成 ${r.generated?.length ?? 0} 种问法，保存后生效`);
+                          } catch (e) {
+                            message.error(apiError(e));
+                          } finally {
+                            setGenLoading(false);
+                          }
+                        }}
+                      >
+                        {auto.length ? "重新生成" : "用 AI 生成问法"}
+                      </Button>
+                    )}
+                    {!drawer?.id && <span style={{ fontSize: 12, color: token.colorTextTertiary }}>保存后可用 AI 生成</span>}
+                  </Space>
+                </div>
+              );
+            }}
+          </Form.Item>
+          <Form.Item name="questions_auto" hidden><Input /></Form.Item>
           <Space size="large">
             <Form.Item name="effective_from" label="生效时间" tooltip="留空立即生效；未到生效时间的条目不参与检索">
               <DatePicker showTime allowClear style={{ width: 200 }} placeholder="留空立即生效" />
