@@ -31,6 +31,14 @@ from app.models.conversation import Message as DBMessage
 from app.models.conversation import Session
 from app.models.enums import MessageRole
 from app.services.abuse_guard import count_block, guard_on, off_topic_reply
+from app.services.answer_kind import (
+    classify,
+    clean_citations,
+    is_chitchat,
+    last_user_text,
+    searched_knowledge,
+    wants_human,
+)
 from app.services.usage import record_turn_cost
 
 log = get_logger("agent.runner")
@@ -89,6 +97,16 @@ class AgentRunner:
             if t["function"]["name"] != "decline_off_topic" or guard_on(self.ai_config)
         ]
         ctx = ToolContext(db=db, session=session, ai_config=self.ai_config, trace_id=trace_id)
+        user_text = last_user_text(messages)
+        ctx.user_text = user_text
+        # Every business question starts with a knowledge search. Left to "auto", the
+        # model answered ~1/3 of real questions ("现在用不了 gpt") from memory and skipped
+        # the KB entirely; greetings and handoff requests are the only exemptions.
+        force_search = (
+            any(t["function"]["name"] == "search_knowledge" for t in tool_schemas)
+            and not is_chitchat(user_text)
+            and not wants_human(user_text)
+        )
 
         usage = Usage()
         tool_trace: list[dict] = []
@@ -104,11 +122,12 @@ class AgentRunner:
                 if allow_tools and not (has_image_input and image_tools_disabled)
                 else None
             )
-            # With an image, the model tends to answer the picture directly and skip retrieval.
-            # Force a knowledge search on the first pass so the reply is still grounded in the KB
-            # (subsequent passes go back to "auto" so it can answer or call other tools).
+            # First pass: force a knowledge search (business questions and image turns —
+            # with an image the model tends to answer the picture directly). Subsequent
+            # passes go back to "auto" so it can answer, retry a rewrite, decline or
+            # escalate.
             tool_choice: str | dict = "auto"
-            if loop_i == 0 and has_image_input and tools_for_call:
+            if loop_i == 0 and tools_for_call and (has_image_input or force_search):
                 tool_choice = {"type": "function", "function": {"name": "search_knowledge"}}
             assistant_text = ""
             pending: list[ToolCall] = []
@@ -258,8 +277,30 @@ class AgentRunner:
                         final_text += INTERRUPTED_NOTE
                         yield AgentEvent(kind="text", text=INTERRUPTED_NOTE)
                 if not final_text:
+                    # Two passes and still nothing: that is a failed turn, not an answer.
+                    # Flag it so dashboards and the semantic cache treat it as such.
+                    degraded = True
+                    log.warning("llm_empty_answer_fallback", tools_ran=len(tool_trace))
                     final_text = "抱歉，我这边没能正常生成回复，可以再描述一下你的问题吗？"
                     yield AgentEvent(kind="text", text=final_text)
+
+        # ---- Citations the answer actually stands on + what kind of turn this was ----
+        # ctx.citations is everything retrieval returned; the client-facing and persisted
+        # list keeps only the [来源N] the answer mentions (none when it says it found
+        # nothing). The streamed "citations" event already showed the full list, so send
+        # the corrected one whenever it differs.
+        citations = clean_citations(final_text, ctx.citations)
+        if len(citations) != len(ctx.citations):
+            yield AgentEvent(kind="citations", citations=list(citations))
+        answer_kind = classify(
+            user_text=user_text,
+            final_text=final_text,
+            citations=citations,
+            searched=searched_knowledge(tool_trace),
+            escalated=ctx.escalation is not None,
+            off_topic=ctx.off_topic is not None,
+            degraded=degraded,
+        )
 
         # ---- Persist the assistant message with the full trace ----
         latency_ms = int((time.monotonic() - started) * 1000)
@@ -268,8 +309,8 @@ class AgentRunner:
         llm_tokens.labels(self.ai_config.llm_model, "prompt").inc(usage.prompt_tokens)
         llm_tokens.labels(self.ai_config.llm_model, "completion").inc(usage.completion_tokens)
         assistant_msg = await self._persist_assistant(
-            db, session, final_text, tool_trace, ctx.citations, trace_id, usage, cost,
-            latency_ms, degraded,
+            db, session, final_text, tool_trace, citations, trace_id, usage, cost,
+            latency_ms, degraded, answer_kind=answer_kind,
         )
 
         await record_turn_cost(db, session, usage, cost)
@@ -283,7 +324,8 @@ class AgentRunner:
             data={
                 "message_id": str(assistant_msg.id),
                 "session_id": str(session.id),
-                "citations": list(ctx.citations),
+                "citations": list(citations),
+                "answer_kind": answer_kind,
                 "escalation": ctx.escalation,
                 "usage": {
                     "prompt_tokens": usage.prompt_tokens,
@@ -319,7 +361,7 @@ class AgentRunner:
 
     async def _persist_assistant(
         self, db, session, content, tool_trace, citations, trace_id, usage, cost,
-        latency_ms, degraded,
+        latency_ms, degraded, answer_kind: str = "",
     ) -> DBMessage:
         # Imported lazily: app.services.conversation imports this module, so a top-level
         # import would be circular.
@@ -341,6 +383,7 @@ class AgentRunner:
             cost_usd=cost,
             latency_ms=latency_ms,
             degraded=degraded,
+            answer_kind=answer_kind,
         )
         db.add(msg)
         await db.flush()

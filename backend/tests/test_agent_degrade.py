@@ -50,8 +50,9 @@ def harness(monkeypatch):
     async def _build(*a, **k):
         return [{"role": "user", "content": "能退货吗"}]
 
-    async def _persist(self, db, session, text, trace, citations, trace_id, usage, cost, lat, degraded):
-        persisted.update(text=text, degraded=degraded, tools=len(trace))
+    async def _persist(self, db, session, text, trace, citations, trace_id, usage, cost, lat, degraded,
+                       answer_kind=""):
+        persisted.update(text=text, degraded=degraded, tools=len(trace), answer_kind=answer_kind)
         return SimpleNamespace(id="m1")
 
     async def _noop(*a, **k):

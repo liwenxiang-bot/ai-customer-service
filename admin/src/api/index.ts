@@ -55,6 +55,9 @@ export const knowledgeApi = {
   importTemplate: () => api.get("/knowledge/import/template", { responseType: "blob" }).then((r) => r.data),
   exportItems: (params: any) => api.get("/knowledge/export", { params, responseType: "blob" }),
   usageStats: () => api.get("/knowledge/usage-stats").then((r) => r.data),
+  // 未命中问题：知识库答不上的客户问题，按语义归并（补知识的工作台）
+  gaps: (days = 30) => api.get("/knowledge/gaps", { params: { days } }).then((r) => r.data),
+  gapIgnore: (question: string) => api.post("/knowledge/gaps/ignore", { question }).then((r) => r.data),
   renameCategory: (fromName: string, toName: string) =>
     api.post("/knowledge/category/rename", { from_name: fromName, to_name: toName }).then((r) => r.data),
   rebuildAll: () => api.post("/knowledge/rebuild").then((r) => r.data),

@@ -80,7 +80,7 @@ def run_turn(monkeypatch):
     async def _build(*a, **k):
         return [{"role": "user", "content": "帮我写一段 Python 爬虫"}]
 
-    async def _persist(self, db, session, text, trace, *rest):
+    async def _persist(self, db, session, text, trace, *rest, **kw):
         saved.update(text=text, tools=[t["name"] for t in trace])
         return SimpleNamespace(id="m1")
 

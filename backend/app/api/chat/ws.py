@@ -659,7 +659,7 @@ async def _persist_stopped_turn(
             )
         msg_id: str | None = None
         if partial:
-            msg = await _persist_assistant_text(db, session, partial, [])
+            msg = await _persist_assistant_text(db, session, partial, [], answer_kind="degraded")
             msg_id = str(msg.id)
         await db.commit()
         return str(session.id), msg_id
