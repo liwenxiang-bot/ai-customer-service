@@ -566,7 +566,7 @@ async def import_document(
         extra={"source_kind": "document", "source_name": filename or ""},
         # .md / .txt uploads never went through an HTML converter; an HTML-looking
         # snippet in them is still worth stripping, Markdown passes untouched.
-        clean_html=(filename or "").lower().endswith((".md", ".markdown", ".txt")),
+        clean_html=(filename or "").lower().endswith((".md", ".markdown", ".mdx", ".txt")),
     )
     base["doc_title"] = doc_title
     base["sections"] = _sections_report(rows)

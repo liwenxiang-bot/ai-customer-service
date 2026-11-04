@@ -912,7 +912,7 @@ function ImportModal({ open, onClose, onDone }: any) {
                   message={
                     <div style={{ fontSize: 12, lineHeight: 1.7 }}>
                       <div><b>表格</b>：CSV / JSON，一行一条；列 title,content,category,tags（标签用分号分隔）。</div>
-                      <div><b>文档</b>：Markdown / TXT / HTML / Word(.docx) / PDF，自动转为 Markdown 并按标题切成多条，标题形如「文档名：小节」。PDF 按页切分、不支持扫描件。</div>
+                      <div><b>文档</b>：Markdown / MDX / TXT / HTML / Word(.docx) / PDF，自动转为 Markdown 并按标题切成多条，标题形如「文档名：小节」。PDF 按页切分、不支持扫描件。</div>
                       <div>选择文件后先预检，确认后才写入；向量在导入后异步生成。</div>
                     </div>
                   }
@@ -920,7 +920,7 @@ function ImportModal({ open, onClose, onDone }: any) {
                 {docOptions}
                 <Space style={{ marginBottom: 12 }} wrap>
                   <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载 CSV 模板</Button>
-                  <Upload accept=".csv,.json,.md,.markdown,.txt,.html,.htm,.docx,.pdf" showUploadList={false} customRequest={({ file: f }: any) => pick(f)}>
+                  <Upload accept=".csv,.json,.md,.markdown,.mdx,.txt,.html,.htm,.docx,.pdf" showUploadList={false} customRequest={({ file: f }: any) => pick(f)}>
                     <Button icon={<UploadOutlined />} loading={checking}>{file ? "重新选择文件" : "选择文件（先预检，不入库）"}</Button>
                   </Upload>
                 </Space>

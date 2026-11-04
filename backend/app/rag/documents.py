@@ -41,7 +41,9 @@ from app.core.net import UnsafeURL, check_outbound_url
 
 log = get_logger("rag.documents")
 
-SUPPORTED_EXTS: tuple[str, ...] = (".md", ".markdown", ".txt", ".html", ".htm", ".docx", ".pdf")
+SUPPORTED_EXTS: tuple[str, ...] = (
+    ".md", ".markdown", ".mdx", ".txt", ".html", ".htm", ".docx", ".pdf",
+)
 
 # Sectioning knobs. A document at or under SECTION_MAX chars stays one item (one FAQ
 # answer, one short page); above it we split at headings. HARD_MAX is when a section
@@ -158,6 +160,85 @@ def _tidy_markdown(md: str) -> str:
     return md.strip()
 
 
+_FRONTMATTER = re.compile(r"\A﻿?---[ \t]*\n(.*?)\n---[ \t]*\n", re.S)
+_JSX_IMPORT = re.compile(r"^\s*(import|export)\s.*$")
+_JSX_SELF_CLOSING = re.compile(r"^\s*<([A-Za-z][\w.]*)\b([^>]*)/>\s*$")
+_JSX_OPEN = re.compile(r"^\s*<([A-Z][\w.]*)\b[^>]*>\s*$")
+_JSX_CLOSE = re.compile(r"^\s*</([A-Z][\w.]*)>\s*$")
+_JSX_INLINE_CALLOUT = re.compile(r"^\s*<Callout\b[^>]*>(.*?)</Callout>\s*$")
+_JSX_ATTR = re.compile(r'(\w+)=(?:"([^"]*)"|\'([^\']*)\'|\{`([^`]*)`\})')
+_HTML_ANCHOR = re.compile(r"<a\s+id=[\"'][^\"']*[\"']\s*/?>(</a>)?")
+_HTML_INLINE = (
+    (re.compile(r"<(strong|b)>(.*?)</\1>", re.S), r"**\2**"),
+    (re.compile(r"<code>(.*?)</code>", re.S), r"`\1`"),
+    (re.compile(r"<br\s*/?>"), "\n"),
+)
+
+
+def mdx_to_markdown(text: str) -> tuple[str, str]:
+    """MDX (Nextra / Docusaurus pages) → plain Markdown, plus the frontmatter title.
+
+    Drops import/export lines and component tags, turns <Callout> into a blockquote,
+    keeps an image component's caption (it is usually the instruction the screenshot
+    illustrates) and leaves fenced code untouched."""
+    title = ""
+    m = _FRONTMATTER.match(text)
+    if m:
+        for line in m.group(1).splitlines():
+            key, _, value = line.partition(":")
+            if key.strip() == "title":
+                title = value.strip().strip("'\"")
+        text = text[m.end():]
+    out: list[str] = []
+    fence: str | None = None
+    quote_depth = 0
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        s = raw.strip()
+        fm = _FENCE.match(s)
+        if fm:
+            if fence is None:
+                fence = fm.group(1)
+            elif s.startswith(fence):
+                fence = None
+            out.append(raw)
+            continue
+        if fence is not None:
+            out.append(raw)
+            continue
+        if _JSX_IMPORT.match(raw):
+            continue
+        im = _JSX_INLINE_CALLOUT.match(raw)
+        if im:
+            out.extend(["", f"> {im.group(1).strip()}", ""])
+            continue
+        sm = _JSX_SELF_CLOSING.match(raw)
+        if sm:
+            attrs = {k: (a or b or c) for k, a, b, c in _JSX_ATTR.findall(sm.group(2))}
+            caption = (attrs.get("caption") or "").strip()
+            if caption and sm.group(1)[0].isupper():
+                out.extend(["", caption, ""])
+            continue  # anchors (<a id=… />), images, other leaf components
+        om = _JSX_OPEN.match(raw)
+        if om:
+            if om.group(1) == "Callout":
+                quote_depth += 1
+                out.append("")
+            continue
+        cm = _JSX_CLOSE.match(raw)
+        if cm:
+            if cm.group(1) == "Callout" and quote_depth:
+                quote_depth -= 1
+                out.append("")
+            continue
+        line = _HTML_ANCHOR.sub("", raw)
+        for pat, repl in _HTML_INLINE:
+            line = pat.sub(repl, line)
+        if quote_depth:
+            line = ("> " + line.strip()) if line.strip() else ">"
+        out.append(line)
+    return _tidy_markdown("\n".join(out)), title
+
+
 def _docx_to_markdown(data: bytes) -> Converted:
     import mammoth
 
@@ -219,6 +300,9 @@ def document_to_markdown(data: bytes, filename: str) -> Converted:
     warnings = ["文件编码无法识别，已按 UTF-8 宽松解码，内容可能损坏"] if lossy else []
     if ext in (".html", ".htm"):
         md, title = html_to_markdown(text)
+        return Converted(md, title, warnings)
+    if ext == ".mdx":
+        md, title = mdx_to_markdown(text)
         return Converted(md, title, warnings)
     return Converted(_tidy_markdown(text), "", warnings)
 

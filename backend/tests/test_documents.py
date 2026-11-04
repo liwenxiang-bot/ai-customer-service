@@ -321,3 +321,67 @@ async def test_crawl_page_cap_reports_remaining(monkeypatch):
     fetched, warnings = await crawl("https://example.com/d/", max_pages=3)
     assert len(fetched) == 3
     assert any("上限" in w for w in warnings)
+
+
+# ----------------------------------------------------------------- MDX
+
+_MDX = """---
+title: 桌面版安装与配置
+description: 一页完成安装。
+---
+
+import CustomImage from '../../components/CustomImage'
+import { Callout } from 'nextra/components'
+
+# 桌面版安装与配置
+
+按本页完成 **安装 → 配置**。
+
+<Callout type="info">
+  **开始前**：在 [API 密钥管理](https://api.example.com/keys) 创建密钥。
+</Callout>
+
+## 第一步：安装
+
+<a id="codex" />
+
+### Codex 桌面版
+
+打开下载页安装。<strong>先退出</strong>应用，再继续 <code>cc-switch</code>。
+
+<CustomImage src="/images/a.png" alt="截图" caption="在列表中点击 CC Switch" />
+
+<Callout type="warning">仍无法定位时，请记录错误原文。</Callout>
+
+```bash
+# 这不是标题
+import os
+<Callout>也不是组件</Callout>
+```
+"""
+
+
+def test_mdx_to_markdown_strips_components_keeps_content():
+    md, title = D.mdx_to_markdown(_MDX)
+    assert title == "桌面版安装与配置"
+    assert "import " not in md.split("```")[0] and "CustomImage" not in md
+    assert "> **开始前**：在 [API 密钥管理](https://api.example.com/keys) 创建密钥。" in md
+    assert "> 仍无法定位时，请记录错误原文。" in md
+    assert '<a id="codex" />' not in md
+    assert "**先退出**应用，再继续 `cc-switch`。" in md
+    assert "在列表中点击 CC Switch" in md  # image caption kept, image itself dropped
+    # fenced code untouched
+    assert "# 这不是标题\nimport os\n<Callout>也不是组件</Callout>" in md
+
+
+def test_mdx_dispatch_and_sections():
+    conv = document_to_markdown(_MDX.encode("utf-8"), "desktop.mdx")
+    assert conv.title == "桌面版安装与配置"
+    out = split_sections(conv.markdown, conv.title, section_max=10)
+    assert [s.title for s in out] == ["桌面版安装与配置：第一步：安装"]
+    assert out[0].content.startswith("按本页完成")  # intro carried
+
+
+def test_mdx_component_only_page_yields_no_sections():
+    conv = document_to_markdown(b"---\ntitle: Home\n---\nimport HomePage from '../x'\n\n<HomePage />\n", "index.mdx")
+    assert conv.title == "Home" and split_sections(conv.markdown, conv.title) == []
