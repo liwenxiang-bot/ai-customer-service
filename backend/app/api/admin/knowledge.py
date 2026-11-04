@@ -29,6 +29,7 @@ from app.models.knowledge import (
     KnowledgeItem,
     KnowledgeReviewCandidate,
     KnowledgeVersion,
+    RetrievalEvalCase,
 )
 from app.services import knowledge as ksvc
 from app.services.ai_config import get_active_ai_config
@@ -41,6 +42,7 @@ from app.services.knowledge_questions import (
     generate_questions,
     items_missing_questions,
 )
+from app.services.retrieval_eval import add_case, list_cases
 
 router = APIRouter(prefix="/knowledge", tags=["admin-knowledge"])
 
@@ -504,6 +506,61 @@ async def distill_message(
     if not ok:
         raise HTTPException(status_code=409, detail="这条回复已沉淀过，或没有可提炼的问答（需要前面有客户提问）")
     await write_audit(db, user, "knowledge.distill", "message", body.message_id, {})
+    await db.commit()
+    return {"ok": True}
+
+
+# ----------------------------------------------------------------- eval cases (calibration)
+class EvalCaseIn(BaseModel):
+    query: str = Field(min_length=1, max_length=2000)
+    expected_item_id: str | None = None  # None ⇒ the KB has no answer; retrieval should return nothing
+    source: str = Field("manual", max_length=32)
+
+
+@router.get("/eval-cases")
+async def list_eval_cases(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(get_current_user)):
+    rows = await list_cases(db)
+    return {
+        "items": [
+            {
+                "id": str(r.id), "query": r.query,
+                "expected_item_id": str(r.expected_item_id) if r.expected_item_id else None,
+                "expected_title": r.expected_title, "source": r.source, "created_by": r.created_by,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.post("/eval-cases", status_code=201)
+async def create_eval_case(
+    body: EvalCaseIn, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_operator)
+):
+    title = ""
+    if body.expected_item_id:
+        item = await _get_or_404(db, body.expected_item_id)
+        title = item.title
+    row = await add_case(
+        db, body.query, body.expected_item_id, title, body.source, getattr(user, "email", "") or ""
+    )
+    await db.commit()
+    return {"ok": True, "id": str(row.id), "expected_title": title}
+
+
+@router.delete("/eval-cases/{case_id}")
+async def delete_eval_case(
+    case_id: str, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_operator)
+):
+    try:
+        cid = uuid.UUID(case_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="用例不存在")
+    row = await db.get(RetrievalEvalCase, cid)
+    if row is None:
+        raise HTTPException(status_code=404, detail="用例不存在")
+    await db.delete(row)
     await db.commit()
     return {"ok": True}
 

@@ -469,7 +469,10 @@ async def hybrid_search(
     # Optional rerank over the fused candidates (on the matched chunk text).
     rer_cfg = to_rerank_settings(cfg)
     reranked = False
-    if rer_cfg and rer_cfg.api_key and len(fused) > 1:
+    # Rerank even a single candidate: otherwise that result carries a fusion score
+    # (~0.017) where every other one carries a rerank score, min_score never applies
+    # to it, and dashboards / calibration see two incomparable scales.
+    if rer_cfg and rer_cfg.api_key and fused:
         top_n = max(int(params["rerank_top_n"]), top_k)
         pool = fused[:candidate_n]
         docs = [f"{f[2]}\n{f[3]}" for f in pool]

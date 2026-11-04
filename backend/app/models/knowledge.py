@@ -178,3 +178,19 @@ class KnowledgeGapIgnore(Base, TimestampMixin, TenantMixin):
     id: Mapped[uuid.UUID] = uuid_pk()
     question: Mapped[str] = mapped_column(Text, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+
+
+class RetrievalEvalCase(Base, TimestampMixin, TenantMixin):
+    """A labelled customer question for calibrating retrieval thresholds from the admin
+    UI: `expected_item_id` is the item that should come back (NULL = the knowledge base
+    has no answer and retrieval should return nothing). Captured from the 测试检索
+    dialog and the gap list; services.retrieval_eval sweeps thresholds over them."""
+
+    __tablename__ = "retrieval_eval_cases"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    query: Mapped[str] = mapped_column(Text, nullable=False)
+    expected_item_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    expected_title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False, default="")

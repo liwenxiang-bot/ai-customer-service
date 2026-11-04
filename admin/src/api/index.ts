@@ -77,6 +77,16 @@ export const aiConfigApi = {
   testLLM: (message: string) => api.post("/ai-config/test-llm", { message }).then((r) => r.data),
   rebuildStatus: () => api.get("/ai-config/rebuild-status").then((r) => r.data),
   rebuild: () => api.post("/ai-config/rebuild").then((r) => r.data),
+  // 一键校准：对评测用例扫描相关性门槛，给出推荐值（不自动应用）
+  calibrate: () => api.post("/ai-config/calibrate").then((r) => r.data),
+};
+
+// ---- Retrieval eval cases (calibration set) ----
+export const evalCaseApi = {
+  list: () => api.get("/knowledge/eval-cases").then((r) => r.data),
+  add: (body: { query: string; expected_item_id?: string | null; source?: string }) =>
+    api.post("/knowledge/eval-cases", body).then((r) => r.data),
+  remove: (id: string) => api.delete(`/knowledge/eval-cases/${id}`).then((r) => r.data),
 };
 
 // ---- Channels ----
