@@ -30,11 +30,12 @@ from app.models.knowledge import (
     KnowledgeReviewCandidate,
     KnowledgeVersion,
 )
+from app.rag.documents import SUPPORTED_EXTS as SUPPORTED_DOC_EXTS
 from app.services import knowledge as ksvc
 from app.services.ai_config import get_active_ai_config
 from app.services.audit import write_audit
 from app.services.embedding_rebuild import start_rebuild
-from app.services.import_knowledge import import_knowledge
+from app.services.import_knowledge import import_document, import_knowledge, import_url
 from app.services.knowledge_gaps import collect_gaps, ignore_question
 
 router = APIRouter(prefix="/knowledge", tags=["admin-knowledge"])
@@ -631,18 +632,27 @@ async def import_file(
     file: UploadFile,
     request: Request,
     dry_run: bool = Query(False, description="true=只解析/查重并返回报告，不落库"),
+    category: str = Query("", max_length=120, description="文档类导入：所有条目的分类"),
+    status: str | None = Query(None, pattern="^(draft|published)$", description="文档类导入：条目状态"),
+    tags: str = Query("", max_length=500, description="文档类导入：标签，分号分隔"),
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_operator),
 ):
+    """CSV / JSON → one item per row; md / txt / html / docx / pdf → one item per
+    heading section (see rag.documents). Both share dedup and the dry-run report."""
     name = (file.filename or "").lower()
-    if not name.endswith((".csv", ".json")):
+    is_rows = name.endswith((".csv", ".json"))
+    if not is_rows and not name.endswith(SUPPORTED_DOC_EXTS):
         raise HTTPException(
             status_code=400,
-            detail="仅支持 .csv / .json 文件，请先另存为 CSV（UTF-8）或 JSON 再上传",
+            detail=(
+                "不支持的文件类型。表格类：.csv / .json（一行一条）；文档类："
+                + " / ".join(SUPPORTED_DOC_EXTS)
+                + "（按标题自动切成多条）。Excel 请另存为 CSV（UTF-8）"
+            ),
         )
-    fmt = "json" if name.endswith(".json") else "csv"
     data = await file.read()
-    if data[:4] == b"PK\x03\x04":  # xlsx/zip renamed to .csv would parse into garbage rows
+    if is_rows and data[:4] == b"PK\x03\x04":  # xlsx/zip renamed to .csv would parse into garbage rows
         raise HTTPException(
             status_code=400, detail="检测到 Excel 文件，请在 Excel 中另存为 CSV（UTF-8）后重新上传"
         )
@@ -650,10 +660,20 @@ async def import_file(
         raise HTTPException(
             status_code=413, detail="文件超过 20MB 上限，请拆分成多个文件分批导入"
         )
-    if dry_run:
-        # Nothing persisted → nothing to audit.
-        return await import_knowledge(db, data, fmt, user, dry_run=True)
-    result = await import_knowledge(db, data, fmt, user)
+    if is_rows:
+        fmt = "json" if name.endswith(".json") else "csv"
+        if dry_run:
+            return await import_knowledge(db, data, fmt, user, dry_run=True)  # nothing persisted → no audit
+        result = await import_knowledge(db, data, fmt, user)
+    else:
+        kwargs = {
+            "category": (category or "").strip()[:120],
+            "status": status or None,
+            "tags": [t.strip() for t in (tags or "").replace("；", ";").replace(",", ";").split(";") if t.strip()],
+        }
+        if dry_run:
+            return await import_document(db, data, file.filename or "", actor=user, dry_run=True, **kwargs)
+        result = await import_document(db, data, file.filename or "", actor=user, **kwargs)
     # Batch-level audit: the filename/encoding/counters exist nowhere else once the
     # response is dismissed. import_knowledge committed already; this is its own tx.
     await write_audit(
@@ -664,6 +684,47 @@ async def import_file(
             "total": result.get("total", 0),
             "created": result.get("created", 0),
             "failed": result.get("failed", 0),
+            "skipped_duplicates": result.get("skipped_duplicates", 0),
+        },
+        ip=_client_ip(request),
+    )
+    await db.commit()
+    return result
+
+
+class ImportUrlIn(BaseModel):
+    url: str = Field(min_length=4, max_length=2000)
+    crawl: bool = False  # also fetch same-site pages under the URL's path
+    max_pages: int = Field(50, ge=1, le=50)
+    category: str = Field("", max_length=120)
+    status: str | None = Field(None, pattern="^(draft|published)$")
+    tags: list[str] = Field(default_factory=list, max_length=20)
+    dry_run: bool = False
+
+
+@router.post("/import-url")
+async def import_from_url(
+    body: ImportUrlIn,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_operator),
+):
+    """Fetch a page (or crawl a docs site under it) and import it as sectioned items.
+    Items keep their source URL; importing the same URL again updates changed sections."""
+    kwargs = {
+        "crawl_site": body.crawl, "max_pages": body.max_pages,
+        "category": body.category.strip(), "status": body.status,
+        "tags": [t.strip() for t in body.tags if t.strip()],
+    }
+    if body.dry_run:
+        return await import_url(db, body.url, actor=user, dry_run=True, **kwargs)
+    result = await import_url(db, body.url, actor=user, **kwargs)
+    await write_audit(
+        db, user, "knowledge.import_url", "knowledge_item", "",
+        {
+            "url": body.url, "crawl": body.crawl, "pages": len(result.get("pages") or []),
+            "total": result.get("total", 0), "created": result.get("created", 0),
+            "updated": result.get("updated", 0), "failed": result.get("failed", 0),
             "skipped_duplicates": result.get("skipped_duplicates", 0),
         },
         ip=_client_ip(request),

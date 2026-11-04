@@ -1,4 +1,14 @@
-"""Batch knowledge import (CSV / JSON).
+"""Batch knowledge import (CSV / JSON rows, uploaded documents, URLs).
+
+Three entry points share one insert loop (`_import_rows`: dedup → savepoint-per-row
+insert → report):
+- `import_knowledge`: CSV / JSON, one item per row;
+- `import_document`: md / txt / html / docx / pdf, converted to Markdown and cut into
+  one item per heading section (see rag.documents);
+- `import_url`: one page, or a bounded same-site crawl, sectioned the same way. Items
+  remember their source URL, so importing the same URL again UPDATES changed sections
+  (new version) instead of skipping them as duplicates — that is how a docs site is
+  kept in sync.
 
 Parsing + item insert is fast and synchronous; the slow part (embedding) is enqueued
 per item, so importing hundreds of rows never blocks the request (requirements §7, §13).
@@ -41,7 +51,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.models.enums import KnowledgeSource, KnowledgeStatus
 from app.models.knowledge import KnowledgeItem
-from app.services.knowledge import create_item
+from app.rag.documents import (
+    Section,
+    UnsupportedDocument,
+    crawl,
+    document_to_markdown,
+    fetch_url,
+    leading_title,
+    split_sections,
+)
+from app.services.knowledge import create_item, update_item
 
 log = get_logger("import")
 
@@ -181,13 +200,17 @@ def _parse_window_dt(value) -> datetime | None:
 
 
 def _norm_row(title: str, content: str, category: str, tags,
-              effective_from=None, expires_at=None, status=None) -> dict:
+              effective_from=None, expires_at=None, status=None, *,
+              clean_html: bool = True, extra: dict | None = None) -> dict:
     row = {
         "title": title.strip()[:_TITLE_MAX],
-        "content": _clean_content(content.strip()),
+        # Document/URL rows are already Markdown (converted from HTML upstream); the
+        # HTML sniff would only mangle legitimate inline tags in them.
+        "content": _clean_content(content.strip()) if clean_html else content.strip(),
         "category": category.strip()[:_CATEGORY_MAX],
         "tags": _norm_tags(tags),
         "status": str(status or "").strip().lower() or None,  # None → importer default
+        "extra": dict(extra or {}),
         "effective_from": None,
         "expires_at": None,
         # Row-level parse problem (bad date, inverted window) — reported per row later.
@@ -301,45 +324,52 @@ def _preview_row(row: dict) -> dict:
     }
 
 
-async def import_knowledge(
-    db: AsyncSession, data: bytes, fmt: str, actor=None, dry_run: bool = False
+def _failure(base: dict, msg: str, dry_run: bool) -> dict:
+    failure = {"errors": [msg], "total": 0, "failed_rows": [], **base}
+    if dry_run:
+        return {"dry_run": True, "would_create": 0, "would_skip": 0, "preview": [], **failure}
+    return {"created": 0, "failed": 0, "updated": 0, **failure}
+
+
+async def _import_rows(
+    db: AsyncSession,
+    rows: list[dict],
+    *,
+    base: dict,
+    source: str,
+    actor=None,
+    dry_run: bool = False,
+    upsert_by_source: bool = False,
 ) -> dict:
-    text, encoding, lossy = _decode(data)
-    warnings: list[str] = []
-    if lossy:
-        ratio = text.count("�") / len(text) if text else 0.0
-        warnings.append(
-            f"文件编码无法识别，已按 UTF-8 宽松解码（替换符占比 {ratio:.1%}），"
-            "导入内容可能损坏，建议转存为 UTF-8 后重试"
-        )
-        log.warning("import_lossy_decode", replacement_ratio=round(ratio, 4))
+    """Shared insert loop: dedup against the KB and within the batch, savepoint per row,
+    one report dict for both dry-run and real runs.
 
-    base = {"skipped_duplicates": 0, "skipped": [], "encoding": encoding, "warnings": warnings}
-    try:
-        rows, parse_warnings = parse_rows(text, fmt)
-        warnings.extend(parse_warnings)
-    except Exception as exc:  # noqa: BLE001
-        failure = {"errors": [f"解析失败: {exc}"], "total": 0, "failed_rows": [], **base}
-        if dry_run:
-            return {"dry_run": True, "would_create": 0, "would_skip": 0, "preview": [], **failure}
-        return {"created": 0, "failed": 0, **failure}
-
+    `upsert_by_source`: rows whose extra.source_url + title match an existing item
+    update that item when the content changed (and count as `updated`) instead of
+    being skipped as a title duplicate — the re-sync path for URL imports."""
+    encoding = base.get("encoding", "")
     # Dedup baseline: titles + normalised-content hashes of live items (RLS scopes the
     # query to the tenant). Archived items have no chunks and don't retrieve, so they
     # shouldn't block a re-import.
     existing = (
         await db.execute(
-            select(KnowledgeItem.title, KnowledgeItem.content).where(
-                KnowledgeItem.status != KnowledgeStatus.ARCHIVED
-            )
+            select(KnowledgeItem.id, KnowledgeItem.title, KnowledgeItem.content, KnowledgeItem.extra)
+            .where(KnowledgeItem.status != KnowledgeStatus.ARCHIVED)
         )
     ).all()
-    db_titles = {t for t, _ in existing if t}
-    db_hashes = {_content_fingerprint(c) for _, c in existing}
+    db_titles = {r[1] for r in existing if r[1]}
+    db_hashes = {_content_fingerprint(r[2]) for r in existing}
+    # (source_url, title) → (item_id, content hash) for the upsert path
+    by_source: dict[tuple[str, str], tuple] = {}
+    if upsert_by_source:
+        for r in existing:
+            src = (r[3] or {}).get("source_url") if isinstance(r[3], dict) else None
+            if src and r[1]:
+                by_source[(src, r[1])] = (r[0], _content_fingerprint(r[2]))
     batch_titles: dict[str, int] = {}  # title → first row that created it
     batch_hashes: dict[str, int] = {}
 
-    created, errors, skipped = 0, [], []
+    created, updated, errors, skipped = 0, 0, [], []
     failed_rows: list[dict] = []
 
     def _fail(i: int, row: dict, reason: str) -> None:
@@ -355,6 +385,30 @@ async def import_knowledge(
             _fail(i, row, "content 为空，已跳过")
             continue
         fp = _content_fingerprint(row["content"])
+        src_key = (row["extra"].get("source_url", ""), row["title"]) if upsert_by_source else None
+        if src_key and src_key[0] and src_key in by_source:
+            item_id, old_fp = by_source[src_key]
+            if old_fp == fp:
+                skipped.append(f"第{i}行：「{row['title']}」内容未变化，已跳过")
+                continue
+            if not dry_run:
+                try:
+                    async with db.begin_nested():
+                        item = await db.get(KnowledgeItem, item_id)
+                        if item is None:
+                            raise RuntimeError("原条目不存在")
+                        await update_item(
+                            db, item,
+                            {"content": row["content"], "category": row["category"] or item.category},
+                            actor,
+                        )
+                except Exception as exc:  # noqa: BLE001
+                    _fail(i, row, str(exc))
+                    continue
+            updated += 1
+            batch_titles[row["title"]] = i
+            batch_hashes[fp] = i
+            continue
         if row["title"] and row["title"] in db_titles:
             skipped.append(f"第{i}行：标题与知识库已有条目重复，已跳过（如需更新请编辑原条目）")
             continue
@@ -377,7 +431,8 @@ async def import_knowledge(
                         {
                             **{k: row[k] for k in _ROW_FIELDS},
                             "status": row["status"] or KnowledgeStatus.PUBLISHED,
-                            "source": KnowledgeSource.IMPORT,
+                            "source": source,
+                            "extra": row["extra"],
                         },
                         actor,
                     )
@@ -391,12 +446,13 @@ async def import_knowledge(
 
     if dry_run:
         log.info(
-            "import_dry_run", would_create=created, failed=len(errors),
-            skipped=len(skipped), encoding=encoding,
+            "import_dry_run", would_create=created, would_update=updated, failed=len(errors),
+            skipped=len(skipped), encoding=encoding, source=source,
         )
         return {
             "dry_run": True,
             "would_create": created,
+            "would_update": updated,
             "would_skip": len(skipped),
             "errors": errors[:50],
             "total": len(rows),
@@ -414,15 +470,16 @@ async def import_knowledge(
         # still gets the full row report, just with nothing persisted.
         await db.rollback()
         log.error("import_commit_failed", error=str(exc))
-        errors.insert(0, f"提交失败，本批 {created} 条成功行未入库: {exc}")
-        created = 0
+        errors.insert(0, f"提交失败，本批 {created + updated} 条成功行未入库: {exc}")
+        created = updated = 0
 
     log.info(
-        "import_done", created=created, failed=len(errors),
-        skipped=len(skipped), encoding=encoding,
+        "import_done", created=created, updated=updated, failed=len(errors),
+        skipped=len(skipped), encoding=encoding, source=source,
     )
     return {
         "created": created,
+        "updated": updated,
         "failed": len(errors),
         "errors": errors[:50],
         "total": len(rows),
@@ -431,3 +488,141 @@ async def import_knowledge(
         "skipped": skipped[:50],
         "failed_rows": failed_rows,
     }
+
+
+async def import_knowledge(
+    db: AsyncSession, data: bytes, fmt: str, actor=None, dry_run: bool = False
+) -> dict:
+    """CSV / JSON rows → items (one per row)."""
+    text, encoding, lossy = _decode(data)
+    warnings: list[str] = []
+    if lossy:
+        ratio = text.count("�") / len(text) if text else 0.0
+        warnings.append(
+            f"文件编码无法识别，已按 UTF-8 宽松解码（替换符占比 {ratio:.1%}），"
+            "导入内容可能损坏，建议转存为 UTF-8 后重试"
+        )
+        log.warning("import_lossy_decode", replacement_ratio=round(ratio, 4))
+
+    base = {"skipped_duplicates": 0, "skipped": [], "encoding": encoding, "warnings": warnings}
+    try:
+        rows, parse_warnings = parse_rows(text, fmt)
+        warnings.extend(parse_warnings)
+    except Exception as exc:  # noqa: BLE001
+        return _failure(base, f"解析失败: {exc}", dry_run)
+    return await _import_rows(
+        db, rows, base=base, source=KnowledgeSource.IMPORT, actor=actor, dry_run=dry_run
+    )
+
+
+# ----------------------------------------------------------------- documents / URLs
+
+_SECTIONS_PREVIEW_MAX = 300
+
+
+def _section_rows(
+    sections: list[Section], *, category: str, status: str | None, tags: list[str],
+    extra: dict, clean_html: bool = False,
+) -> list[dict]:
+    rows = []
+    for s in sections:
+        rows.append(
+            _norm_row(
+                s.title, s.content, category, tags, status=status,
+                clean_html=clean_html, extra={**extra, "section": s.title},
+            )
+        )
+    return rows
+
+
+def _sections_report(rows: list[dict]) -> list[dict]:
+    return [
+        {"title": r["title"], "chars": len(r["content"]), "error": r["error"] or None}
+        for r in rows[:_SECTIONS_PREVIEW_MAX]
+    ]
+
+
+async def import_document(
+    db: AsyncSession, data: bytes, filename: str, *, actor=None, dry_run: bool = False,
+    category: str = "", status: str | None = None, tags: list[str] | None = None,
+) -> dict:
+    """One uploaded document (md / txt / html / docx / pdf) → one item per heading section."""
+    base: dict = {"skipped_duplicates": 0, "skipped": [], "encoding": "", "warnings": []}
+    try:
+        conv = document_to_markdown(data, filename)
+    except UnsupportedDocument as exc:
+        return _failure(base, str(exc), dry_run)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("document_convert_failed", filename=filename, error=str(exc))
+        return _failure(base, f"文件解析失败：{type(exc).__name__}", dry_run)
+    base["warnings"].extend(conv.warnings)
+    stem = re.sub(r"\.[A-Za-z0-9]+$", "", filename or "").strip()
+    doc_title = leading_title(conv.markdown, conv.title or stem)
+    sections = split_sections(conv.markdown, conv.title or stem)
+    if not sections:
+        return _failure(base, "文档没有可导入的文字内容", dry_run)
+    rows = _section_rows(
+        sections, category=category, status=status, tags=tags or [],
+        extra={"source_kind": "document", "source_name": filename or ""},
+        # .md / .txt uploads never went through an HTML converter; an HTML-looking
+        # snippet in them is still worth stripping, Markdown passes untouched.
+        clean_html=(filename or "").lower().endswith((".md", ".markdown", ".mdx", ".txt")),
+    )
+    base["doc_title"] = doc_title
+    base["sections"] = _sections_report(rows)
+    return await _import_rows(
+        db, rows, base=base, source=KnowledgeSource.DOCUMENT, actor=actor, dry_run=dry_run
+    )
+
+
+async def import_url(
+    db: AsyncSession, url: str, *, crawl_site: bool = False, max_pages: int = 50,
+    actor=None, dry_run: bool = False, category: str = "", status: str | None = None,
+    tags: list[str] | None = None,
+) -> dict:
+    """One page, or a same-site crawl under its path, → sectioned items that remember
+    their source URL (re-import updates changed sections)."""
+    base: dict = {"skipped_duplicates": 0, "skipped": [], "encoding": "", "warnings": []}
+    try:
+        if crawl_site:
+            pages, warnings = await crawl(url, max_pages=max_pages)
+            base["warnings"].extend(warnings)
+        else:
+            pages = [await fetch_url(url)]
+    except UnsupportedDocument as exc:
+        return _failure(base, str(exc), dry_run)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("url_fetch_failed", url=url, error=str(exc))
+        return _failure(base, f"抓取失败：{type(exc).__name__}", dry_run)
+    if not pages:
+        return _failure(base, "没有抓到任何页面", dry_run)
+
+    rows: list[dict] = []
+    page_report: list[dict] = []
+    for page in pages:
+        try:
+            conv = document_to_markdown(page.data, f"page{page.ext}")
+        except UnsupportedDocument as exc:
+            base["warnings"].append(f"{page.url}：{exc}")
+            continue
+        except Exception as exc:  # noqa: BLE001
+            base["warnings"].append(f"{page.url}：解析失败（{type(exc).__name__}）")
+            continue
+        slug = re.sub(r"[-_/]+", " ", page.url.rstrip("/").rsplit("/", 1)[-1]).strip() or page.url
+        page_title = leading_title(conv.markdown, conv.title or slug)
+        sections = split_sections(conv.markdown, conv.title or slug)
+        page_report.append({"url": page.url, "title": page_title, "sections": len(sections)})
+        rows.extend(
+            _section_rows(
+                sections, category=category, status=status, tags=tags or [],
+                extra={"source_kind": "url", "source_url": page.url, "source_name": page_title},
+            )
+        )
+    if not rows:
+        return _failure(base, "抓到的页面没有可导入的文字内容", dry_run)
+    base["pages"] = page_report
+    base["sections"] = _sections_report(rows)
+    return await _import_rows(
+        db, rows, base=base, source=KnowledgeSource.URL, actor=actor, dry_run=dry_run,
+        upsert_by_source=True,
+    )
