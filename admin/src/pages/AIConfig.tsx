@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react";
 import {
   Button, Card, Form, Input, InputNumber, Switch, Space, Divider, Progress,
-  Alert, Row, Col, App as AntApp, Tag, Popconfirm, Typography,
+  Alert, Row, Col, App as AntApp, Tag, Popconfirm, Typography, Segmented, Collapse, Table, Modal,
 } from "antd";
 import { SyncOutlined, ThunderboltOutlined } from "@ant-design/icons";
-import { aiConfigApi, knowledgeApi } from "../api";
+import { aiConfigApi, knowledgeApi, evalCaseApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, isAdmin } from "../auth";
 import { usePolling } from "../hooks/usePolling";
+
+// 检索严格度档位 → (重排分下限, 向量相似度下限)。均衡 = 线上校准默认值。
+const PRESETS = [
+  { key: "strict", label: "严格", min_score: 0.25, vector_min_sim: 0.55 },
+  { key: "balanced", label: "均衡", min_score: 0.15, vector_min_sim: 0.5 },
+  { key: "loose", label: "宽松", min_score: 0.1, vector_min_sim: 0.45 },
+];
 
 export function AIConfig() {
   const { user } = useAuth();
@@ -18,6 +25,27 @@ export function AIConfig() {
   const [rebuild, setRebuild] = useState<any>(null);
   const [guardDefaults, setGuardDefaults] = useState<{ scope?: string; reply?: string }>({});
   const guardOn = Form.useWatch("guard_enabled", form);
+  // 评测与校准
+  const [evalCases, setEvalCases] = useState<any[]>([]);
+  const [evalTotal, setEvalTotal] = useState<number | null>(null);
+  const [casesOpen, setCasesOpen] = useState(false);
+  const [calib, setCalib] = useState<any>(null);
+  const [calibrating, setCalibrating] = useState(false);
+  const loadCases = () => evalCaseApi.list().then((d) => { setEvalCases(d.items || []); setEvalTotal(d.total ?? 0); }).catch(() => {});
+  useEffect(() => { loadCases(); }, []);
+  const removeCase = async (id: string) => {
+    try { await evalCaseApi.remove(id); loadCases(); } catch (e) { message.error(apiError(e)); }
+  };
+  const runCalibration = async () => {
+    setCalibrating(true);
+    try {
+      setCalib(await aiConfigApi.calibrate());
+    } catch (e) {
+      message.error(apiError(e));
+    } finally {
+      setCalibrating(false);
+    }
+  };
 
   const load = async () => {
     try {
@@ -223,25 +251,123 @@ export function AIConfig() {
               <Form.Item name="rerank_model" label="模型"><Input placeholder="bge-reranker-v2-m3" /></Form.Item>
             </Card>
 
-            <Card title="检索参数与开关" style={{ marginTop: 16 }}>
-              <Row gutter={12}>
-                <Col span={8}><Form.Item name={["retrieval", "top_k"]} label="Top-K"><InputNumber min={1} max={20} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "vector_weight"]} label="向量权重"><InputNumber min={0} max={1} step={0.1} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "keyword_weight"]} label="关键词权重"><InputNumber min={0} max={1} step={0.1} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "chunk_size"]} label="分块大小"><InputNumber min={100} max={2000} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "chunk_overlap"]} label="重叠"><InputNumber min={0} max={500} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "rerank_top_n"]} label="重排 Top-N"><InputNumber min={1} max={20} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "vector_min_sim"]} label="向量相似度下限" tooltip="低于此余弦相似度的向量结果直接丢弃，避免“总能命中最近但不相关的内容”。按 embedding 模型校准：OpenAI 系约 0.2–0.35，BGE/Jina 系约 0.4–0.5。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "min_score"]} label="重排分下限" tooltip="仅在启用重排时生效：重排得分低于此值的结果丢弃（0 表示不过滤）。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "trgm_threshold"]} label="Trigram 阈值" tooltip="关键词/子串匹配的相似度下限，过滤弱噪声命中。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
-                <Col span={8}><Form.Item name={["retrieval", "candidate_multiplier"]} label="候选倍数" tooltip="融合/重排前的候选集大小 = Top-K × 此值，越大重排召回越好、开销略增。"><InputNumber min={1} max={50} style={{ width: "100%" }} /></Form.Item></Col>
-              </Row>
+            <Card title="检索严格度" style={{ marginTop: 16 }}>
+              <Form.Item noStyle shouldUpdate={(p, c) => p?.retrieval?.min_score !== c?.retrieval?.min_score || p?.retrieval?.vector_min_sim !== c?.retrieval?.vector_min_sim}>
+                {() => {
+                  const ms = form.getFieldValue(["retrieval", "min_score"]);
+                  const vs = form.getFieldValue(["retrieval", "vector_min_sim"]);
+                  const cur = PRESETS.find((x) => Math.abs(x.min_score - ms) < 1e-9 && Math.abs(x.vector_min_sim - vs) < 1e-9)?.key || "custom";
+                  return (
+                    <>
+                      <Segmented
+                        value={cur}
+                        options={[...PRESETS.map((x) => ({ label: x.label, value: x.key })), { label: "自定义", value: "custom", disabled: true }]}
+                        onChange={(k) => {
+                          const px = PRESETS.find((x) => x.key === k);
+                          if (px) form.setFieldsValue({ retrieval: { ...form.getFieldValue("retrieval"), min_score: px.min_score, vector_min_sim: px.vector_min_sim } });
+                        }}
+                      />
+                      <div style={{ fontSize: 12, color: "#6b7280", marginTop: 8, lineHeight: 1.8 }}>
+                        <div><b>严格</b>：宁可说「没有相关资料」也不拿沾边内容作答；<b>均衡</b>：默认，按线上数据校准；<b>宽松</b>：尽量给资料，误引用会增多。</div>
+                        <div>当前门槛：重排分下限 {ms ?? "—"} · 向量相似度下限 {vs ?? "—"}。不确定该选哪档？用下方「评测与校准」让数据来定。</div>
+                      </div>
+                    </>
+                  );
+                }}
+              </Form.Item>
+              <Collapse
+                ghost style={{ marginTop: 12 }}
+                items={[{
+                  key: "adv",
+                  label: <span style={{ fontSize: 13 }}>高级参数（一般不用改）</span>,
+                  children: (
+                    <>
+                      <Row gutter={12}>
+                        <Col span={8}><Form.Item name={["retrieval", "min_score"]} label="重排分下限" tooltip="启用重排时的最终门槛：重排分低于此值的资料丢弃。对题的模糊问题常只有 0.17–0.30，误命中的沾边资料 0.16–0.19，所以请用校准功能定，不要凭感觉调。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "vector_min_sim"]} label="向量相似度下限" tooltip="向量召回的余弦相似度门槛；重排开启时只做预筛。按嵌入模型校准：text-embedding-v4 约 0.5–0.6，OpenAI text-embedding-3 约 0.2–0.35。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "top_k"]} label="Top-K" tooltip="最多注入给模型的资料条数。只影响上下文长度，不影响第一名是谁。"><InputNumber min={1} max={20} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "vector_weight"]} label="向量权重" tooltip="融合排序中向量路径的权重。重排开启时几乎无感。"><InputNumber min={0} max={1} step={0.1} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "keyword_weight"]} label="关键词权重" tooltip="融合排序中关键词路径的权重。重排开启时几乎无感。"><InputNumber min={0} max={1} step={0.1} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "candidate_multiplier"]} label="候选倍数" tooltip="进入融合/重排的候选数 = Top-K × 此值。知识不足几百条时永远是全部，改了也无感。"><InputNumber min={1} max={50} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "trgm_threshold"]} label="Trigram 阈值" tooltip="只影响英文/编码类子串匹配（型号、错误码）的宽松程度。"><InputNumber min={0} max={1} step={0.05} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "chunk_size"]} label="分块大小" tooltip="每块字符数。只对长文档有意义；改动后需在知识库「全量重建向量」才生效。"><InputNumber min={100} max={2000} style={{ width: "100%" }} /></Form.Item></Col>
+                        <Col span={8}><Form.Item name={["retrieval", "chunk_overlap"]} label="重叠" tooltip="相邻块的重叠字符数。改动后需全量重建向量。"><InputNumber min={0} max={500} style={{ width: "100%" }} /></Form.Item></Col>
+                      </Row>
+                      <Form.Item name={["retrieval", "expand_context"]} label="上下文扩展" valuePropName="checked" tooltip="命中分块时附带其相邻分块（small-to-big）。单块的短条目无感。"><Switch /></Form.Item>
+                    </>
+                  ),
+                }]}
+              />
               <Space size="large">
-                <Form.Item name={["retrieval", "expand_context"]} label="上下文扩展" valuePropName="checked" tooltip="命中分块时附带其相邻分块，给模型更完整的上下文（small-to-big）。"><Switch /></Form.Item>
                 <Form.Item name="content_safety_enabled" label="内容安全过滤" valuePropName="checked"><Switch /></Form.Item>
-                <Form.Item name="semantic_cache_enabled" label="语义缓存" valuePropName="checked"><Switch /></Form.Item>
+                <Form.Item name="semantic_cache_enabled" label="语义缓存" valuePropName="checked" tooltip="高频重复问题直接返回缓存答案。咨询量小时收益小、缓存错答案的风险大，默认关。"><Switch /></Form.Item>
               </Space>
             </Card>
+
+            <Card
+              title="评测与校准" style={{ marginTop: 16 }}
+              extra={<Button size="small" onClick={() => setCasesOpen(true)}>管理用例{evalTotal != null ? `（${evalTotal}）` : ""}</Button>}
+            >
+              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 12, lineHeight: 1.8 }}>
+                评测用例来自知识库「测试检索」弹窗：输入客户问法后点「应命中这条」或「应该无结果」。用例够 20 条以上时，点「运行校准」，系统会对每个门槛值算出「该命中的命中了多少、该拒绝的拒绝了多少」，并给出推荐值。
+              </div>
+              <Space wrap>
+                <Button type="primary" icon={<ThunderboltOutlined />} loading={calibrating} disabled={!admin || !evalTotal} onClick={runCalibration}>运行校准</Button>
+                {calib?.recommended != null && (
+                  <Button
+                    disabled={!admin} loading={loading}
+                    onClick={() => {
+                      form.setFieldsValue({ retrieval: { ...form.getFieldValue("retrieval"), [calib.param]: calib.recommended } });
+                      doSave(form.getFieldsValue());
+                    }}
+                  >
+                    应用推荐值 {calib.param === "min_score" ? "重排分下限" : "向量相似度下限"} = {calib.recommended} 并保存
+                  </Button>
+                )}
+              </Space>
+              {calib?.error && <Alert style={{ marginTop: 12 }} type="warning" showIcon message={calib.error} />}
+              {calib && !calib.error && calib.cases > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
+                    {calib.cases} 条用例（应命中 {calib.positives} · 应无结果 {calib.negatives}），按{calib.param === "min_score" ? "重排分下限" : "向量相似度下限"}扫描；当前值 {calib.current}
+                    {calib.current_eval?.accuracy != null ? `，准确率 ${(calib.current_eval.accuracy * 100).toFixed(0)}%` : ""}。
+                  </div>
+                  <Table
+                    size="small" pagination={false} rowKey="value" dataSource={calib.sweep}
+                    rowClassName={(r: any) => (r.value === calib.recommended ? "acs-row-recommended" : "")}
+                    columns={[
+                      { title: "门槛值", dataIndex: "value", width: 90, render: (v: number) => <b>{v}{v === calib.recommended ? " ★" : ""}</b> },
+                      { title: "应命中→命中", render: (_: any, r: any) => r.positives ? `${r.hits}/${r.positives}（${(r.hit_rate * 100).toFixed(0)}%）` : "—" },
+                      { title: "应无结果→拒绝", render: (_: any, r: any) => r.negatives ? `${r.rejects}/${r.negatives}（${(r.reject_rate * 100).toFixed(0)}%）` : "—" },
+                      { title: "准确率", dataIndex: "accuracy", width: 90, render: (v: number) => (v == null ? "—" : `${(v * 100).toFixed(0)}%`) },
+                    ]}
+                  />
+                  {calib.per_case?.some((c: any) => !c.ok_at_current) && (
+                    <div style={{ marginTop: 10, fontSize: 12 }}>
+                      <div style={{ color: "#6b7280", marginBottom: 4 }}>当前门槛下不通过的用例：</div>
+                      <ul style={{ margin: 0, paddingLeft: 18 }}>
+                        {calib.per_case.filter((c: any) => !c.ok_at_current).slice(0, 12).map((c: any, i: number) => (
+                          <li key={i}>「{c.query}」期望 {c.expected_title || "命中"}，实际第一名 {c.top_title ?? "无结果"}{c.top_score != null ? `（${c.top_score}）` : ""}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+
+            <Modal title="评测用例" open={casesOpen} onCancel={() => setCasesOpen(false)} footer={null} width={720}>
+              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>在知识库「测试检索」里标注新增；这里只做查看与删除。</div>
+              <Table
+                size="small" rowKey="id" dataSource={evalCases} pagination={{ pageSize: 10, showSizeChanger: false }}
+                columns={[
+                  { title: "客户问法", dataIndex: "query" },
+                  { title: "期望", dataIndex: "expected_title", width: 200, render: (t: string, r: any) => (r.expected_item_id ? t || "（条目）" : <Tag>应无结果</Tag>) },
+                  { title: "来源", dataIndex: "source", width: 80 },
+                  { title: "", width: 70, render: (_: any, r: any) => <Popconfirm title="删除这条用例？" onConfirm={() => removeCase(r.id)}><Button type="link" size="small" danger>删除</Button></Popconfirm> },
+                ]}
+              />
+            </Modal>
           </Col>
         </Row>
 

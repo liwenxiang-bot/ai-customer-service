@@ -147,3 +147,6 @@ body {
 .acs-clickable-list .ant-list-item { cursor: pointer; border-radius: 8px; padding-inline: 8px; }
 .acs-clickable-list .ant-list-item:hover { background: var(--acs-hover, rgba(15, 118, 110, 0.05)); }
 [data-theme="dark"] { --acs-hover: rgba(255, 255, 255, 0.04); }
+
+/* AI 配置 → 评测与校准：推荐门槛行高亮 */
+.acs-row-recommended > td { background: rgba(15, 118, 110, 0.08) !important; }
