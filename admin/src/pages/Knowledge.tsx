@@ -718,13 +718,26 @@ function fmtRowNote(s: any): string {
 function ImportModal({ open, onClose, onDone }: any) {
   const { message } = AntApp.useApp();
   const { token } = theme.useToken();
+  const [mode, setMode] = useState<"file" | "url">("file");
   const [file, setFile] = useState<File | null>(null);
+  const [url, setUrl] = useState("");
+  const [crawl, setCrawl] = useState(false);
+  const [category, setCategory] = useState("");
+  const [status, setStatus] = useState<"published" | "draft">("published");
   const [preview, setPreview] = useState<any>(null); // dry-run 预检报告（未入库）
   const [result, setResult] = useState<any>(null); // 正式导入报告
   const [checking, setChecking] = useState(false);
   const [importing, setImporting] = useState(false);
 
-  const reset = () => { setFile(null); setPreview(null); setResult(null); };
+  const isDocFile = (f: File | null) => !!f && !/\.(csv|json)$/i.test(f.name);
+  const docOpts = { category: category.trim(), status };
+  const reset = () => { setFile(null); setUrl(""); setCrawl(false); setPreview(null); setResult(null); };
+  // 后端预检返回 would_create/would_update，正式导入返回 created/updated；统一成一套字段渲染
+  const normalize = (r: any) => ({
+    ...r,
+    created: r.created ?? r.would_create ?? 0,
+    updated: r.updated ?? r.would_update ?? 0,
+  });
 
   const downloadTemplate = async () => {
     try {
@@ -738,10 +751,26 @@ function ImportModal({ open, onClose, onDone }: any) {
   const pick = async (f: File) => {
     setChecking(true);
     setResult(null);
+    setPreview(null);
     try {
-      const r = await knowledgeApi.importFile(f, true);
+      const r = await knowledgeApi.importFile(f, true, isDocFile(f) ? docOpts : {});
       setFile(f);
-      setPreview(r);
+      setPreview(normalize(r));
+    } catch (e) {
+      message.error(apiError(e));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const checkUrl = async () => {
+    if (!url.trim()) return;
+    setChecking(true);
+    setResult(null);
+    setPreview(null);
+    try {
+      const r = await knowledgeApi.importUrl({ url: url.trim(), crawl, ...docOpts, dry_run: true });
+      setPreview(normalize(r));
     } catch (e) {
       message.error(apiError(e));
     } finally {
@@ -751,17 +780,22 @@ function ImportModal({ open, onClose, onDone }: any) {
 
   // 第二步：确认后正式导入
   const doImport = async () => {
-    if (!file) return;
+    if (mode === "file" ? !file : !url.trim()) return;
     setImporting(true);
     try {
-      const r = await knowledgeApi.importFile(file, false);
+      const raw = mode === "file"
+        ? await knowledgeApi.importFile(file as File, false, isDocFile(file) ? docOpts : {})
+        : await knowledgeApi.importUrl({ url: url.trim(), crawl, ...docOpts, dry_run: false });
+      const r = normalize(raw);
       setResult(r);
       setPreview(null);
       const failed = r.failed || 0;
       const warns = r.warnings?.length || 0;
-      if (!r.created && (failed > 0 || r.errors?.length > 0)) message.error("导入失败，未新增条目——请查看下方明细");
-      else if (failed > 0 || warns > 0) message.warning(`导入完成：新增 ${r.created} 条，但存在${failed ? `失败 ${failed} 行` : ""}${failed && warns ? "与" : ""}${warns ? "警告" : ""}，请查看明细`);
-      else message.success(`导入完成：新增 ${r.created} 条${r.skipped_duplicates ? `，重复跳过 ${r.skipped_duplicates} 条` : ""}`);
+      const done = r.created + r.updated;
+      const summary = `新增 ${r.created} 条${r.updated ? `，更新 ${r.updated} 条` : ""}${r.skipped_duplicates ? `，重复跳过 ${r.skipped_duplicates} 条` : ""}`;
+      if (!done && (failed > 0 || r.errors?.length > 0)) message.error("导入失败，未新增条目——请查看下方明细");
+      else if (failed > 0 || warns > 0) message.warning(`导入完成：${summary}，但存在${failed ? `失败 ${failed} 行` : ""}${failed && warns ? "与" : ""}${warns ? "警告" : ""}，请查看明细`);
+      else message.success(`导入完成：${summary}`);
       onDone();
     } catch (e) {
       message.error(apiError(e));
@@ -782,26 +816,29 @@ function ImportModal({ open, onClose, onDone }: any) {
       const cols = Array.from(rows.reduce((s: Set<string>, r: any) => { Object.keys(r || {}).forEach((k) => s.add(k)); return s; }, new Set<string>()));
       csv = [cols.map(esc).join(","), ...rows.map((r: any) => cols.map((c) => esc(Array.isArray(r?.[c]) ? r[c].join(";") : r?.[c])).join(","))].join("\r\n");
     }
-    saveBlob(new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" }), "import_failed_rows.csv");
+    saveBlob(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }), "import_failed_rows.csv");
   };
 
-  // 预检与结果同构，共用一个报告渲染；完整消费 created/skipped/warnings/errors/encoding
+  // 预检与结果同构，共用一个报告渲染；完整消费 created/updated/skipped/warnings/errors/encoding
   const report = (r: any, isPreview: boolean) => {
     const skipped = r.skipped_duplicates ?? r.skipped?.length ?? 0;
     const hasError = (r.errors?.length || 0) > 0 || (r.failed || 0) > 0;
+    const done = (r.created || 0) + (r.updated || 0);
     return (
       <>
         {r.warnings?.length > 0 && (
           <Alert
-            style={{ marginBottom: 12 }} type="warning" showIcon message="导入警告"
+            style={{ marginBottom: 12 }} type="warning" showIcon message="导入提示"
             description={<ul style={{ margin: 0, paddingLeft: 18 }}>{r.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}</ul>}
           />
         )}
         <Alert
-          type={!r.created && hasError ? "error" : hasError || r.warnings?.length ? "warning" : "success"}
+          type={!done && hasError ? "error" : hasError || r.warnings?.length ? "warning" : "success"}
           showIcon
           message={
-            `共 ${r.total ?? 0} 行：${isPreview ? "将创建" : "新增"} ${r.created ?? 0} · 重复跳过 ${skipped} · 失败 ${r.failed ?? 0}` +
+            `共 ${r.total ?? 0} 条：${isPreview ? "将新增" : "新增"} ${r.created ?? 0}` +
+            (r.updated ? ` · ${isPreview ? "将更新" : "更新"} ${r.updated}` : "") +
+            ` · 重复跳过 ${skipped} · 失败 ${r.failed ?? r.errors?.length ?? 0}` +
             (r.encoding ? `（编码 ${r.encoding}）` : "")
           }
           description={
@@ -820,35 +857,115 @@ function ImportModal({ open, onClose, onDone }: any) {
             ) : null
           }
         />
+        {(r.pages?.length > 0 || r.sections?.length > 0) && (
+          <div style={{ marginTop: 12, fontSize: 12 }}>
+            {r.pages?.length > 0 && (
+              <div style={{ marginBottom: 6, color: token.colorTextSecondary }}>
+                抓取 {r.pages.length} 个页面：{r.pages.slice(0, 8).map((p: any) => p.title).join("、")}{r.pages.length > 8 ? " …" : ""}
+              </div>
+            )}
+            {r.sections?.length > 0 && (
+              <div style={{ maxHeight: 200, overflow: "auto", border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 6, padding: "6px 10px" }}>
+                <div style={{ color: token.colorTextSecondary, marginBottom: 4 }}>
+                  {r.doc_title ? `「${r.doc_title}」` : ""}按标题切成 {r.sections.length} 条{r.sections.length >= 300 ? "（仅显示前 300 条）" : ""}：
+                </div>
+                {r.sections.map((s: any, i: number) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0", color: s.error ? token.colorError : undefined }}>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title || "（无标题）"}{s.error ? `：${s.error}` : ""}</span>
+                    <span style={{ color: token.colorTextTertiary, flexShrink: 0 }}>{s.chars} 字</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </>
     );
   };
 
-  return (
-    <Modal title="批量导入知识" open={open} onCancel={() => { reset(); onClose(); }} footer={null} width={560}>
-      <Alert
-        style={{ marginBottom: 16 }} type="info" showIcon
-        message="支持 CSV / JSON。CSV 列：title,content,category,tags（标签用分号或逗号分隔）。选择文件后先预检、确认后才写入，向量在导入后异步生成。"
+  const docOptions = (
+    <Space wrap style={{ marginBottom: 12 }}>
+      <Input
+        placeholder="分类（可选，如：使用文档）" value={category} onChange={(e) => setCategory(e.target.value)}
+        style={{ width: 200 }} maxLength={120} allowClear
       />
-      <Space style={{ marginBottom: 16 }} wrap>
-        <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载模板</Button>
-        <Upload accept=".csv,.json" showUploadList={false} customRequest={({ file: f }: any) => pick(f)}>
-          <Button icon={<UploadOutlined />} loading={checking}>{file ? "重新选择文件" : "选择文件（先预检，不入库）"}</Button>
-        </Upload>
-        {preview && (
-          <Button type="primary" icon={<UploadOutlined />} loading={importing} disabled={!(preview.created > 0)} onClick={doImport}>
-            确认导入 {preview.created ?? 0} 条
-          </Button>
-        )}
-      </Space>
-      {file && <div style={{ marginBottom: 12, fontSize: 12, color: token.colorTextSecondary }}>文件：{file.name}</div>}
+      <Select
+        value={status} onChange={setStatus} style={{ width: 150 }}
+        options={[{ value: "published", label: "导入后直接发布" }, { value: "draft", label: "导入为草稿" }]}
+      />
+    </Space>
+  );
+
+  const previewCount = (preview?.created || 0) + (preview?.updated || 0);
+
+  return (
+    <Modal title="批量导入知识" open={open} onCancel={() => { reset(); onClose(); }} footer={null} width={640}>
+      <Tabs
+        activeKey={mode} onChange={(k) => { setMode(k as any); setPreview(null); setResult(null); }}
+        items={[
+          {
+            key: "file", label: "上传文件",
+            children: (
+              <>
+                <Alert
+                  style={{ marginBottom: 12 }} type="info" showIcon
+                  message={
+                    <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                      <div><b>表格</b>：CSV / JSON，一行一条；列 title,content,category,tags（标签用分号分隔）。</div>
+                      <div><b>文档</b>：Markdown / MDX / TXT / HTML / Word(.docx) / PDF，自动转为 Markdown 并按标题切成多条，标题形如「文档名：小节」。PDF 按页切分、不支持扫描件。</div>
+                      <div>选择文件后先预检，确认后才写入；向量在导入后异步生成。</div>
+                    </div>
+                  }
+                />
+                {docOptions}
+                <Space style={{ marginBottom: 12 }} wrap>
+                  <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载 CSV 模板</Button>
+                  <Upload accept=".csv,.json,.md,.markdown,.mdx,.txt,.html,.htm,.docx,.pdf" showUploadList={false} customRequest={({ file: f }: any) => pick(f)}>
+                    <Button icon={<UploadOutlined />} loading={checking}>{file ? "重新选择文件" : "选择文件（先预检，不入库）"}</Button>
+                  </Upload>
+                </Space>
+                {file && <div style={{ marginBottom: 12, fontSize: 12, color: token.colorTextSecondary }}>文件：{file.name}{isDocFile(file) && category ? ` · 分类「${category}」` : ""}</div>}
+              </>
+            ),
+          },
+          {
+            key: "url", label: "从网址导入",
+            children: (
+              <>
+                <Alert
+                  style={{ marginBottom: 12 }} type="info" showIcon
+                  message={
+                    <div style={{ fontSize: 12, lineHeight: 1.7 }}>
+                      <div>抓取网页正文（去掉导航、页脚）转为 Markdown，按标题切成多条。勾选「同站子页面」会沿链接抓取同一站点、同一路径下的页面，最多 50 页。</div>
+                      <div>条目会记住来源网址：网页更新后再导入一次同一网址，变化的小节会自动更新为新版本，未变化的跳过。</div>
+                    </div>
+                  }
+                />
+                <Space.Compact style={{ width: "100%", marginBottom: 12 }}>
+                  <Input placeholder="https://docs.example.com/guide" value={url} onChange={(e) => setUrl(e.target.value)} onPressEnter={checkUrl} />
+                  <Button type="primary" onClick={checkUrl} loading={checking} disabled={!url.trim()}>预检</Button>
+                </Space.Compact>
+                <div style={{ marginBottom: 12 }}>
+                  <Checkbox checked={crawl} onChange={(e) => setCrawl(e.target.checked)}>同时抓取同站子页面（最多 50 页，适合整站文档）</Checkbox>
+                </div>
+                {docOptions}
+              </>
+            ),
+          },
+        ]}
+      />
       {preview && (
         <>
           <div style={{ marginBottom: 8, fontSize: 13 }}>预检结果（尚未写入知识库）：</div>
           {report(preview, true)}
-          {!(preview.created > 0) && (
-            <div style={{ marginTop: 8, fontSize: 12, color: token.colorTextSecondary }}>没有可新增的行：请按上方明细修正文件后重新选择。</div>
-          )}
+          <div style={{ marginTop: 12 }}>
+            <Button type="primary" icon={<UploadOutlined />} loading={importing} disabled={previewCount <= 0} onClick={doImport}>
+              确认导入 {previewCount} 条
+            </Button>
+            {previewCount <= 0 && (
+              <span style={{ marginLeft: 12, fontSize: 12, color: token.colorTextSecondary }}>没有可新增或更新的内容：请按上方明细修正后重新预检。</span>
+            )}
+          </div>
         </>
       )}
       {result && (

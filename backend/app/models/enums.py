@@ -51,7 +51,9 @@ class KnowledgeStatus(StrEnum):
 
 class KnowledgeSource(StrEnum):
     MANUAL = "manual"
-    IMPORT = "import"
+    IMPORT = "import"            # CSV / JSON batch
+    DOCUMENT = "document"        # uploaded file (md/txt/html/docx/pdf), sectioned
+    URL = "url"                  # fetched page / crawled site, sectioned
     AUTO_DISTILLED = "auto_distilled"
 
 

@@ -56,16 +56,22 @@ class FakeSession:
     """Just enough AsyncSession surface for import_knowledge + create_item."""
 
     def __init__(self, existing=(), fail_titles=(), commit_error=None):
-        self.existing = list(existing)  # (title, content) rows for the dedup baseline
+        # (title, content) or (id, title, content, extra) rows for the dedup baseline
+        self.existing = list(existing)
         self.fail_titles = set(fail_titles)
         self.commit_error = commit_error
         self.added = []
         self.commits = 0
         self.rollbacks = 0
         self.savepoint_rollbacks = 0
+        self.items_by_id = {}  # id → KnowledgeItem, for the URL re-import (update) path
 
     async def execute(self, *args, **kwargs):
-        return FakeResult(self.existing)
+        rows = [r if len(r) == 4 else (None, r[0], r[1], {}) for r in self.existing]
+        return FakeResult(rows)
+
+    async def get(self, model, ident):
+        return self.items_by_id.get(ident)
 
     def add(self, obj):
         self.added.append(obj)
@@ -417,3 +423,122 @@ async def test_failed_rows_echo_raw_values_for_reimport():
             "reason": "content 为空，已跳过",
         }
     ]
+
+
+# ----------------------------------------------------------------- documents / URLs
+
+import uuid as _uuid  # noqa: E402
+
+from app.models.enums import KnowledgeSource  # noqa: E402
+from app.rag import documents as _docs  # noqa: E402
+from app.services.import_knowledge import import_document, import_url  # noqa: E402
+
+_MD = (
+    "# 售后手册\n\n总则一句。\n\n## 退货\n\n" + "七天无理由退货。" * 120
+    + "\n\n## 换货\n\n" + "十五天换货。" * 120
+)
+
+
+@pytest.mark.asyncio
+async def test_import_document_sections_become_items_with_provenance():
+    session = FakeSession()
+    r = await import_document(
+        session, _MD.encode("utf-8"), "手册.md", category="售后", status="draft", tags=["售后"],
+    )
+    assert r["created"] == 2 and r["updated"] == 0 and r["failed"] == 0
+    assert r["doc_title"] == "售后手册"
+    assert [s["title"] for s in r["sections"]] == ["售后手册：退货", "售后手册：换货"]
+    items = [o for o in session.added if isinstance(o, KnowledgeItem)]
+    assert [i.title for i in items] == ["售后手册：退货", "售后手册：换货"]
+    assert all(i.source == KnowledgeSource.DOCUMENT and i.status == "draft" and i.category == "售后" for i in items)
+    assert items[0].extra["source_name"] == "手册.md" and items[0].extra["section"] == "售后手册：退货"
+    assert items[0].content.startswith("总则一句。")  # short intro carried into each section
+
+
+@pytest.mark.asyncio
+async def test_import_document_dry_run_reports_without_writing():
+    session = FakeSession()
+    r = await import_document(session, _MD.encode("utf-8"), "手册.md", dry_run=True)
+    assert r["dry_run"] is True and r["would_create"] == 2 and r["would_update"] == 0
+    assert len(r["sections"]) == 2
+    assert not session.added and session.commits == 0
+
+
+@pytest.mark.asyncio
+async def test_import_document_unsupported_and_empty():
+    session = FakeSession()
+    r = await import_document(session, b"x", "a.xlsx")
+    assert r["created"] == 0 and "不支持的文件类型" in r["errors"][0]
+    r = await import_document(session, b"   ", "a.md")
+    assert r["created"] == 0 and r["errors"]
+
+
+@pytest.mark.asyncio
+async def test_import_document_dedupes_against_existing_titles():
+    session = FakeSession(existing=[("售后手册：退货", "旧内容")])
+    r = await import_document(session, _MD.encode("utf-8"), "手册.md")
+    assert r["created"] == 1 and r["skipped_duplicates"] == 1
+    assert _item_titles(session) == ["售后手册：换货"]
+
+
+def _page(title: str, body: str) -> str:
+    return f"<html><head><title>{title} – 站点</title></head><body><nav>menu</nav><main><h1>{title}</h1>{body}</main></body></html>"
+
+
+async def _fake_fetch(url, client=None):
+    html = _page("常见问题", "<h2>退款</h2>" + "<p>七天内可退。</p>" * 120 + "<h2>发票</h2>" + "<p>不支持开票。</p>" * 120)
+    return _docs.Fetched(url, html.encode("utf-8"), ".html")
+
+
+@pytest.mark.asyncio
+async def test_import_url_creates_sections_with_source_url(monkeypatch):
+    monkeypatch.setattr("app.services.import_knowledge.fetch_url", _fake_fetch)
+    session = FakeSession()
+    r = await import_url(session, "https://docs.example.com/faq", category="使用文档")
+    assert r["created"] == 2 and r["pages"][0]["title"] == "常见问题"
+    items = [o for o in session.added if isinstance(o, KnowledgeItem)]
+    assert [i.title for i in items] == ["常见问题：退款", "常见问题：发票"]
+    assert all(i.source == KnowledgeSource.URL for i in items)
+    assert items[0].extra["source_url"] == "https://docs.example.com/faq"
+    assert "menu" not in items[0].content
+
+
+@pytest.mark.asyncio
+async def test_import_url_reimport_updates_changed_section_and_skips_unchanged(monkeypatch):
+    monkeypatch.setattr("app.services.import_knowledge.fetch_url", _fake_fetch)
+    # First import to learn the exact section contents the importer produces.
+    first = FakeSession()
+    await import_url(first, "https://docs.example.com/faq")
+    refund, invoice = [o for o in first.added if isinstance(o, KnowledgeItem)]
+
+    # Existing KB: 退款 unchanged, 发票 has older content → re-import updates only 发票.
+    existing_refund = KnowledgeItem(
+        id=_uuid.uuid4(), title=refund.title, content=refund.content, category="", tags=[],
+        status="published", extra={"source_url": "https://docs.example.com/faq"}, version=1,
+    )
+    existing_invoice = KnowledgeItem(
+        id=_uuid.uuid4(), title=invoice.title, content="旧版：支持开票。", category="", tags=[],
+        status="published", extra={"source_url": "https://docs.example.com/faq"}, version=1,
+    )
+    session = FakeSession(existing=[
+        (existing_refund.id, existing_refund.title, existing_refund.content, existing_refund.extra),
+        (existing_invoice.id, existing_invoice.title, existing_invoice.content, existing_invoice.extra),
+    ])
+    session.items_by_id = {existing_refund.id: existing_refund, existing_invoice.id: existing_invoice}
+
+    r = await import_url(session, "https://docs.example.com/faq")
+    assert r["created"] == 0 and r["updated"] == 1 and r["skipped_duplicates"] == 1
+    assert any("内容未变化" in s for s in r["skipped"])
+    assert existing_invoice.content == invoice.content and existing_invoice.version == 2
+    assert existing_refund.version == 1
+    assert not [o for o in session.added if isinstance(o, KnowledgeItem)]  # nothing created
+
+
+@pytest.mark.asyncio
+async def test_import_url_fetch_failure_is_reported_not_raised(monkeypatch):
+    async def boom(url, client=None):
+        raise _docs.UnsupportedDocument("抓取失败：HTTP 404")
+
+    monkeypatch.setattr("app.services.import_knowledge.fetch_url", boom)
+    r = await import_url(FakeSession(), "https://docs.example.com/missing", dry_run=True)
+    assert r["would_create"] == 0 and "HTTP 404" in r["errors"][0]
