@@ -12,7 +12,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import dayjs from "dayjs";
 import { Link, useLocation } from "react-router-dom";
-import { knowledgeApi } from "../api";
+import { knowledgeApi, evalCaseApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
 import { useDebounce } from "../hooks/useDebounce";
@@ -884,16 +884,28 @@ function TestRetrievalModal({ open, onClose, onOpenItem }: any) {
   // fusion(RRF, ≈0.01-0.05) 与 rerank(≈0-1) 分数量纲不可比，按响应顶层 kind 标注
   const [kind, setKind] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [ran, setRan] = useState(false);
   const run = async () => {
+    if (!q.trim()) return;
     setLoading(true);
     try {
       const d = await knowledgeApi.testRetrieval(q);
       setResults(d.results);
       setKind(d.score_kind ?? null);
+      setRan(true);
     } catch (e) {
       message.error(apiError(e));
     } finally {
       setLoading(false);
+    }
+  };
+  // 标注评测用例：expected_item_id 为空表示「知识库没有答案，应返回空」
+  const addCase = async (itemId: string | null) => {
+    try {
+      const r = await evalCaseApi.add({ query: q.trim(), expected_item_id: itemId, source: "test" });
+      message.success(itemId ? `已记录：「${q.trim()}」应命中「${r.expected_title || "该条目"}」` : `已记录：「${q.trim()}」应无结果`);
+    } catch (e) {
+      message.error(apiError(e));
     }
   };
   const kindTip = kind === "rerank"
@@ -901,14 +913,23 @@ function TestRetrievalModal({ open, onClose, onOpenItem }: any) {
     : "RRF 融合分（fusion）：正常范围约 0.01-0.05，数值小是正常现象，不代表命中差。与重排分量纲不同，不能互相比较。";
   return (
     <Modal title="测试检索命中" open={open} onCancel={onClose} footer={null} width={680}>
-      <Space.Compact style={{ width: "100%", marginBottom: 16 }}>
+      <Space.Compact style={{ width: "100%", marginBottom: 8 }}>
         <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="输入用户可能的问题" onPressEnter={run} />
         <Button type="primary" onClick={run} loading={loading}>检索</Button>
       </Space.Compact>
+      {ran && (
+        <div style={{ marginBottom: 12, fontSize: 12, color: "#6b7280", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>标注为评测用例：</span>
+          <Button size="small" onClick={() => addCase(null)}>应该无结果</Button>
+          <span>或在下方结果上点「应命中这条」。用例用于「AI 配置 → 评测与校准」。</span>
+        </div>
+      )}
       <List
-        dataSource={results} locale={{ emptyText: "暂无结果" }}
+        dataSource={results} locale={{ emptyText: ran ? "无结果（低于相关性门槛或知识库没有）" : "暂无结果" }}
         renderItem={(r: any) => (
-          <List.Item>
+          <List.Item
+            actions={r.item_id ? [<Button key="pos" size="small" type="link" onClick={() => addCase(r.item_id)}>应命中这条</Button>] : undefined}
+          >
             <List.Item.Meta
               title={
                 <span>
@@ -920,6 +941,7 @@ function TestRetrievalModal({ open, onClose, onOpenItem }: any) {
                       {kind ? `${kind} ${r.score}` : `score ${r.score}`}
                     </Tag>
                   </Tooltip>
+                  {r.matched_question && <Tag color="geekblue">问法命中：{r.matched_question}</Tag>}
                 </span>
               }
               description={r.snippet}

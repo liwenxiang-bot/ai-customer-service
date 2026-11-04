@@ -27,6 +27,7 @@ from app.services.abuse_guard import DEFAULT_OFF_TOPIC_REPLY, DEFAULT_SCOPE
 from app.services.ai_config import get_active_ai_config, merged_retrieval
 from app.services.audit import write_audit
 from app.services.embedding_rebuild import latest_job, start_rebuild
+from app.services.retrieval_eval import run_calibration
 
 router = APIRouter(prefix="/ai-config", tags=["admin-ai-config"])
 
@@ -226,6 +227,16 @@ async def test_llm(body: TestLLMIn, db: AsyncSession = Depends(get_db), user: Ad
         # Short, typed message only — never echo the remote response body (an internal service
         # behind base_url would otherwise be readable through this endpoint).
         raise HTTPException(status_code=502, detail=f"调用失败：{type(exc).__name__}（请检查地址、Key 与模型名）")
+
+
+@router.post("/calibrate")
+async def calibrate(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
+    """Sweep the relevance floor over the labelled eval cases and recommend a value
+    (services.retrieval_eval). Read-only: applying is a normal config update."""
+    cfg = await get_active_ai_config(db)
+    report = await run_calibration(db, cfg)
+    await db.rollback()  # retrieval sets per-transaction GUCs; nothing to persist
+    return report
 
 
 @router.post("/rebuild")
