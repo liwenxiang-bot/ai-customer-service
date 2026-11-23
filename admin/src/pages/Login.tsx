@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Checkbox, Form, Input, App as AntApp } from "antd";
-import { LockOutlined, UserOutlined, RobotOutlined, ApartmentOutlined } from "@ant-design/icons";
+import { Logo } from "../components/Logo";
+import { LoginArt } from "../components/LoginArt";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../auth";
 import { apiError, tenantStore } from "../api/client";
@@ -63,43 +64,43 @@ export function Login() {
   };
 
   return (
-    <div className="acs-login-bg">
-      <div className="acs-login-card">
-        <div className="acs-login-brand">
-          <div className="acs-login-logo">
-            <RobotOutlined />
-            <i className="acs-login-presence" />
-          </div>
-          <div>
-            <div className="acs-login-eyebrow">智能客服平台 · 管理端</div>
-            <div className="acs-login-title">AI 客服后台</div>
-          </div>
+    <div className="acs-login">
+      <aside className="acs-login-aside">
+        <div className="acs-login-brand"><Logo size={26} />AI 客服</div>
+        <LoginArt className="acs-login-art" />
+        <div>
+          <div className="acs-login-statement">运营后台</div>
+          <div className="acs-login-note">管理知识库、对话记录、转人工工单和模型配置。</div>
         </div>
-        <div className="acs-login-sub">运营管理 · 知识库驱动的智能客服</div>
+      </aside>
 
-        <Form form={form} layout="vertical" onFinish={onFinish} requiredMark={false} size="large">
-          <Form.Item label="邮箱" name="email" rules={[{ required: true, message: "请输入邮箱" }]}>
-            <Input prefix={<UserOutlined className="acs-login-icon" />} placeholder="name@company.com" autoComplete="username" />
-          </Form.Item>
-          <Form.Item label="密码" name="password" rules={[{ required: true, message: "请输入密码" }]} style={{ marginBottom: 14 }}>
-            <Input.Password prefix={<LockOutlined className="acs-login-icon" />} autoComplete="current-password" />
-          </Form.Item>
-          {/* 仅 /login?tenant= 深链或代管过的浏览器自动展开；常规部署按邮箱自动识别租户，无需入口 */}
-          <Form.Item label="租户标识" name="tenant" hidden={!showTenant} style={{ marginBottom: 14 }}
-            tooltip="仅当同一邮箱存在于多个租户时才需要填写；通常留空即可（系统按邮箱自动识别租户）">
-            <Input prefix={<ApartmentOutlined className="acs-login-icon" />} placeholder="租户 slug（一般无需填写）" autoComplete="organization" />
-          </Form.Item>
+      <main className="acs-login-main">
+        <div className="acs-login-form">
+          <h1 className="acs-login-title">登录</h1>
+          <div className="acs-login-sub">使用管理员为你开通的账号</div>
 
-          <div className="acs-login-row">
-            <Form.Item name="remember" valuePropName="checked" noStyle>
+          <Form form={form} layout="vertical" onFinish={onFinish} requiredMark={false} size="large">
+            <Form.Item label="邮箱" name="email" rules={[{ required: true, message: "请输入邮箱" }]}>
+              <Input placeholder="name@company.com" autoComplete="username" />
+            </Form.Item>
+            <Form.Item label="密码" name="password" rules={[{ required: true, message: "请输入密码" }]}>
+              <Input.Password autoComplete="current-password" />
+            </Form.Item>
+            {/* 仅 /login?tenant= 深链或代管过的浏览器自动展开；常规部署按邮箱自动识别租户，无需入口 */}
+            <Form.Item label="租户标识" name="tenant" hidden={!showTenant}
+              tooltip="仅当同一邮箱存在于多个租户时才需要填写；通常留空即可（系统按邮箱自动识别租户）">
+              <Input placeholder="租户 slug（一般无需填写）" autoComplete="organization" />
+            </Form.Item>
+
+            <Form.Item name="remember" valuePropName="checked" style={{ marginBottom: 12 }}>
               <Checkbox>记住邮箱</Checkbox>
             </Form.Item>
-          </div>
 
-          <Button type="primary" block htmlType="submit" loading={loading} autoInsertSpace={false} className="acs-login-btn">登录</Button>
-        </Form>
-        <div className="acs-login-hint">登录遇到问题？请联系超级管理员</div>
-      </div>
+            <Button type="primary" block htmlType="submit" loading={loading} autoInsertSpace={false} className="acs-login-btn">登录</Button>
+          </Form>
+          <div className="acs-login-hint">登录遇到问题，请联系超级管理员。</div>
+        </div>
+      </main>
     </div>
   );
 }

@@ -3,7 +3,8 @@ import {
   Button, Card, Form, Input, InputNumber, Switch, Space, Divider, Progress,
   Alert, Row, Col, App as AntApp, Tag, Popconfirm, Typography, Segmented, Collapse, Table, Modal,
 } from "antd";
-import { SyncOutlined, ThunderboltOutlined } from "@ant-design/icons";
+import { IconCalibrate, IconConnect, IconReembed } from "../icons";
+import { PageHeader } from "../components/PageHeader";
 import { aiConfigApi, knowledgeApi, evalCaseApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, isAdmin } from "../auth";
@@ -134,8 +135,7 @@ export function AIConfig() {
 
   return (
     <div>
-      <div className="acs-page-title">AI 配置</div>
-      <div className="acs-page-sub">切换对话 / 向量 / 重排模型与参数，设置客服人设与检索策略；更换向量模型会触发全量重建。</div>
+      <PageHeader title="AI 配置" />
 
       {rebuilding && (
         <Alert
@@ -169,7 +169,7 @@ export function AIConfig() {
       <Form form={form} layout="vertical" disabled={!admin}>
         <Row gutter={16}>
           <Col xs={24} lg={12}>
-            <Card title="大语言模型 (LLM)" extra={admin && <Button size="small" icon={<ThunderboltOutlined />} onClick={testLLM}>测试连接</Button>}>
+            <Card title="大语言模型 (LLM)" extra={admin && <Button size="small" icon={<IconConnect />} onClick={testLLM}>测试连接</Button>}>
               <Form.Item name="llm_provider" label="Provider 标识"><Input placeholder="openai / deepseek / qwen ..." /></Form.Item>
               <Form.Item name="llm_base_url" label="Base URL"><Input placeholder="https://api.openai.com/v1" /></Form.Item>
               <Form.Item name="llm_api_key" label="API Key"><Input.Password placeholder="留空表示不修改" autoComplete="new-password" /></Form.Item>
@@ -233,7 +233,7 @@ export function AIConfig() {
                     cancelText="取消"
                     onConfirm={doRebuild}
                   >
-                    <Button icon={<SyncOutlined />} disabled={rebuilding}>全量重建向量</Button>
+                    <Button icon={<IconReembed />} disabled={rebuilding}>全量重建向量</Button>
                   </Popconfirm>
                   <div style={{ marginTop: 4 }}>
                     <Typography.Text type="secondary" style={{ fontSize: 12 }}>
@@ -267,7 +267,7 @@ export function AIConfig() {
                           if (px) form.setFieldsValue({ retrieval: { ...form.getFieldValue("retrieval"), min_score: px.min_score, vector_min_sim: px.vector_min_sim } });
                         }}
                       />
-                      <div style={{ fontSize: 12, color: "#6b7280", marginTop: 8, lineHeight: 1.8 }}>
+                      <div style={{ fontSize: 12, color: "var(--acs-text-2)", marginTop: 8, lineHeight: 1.8 }}>
                         <div><b>严格</b>：宁可说「没有相关资料」也不拿沾边内容作答；<b>均衡</b>：默认，按线上数据校准；<b>宽松</b>：尽量给资料，误引用会增多。</div>
                         <div>当前门槛：重排分下限 {ms ?? "—"} · 向量相似度下限 {vs ?? "—"}。不确定该选哪档？用下方「评测与校准」让数据来定。</div>
                       </div>
@@ -308,11 +308,11 @@ export function AIConfig() {
               title="评测与校准" style={{ marginTop: 16 }}
               extra={<Button size="small" onClick={() => setCasesOpen(true)}>管理用例{evalTotal != null ? `（${evalTotal}）` : ""}</Button>}
             >
-              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 12, lineHeight: 1.8 }}>
+              <div style={{ fontSize: 12, color: "var(--acs-text-2)", marginBottom: 12, lineHeight: 1.8 }}>
                 评测用例来自知识库「测试检索」弹窗：输入客户问法后点「应命中这条」或「应该无结果」。用例够 20 条以上时，点「运行校准」，系统会对每个门槛值算出「该命中的命中了多少、该拒绝的拒绝了多少」，并给出推荐值。
               </div>
               <Space wrap>
-                <Button type="primary" icon={<ThunderboltOutlined />} loading={calibrating} disabled={!admin || !evalTotal} onClick={runCalibration}>运行校准</Button>
+                <Button type="primary" icon={<IconCalibrate />} loading={calibrating} disabled={!admin || !evalTotal} onClick={runCalibration}>运行校准</Button>
                 {calib?.recommended != null && (
                   <Button
                     disabled={!admin} loading={loading}
@@ -328,7 +328,7 @@ export function AIConfig() {
               {calib?.error && <Alert style={{ marginTop: 12 }} type="warning" showIcon message={calib.error} />}
               {calib && !calib.error && calib.cases > 0 && (
                 <div style={{ marginTop: 12 }}>
-                  <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
+                  <div style={{ fontSize: 12, color: "var(--acs-text-2)", marginBottom: 6 }}>
                     {calib.cases} 条用例（应命中 {calib.positives} · 应无结果 {calib.negatives}），按{calib.param === "min_score" ? "重排分下限" : "向量相似度下限"}扫描；当前值 {calib.current}
                     {calib.current_eval?.accuracy != null ? `，准确率 ${(calib.current_eval.accuracy * 100).toFixed(0)}%` : ""}。
                   </div>
@@ -344,7 +344,7 @@ export function AIConfig() {
                   />
                   {calib.per_case?.some((c: any) => !c.ok_at_current) && (
                     <div style={{ marginTop: 10, fontSize: 12 }}>
-                      <div style={{ color: "#6b7280", marginBottom: 4 }}>当前门槛下不通过的用例：</div>
+                      <div style={{ color: "var(--acs-text-2)", marginBottom: 4 }}>当前门槛下不通过的用例：</div>
                       <ul style={{ margin: 0, paddingLeft: 18 }}>
                         {calib.per_case.filter((c: any) => !c.ok_at_current).slice(0, 12).map((c: any, i: number) => (
                           <li key={i}>「{c.query}」期望 {c.expected_title || "命中"}，实际第一名 {c.top_title ?? "无结果"}{c.top_score != null ? `（${c.top_score}）` : ""}</li>
@@ -357,7 +357,7 @@ export function AIConfig() {
             </Card>
 
             <Modal title="评测用例" open={casesOpen} onCancel={() => setCasesOpen(false)} footer={null} width={720}>
-              <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>在知识库「测试检索」里标注新增；这里只做查看与删除。</div>
+              <div style={{ fontSize: 12, color: "var(--acs-text-2)", marginBottom: 8 }}>在知识库「测试检索」里标注新增；这里只做查看与删除。</div>
               <Table
                 size="small" rowKey="id" dataSource={evalCases} pagination={{ pageSize: 10, showSizeChanger: false }}
                 columns={[
@@ -372,8 +372,8 @@ export function AIConfig() {
         </Row>
 
         {admin && (
-          <div style={{ position: "sticky", bottom: 0, padding: "12px 0", textAlign: "right" }}>
-            <Button type="primary" size="large" loading={loading} onClick={save}>保存配置</Button>
+          <div className="acs-footer-bar">
+            <Button type="primary" loading={loading} onClick={save}>保存配置</Button>
           </div>
         )}
       </Form>

@@ -17,6 +17,8 @@ import { EmojiPicker } from "../EmojiPicker";
 import { CustomerPanel } from "./CustomerPanel";
 import { toast } from "../toast";
 import { channelLabel, fmtShort, HANDOFF_STATUS, isImeComposing, sessionStatusMeta } from "../utils";
+import { IconAttach, IconBack, IconCanned, IconDown, IconEmoji } from "../icons";
+import { Status } from "../components/Status";
 
 type Ticket = {
   id: string;
@@ -394,9 +396,7 @@ export function SessionPage() {
     <div className="app-shell chat-shell">
       <header className="app-header">
         <Link className="back-link" to="/" aria-label="返回收件箱">
-          <svg viewBox="0 0 20 20" width="18" height="18" fill="none" aria-hidden="true">
-            <path d="M12.5 4.5 7 10l5.5 5.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
+          <IconBack size={20} />
         </Link>
         <div className="app-header-main">
           <div className="app-header-title">
@@ -404,15 +404,11 @@ export function SessionPage() {
           </div>
           {s && (
             <div className="app-header-sub">
-              <span className="badge badge-plain">{channelLabel(s.channel_type)}</span>
-              <span className={`badge badge-${st.cls}`}>{st.label}</span>
-              {ticketMine && <span className="badge badge-blue">我认领的</span>}
-              {ticketOther && (
-                <span className={`badge badge-${HANDOFF_STATUS.in_progress.cls}`}>
-                  {ticket?.assignee_name || "同事"}跟进中
-                </span>
-              )}
-              {ticketOpen && <span className={`badge badge-${HANDOFF_STATUS.open.cls}`}>待认领</span>}
+              <Status tone={st.cls} label={st.label} />
+              {ticketMine && <span className="meta-text meta-mine">我认领的</span>}
+              {ticketOther && <span className="meta-text">{ticket?.assignee_name || "同事"}跟进中</span>}
+              {ticketOpen && <span className="meta-text meta-open">待认领</span>}
+              <span className="meta-text">{channelLabel(s.channel_type)}</span>
             </div>
           )}
         </div>
@@ -452,7 +448,7 @@ export function SessionPage() {
             </button>
           )}
           {inTakeover && (
-            <button className="btn btn-danger btn-sm" disabled={!!acting} onClick={() => setConfirmEnd(true)}>
+            <button className="btn btn-danger-outline btn-sm" disabled={!!acting} onClick={() => setConfirmEnd(true)}>
               结束并完成
             </button>
           )}
@@ -533,7 +529,7 @@ export function SessionPage() {
                             </button>
                           ) : (
                             <a key={i} className="attach-file" href={url} target="_blank" rel="noopener noreferrer">
-                              📎 {a?.name || "文件"}
+                              <IconAttach size={14} />{a?.name || "文件"}
                             </a>
                           );
                         })}
@@ -547,9 +543,7 @@ export function SessionPage() {
         {showJump && (
           <button className={`jump-btn${hasNew ? " jump-btn-new" : ""}`} onClick={jumpToBottom}>
             {hasNew ? "有新消息" : "回到底部"}
-            <svg viewBox="0 0 12 12" width="11" height="11" fill="none" aria-hidden="true">
-              <path d="M2 4.5 6 8.5l4-4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <IconDown size={14} />
           </button>
         )}
       </div>
@@ -626,15 +620,14 @@ export function SessionPage() {
       <div className="composer">
         {inTakeover ? (
           <>
+            <div className="composer-tools">
             <button
               className={`btn btn-ghost btn-icon composer-canned${cannedOpen ? " composer-canned-on" : ""}`}
               onClick={() => setCannedOpen((v) => !v)}
               title="快捷回复"
               aria-label="快捷回复"
             >
-              <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
-                <path d="M11.3 1.6 4 11h4.4l-1 7.4L14.9 9h-4.5l.9-7.4z" />
-              </svg>
+              <IconCanned />
             </button>
             {canAttach && (
               <>
@@ -645,9 +638,7 @@ export function SessionPage() {
                   title="发送图片或文件"
                   aria-label="发送图片或文件"
                 >
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                  </svg>
+                  <IconAttach />
                 </button>
                 <input
                   ref={fileRef}
@@ -669,19 +660,15 @@ export function SessionPage() {
               aria-label="表情"
               aria-expanded={emojiOpen}
             >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-                <line x1="9" y1="9" x2="9.01" y2="9" />
-                <line x1="15" y1="9" x2="15.01" y2="9" />
-              </svg>
+              <IconEmoji />
             </button>
+            </div>
             {/* 发送中不 disable：双发已由 submit 的 sending 守卫兜住，保持可输入且焦点不丢 */}
             <textarea
               ref={taRef}
               className="composer-input"
               rows={1}
-              placeholder="输入回复；/ 快捷回复"
+              placeholder="输入回复，/ 选快捷回复"
               title="回车发送，Shift+回车换行"
               value={text}
               onChange={(e) => {

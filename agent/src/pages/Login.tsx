@@ -2,6 +2,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { apiError } from "../api";
 import { useAuth } from "../auth";
+import { Logo } from "../components/Logo";
+import { LoginArt } from "../components/LoginArt";
 
 const REMEMBER_KEY = "acs_agent_login_email";
 
@@ -42,53 +44,52 @@ export function Login() {
   };
 
   return (
-    <div className="login-page">
-      <form className="login-card" onSubmit={submit}>
-        <div className="login-brand" aria-hidden="true">
-          <svg viewBox="0 0 64 64" width="26" height="26" fill="none">
-            <path d="M20 38v-5c0-7 5.4-12 12-12s12 5 12 12v5" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
-            <rect x="16.6" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
-            <rect x="40.4" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
-            <path d="M43.6 47.4c-.6 3.2-3.8 5-7.6 5h-2.4" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-            <circle cx="32.4" cy="52.4" r="2.4" fill="currentColor" />
-          </svg>
-          <i className="login-presence" />
+    <div className="login">
+      <aside className="login-aside">
+        <div className="login-brand"><Logo size={26} />AI 客服</div>
+        <LoginArt className="login-art" />
+        <div className="login-aside-foot">
+          <div className="login-statement">坐席工作台</div>
+          <div className="login-note">认领转人工的工单，接管对话并回复客户。</div>
         </div>
-        <div className="login-eyebrow">智能客服平台 · 坐席端</div>
-        <div className="login-title">坐席工作台</div>
-        <div className="login-sub">登录后开始接待客户会话</div>
-        <label className="field">
-          <span className="field-label">邮箱</span>
-          <input
-            className="input"
-            type="email"
-            autoComplete="username"
-            placeholder="you@example.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-        </label>
-        <label className="field">
-          <span className="field-label">密码</span>
-          <input
-            className="input"
-            type="password"
-            autoComplete="current-password"
-            placeholder="请输入密码"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </label>
-        <label className="remember-row">
-          <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-          <span>记住邮箱</span>
-        </label>
-        {error && <div className="form-error">{error}</div>}
-        <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
-          {busy ? "登录中…" : "登录"}
-        </button>
-        <div className="login-hint">登录遇到问题？请联系管理员重置密码</div>
-      </form>
+      </aside>
+
+      <main className="login-main">
+        <form className="login-form" onSubmit={submit}>
+          <h1 className="login-title">登录坐席工作台</h1>
+          <div className="login-sub">使用管理员为你开通的账号</div>
+          <label className="field">
+            <span className="field-label">邮箱</span>
+            <input
+              className="input"
+              type="email"
+              autoComplete="username"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">密码</span>
+            <input
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          <label className="remember-row">
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+            <span>记住邮箱</span>
+          </label>
+          {error && <div className="form-error">{error}</div>}
+          <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
+            {busy ? "登录中…" : "登录"}
+          </button>
+          <div className="login-hint">登录遇到问题，请联系管理员重置密码。</div>
+        </form>
+      </main>
     </div>
   );
 }

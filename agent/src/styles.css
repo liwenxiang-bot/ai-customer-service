@@ -1,5 +1,5 @@
 /* 坐席站全局样式：移动优先（375px 单列），桌面 ≥1024px 双栏（左收件箱 340px + 右会话面板）。
- * 品牌主色与 admin 保持一致（#0F766E teal）。
+ * 品牌主色与 admin 保持一致（墨青 #24616C，见 admin/src/theme.tsx）。
  * 亮/暗主题：浅色为默认值，深色在 prefers-color-scheme / <html data-theme="dark"> 下覆盖；
  * 未手动选择时跟随系统（index.html 内联脚本负责首屏防闪，theme.ts 负责运行时切换）。 */
 
@@ -7,108 +7,97 @@
 :root {
   color-scheme: light dark;
 
-  /* 品牌色：solid 底固定深 teal（两种主题下白字对比度都够），强调文字暗色下提亮 */
-  --brand: #0f766e;
-  --brand-strong: #0b5c56;
-  --primary: #0f766e;
-  --primary-weak: #e7f2f0;
-  --focus-ring: rgba(15, 118, 110, 0.18);
+  /* 品牌色：低饱和墨青，与 admin/src/theme.tsx 的 BRAND 保持一致。
+     solid 底固定用 --brand（两种主题下白字对比度都够），强调文字在暗色下用提亮的 --primary */
+  --brand: #24616c;
+  --brand-strong: #1b4d56;
+  --primary: #24616c;
+  --primary-weak: #e6eff0;
+  --focus-ring: rgba(36, 97, 108, 0.2);
+  --ink: #1b444c; /* 登录页品牌区底色 */
 
-  --bg: #f5f6fa;
+  /* 底色与线条保持中性（不带黄调），与 admin 一致 */
+  --bg: #f6f7f8;
   --panel: #ffffff;
-  --panel-2: #f6f7f9;
-  --line: #e5e7eb;
-  --text: #1f2329;
-  --muted: #6b7280;
-  --faint: #9ca3af;
+  --panel-2: #f8f9fa;
+  --line: #ebedee;
+  --text: #1e2424;
+  --muted: #5e6669;
+  --faint: #868d90;
 
-  /* 状态色（badge 文字 / 浅底），语义对齐 admin utils/status.ts */
-  --red: #d92d20;
-  --red-bg: #feeceb;
-  --orange: #c2410c;
-  --orange-bg: #fff0e4;
-  --blue: #1d4ed8;
-  --blue-bg: #e8effd;
-  --green: #0f9d6e;
-  --green-bg: #e6f7f0;
-  --purple: #7c3aed;
-  --purple-bg: #f1e9fe;
-  --gray: #6b7280;
-  --gray-bg: #f0f1f3;
+  /* 状态色：只留语义四色 + 中性灰，语义对齐 admin utils/status.ts
+     （red 待处理/失败，orange 需留意，blue 进行中，green 完成） */
+  --red: #c8402f;
+  --red-bg: #fbece9;
+  --orange: #b7791f;
+  --blue: #24616c;
+  --green: #2e7d5b;
+  --gray: #868d90;
+  --gray-bg: #f0f2f3;
 
-  --danger-solid: #d92d20;
-  --sk: #edeff2;
-  --overlay: rgba(15, 20, 25, 0.45);
-  --toast-bg: rgba(31, 35, 41, 0.92);
-  --radius: 10px;
-  --shadow: 0 4px 16px rgba(15, 23, 32, 0.08);
-  --shadow-sm: 0 1px 2px rgba(15, 23, 32, 0.05);
+  --danger-solid: #c8402f;
+  --sk: #eceeef;
+  --overlay: rgba(15, 20, 19, 0.45);
+  --toast-bg: rgba(30, 36, 36, 0.92);
+  /* 圆角只有两档：控件 6px，气泡 / 弹层 10px；圆形与胶囊另算 */
+  --r-sm: 6px;
+  --r-md: 10px;
+  /* 投影只给真正浮起的元素（弹层、toast、回到底部浮钮） */
+  --shadow: 0 4px 16px rgba(15, 23, 22, 0.1);
 }
-/* 深色：跟随系统（未手动选择浅色时）或手动选择深色。
+/* 深色：跟随系统（未手动选择浅色时）或手动选择深色，两处取值必须相同。
    不用 light-dark()：它要求 Chrome 123+ / Safari 17.5+，微信内置浏览器与旧 iOS 上整套配色会失效。 */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --brand-strong: #0d9488;
-    --primary: #2dd4bf;
-    --primary-weak: rgba(45, 212, 191, 0.12);
-    --focus-ring: rgba(45, 212, 191, 0.28);
-    --bg: #0e1114;
-    --panel: #161a1f;
-    --panel-2: #1d2229;
-    --line: #272e37;
-    --text: #e6eaf0;
-    --muted: #98a2b0;
-    --faint: #68727f;
-    --red: #f87171;
-    --red-bg: rgba(248, 113, 113, 0.14);
-    --orange: #fb923c;
-    --orange-bg: rgba(251, 146, 60, 0.14);
-    --blue: #60a5fa;
-    --blue-bg: rgba(96, 165, 250, 0.14);
-    --green: #34d399;
-    --green-bg: rgba(52, 211, 153, 0.14);
-    --purple: #a78bfa;
-    --purple-bg: rgba(167, 139, 250, 0.14);
-    --gray: #9aa3b1;
-    --gray-bg: rgba(148, 163, 184, 0.14);
-    --danger-solid: #dc2626;
-    --sk: #212730;
+    --brand-strong: #2d7480;
+    --primary: #74b4c0;
+    --primary-weak: rgba(116, 180, 192, 0.14);
+    --focus-ring: rgba(116, 180, 192, 0.3);
+    --ink: #15343a; /* 仍是墨青：不能和 --panel 同色，否则登录页左右两栏糊成一片 */
+    --bg: #121413;
+    --panel: #1a1d1c;
+    --panel-2: #202423;
+    --line: #2a2e2d;
+    --text: #e6e9e8;
+    --muted: #9ba3a1;
+    --faint: #6e7674;
+    --red: #f0857a;
+    --red-bg: rgba(240, 133, 122, 0.14);
+    --orange: #e0a552;
+    --blue: #74b4c0;
+    --green: #5dbf94;
+    --gray: #6e7674;
+    --gray-bg: rgba(155, 163, 161, 0.14);
+    --sk: #232726;
     --overlay: rgba(0, 0, 0, 0.62);
-    --toast-bg: rgba(58, 66, 76, 0.96);
+    --toast-bg: rgba(60, 66, 64, 0.96);
     --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 }
 :root[data-theme="dark"] {
-  --brand-strong: #0d9488;
-  --primary: #2dd4bf;
-  --primary-weak: rgba(45, 212, 191, 0.12);
-  --focus-ring: rgba(45, 212, 191, 0.28);
-  --bg: #0e1114;
-  --panel: #161a1f;
-  --panel-2: #1d2229;
-  --line: #272e37;
-  --text: #e6eaf0;
-  --muted: #98a2b0;
-  --faint: #68727f;
-  --red: #f87171;
-  --red-bg: rgba(248, 113, 113, 0.14);
-  --orange: #fb923c;
-  --orange-bg: rgba(251, 146, 60, 0.14);
-  --blue: #60a5fa;
-  --blue-bg: rgba(96, 165, 250, 0.14);
-  --green: #34d399;
-  --green-bg: rgba(52, 211, 153, 0.14);
-  --purple: #a78bfa;
-  --purple-bg: rgba(167, 139, 250, 0.14);
-  --gray: #9aa3b1;
-  --gray-bg: rgba(148, 163, 184, 0.14);
-  --danger-solid: #dc2626;
-  --sk: #212730;
+  --brand-strong: #2d7480;
+  --primary: #74b4c0;
+  --primary-weak: rgba(116, 180, 192, 0.14);
+  --focus-ring: rgba(116, 180, 192, 0.3);
+  --ink: #15343a; /* 仍是墨青：不能和 --panel 同色，否则登录页左右两栏糊成一片 */
+  --bg: #121413;
+  --panel: #1a1d1c;
+  --panel-2: #202423;
+  --line: #2a2e2d;
+  --text: #e6e9e8;
+  --muted: #9ba3a1;
+  --faint: #6e7674;
+  --red: #f0857a;
+  --red-bg: rgba(240, 133, 122, 0.14);
+  --orange: #e0a552;
+  --blue: #74b4c0;
+  --green: #5dbf94;
+  --gray: #6e7674;
+  --gray-bg: rgba(155, 163, 161, 0.14);
+  --sk: #232726;
   --overlay: rgba(0, 0, 0, 0.62);
-  --toast-bg: rgba(58, 66, 76, 0.96);
+  --toast-bg: rgba(60, 66, 64, 0.96);
   --shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -238,25 +227,37 @@ input[type="radio"] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 收件箱顶栏的产品名不参与收缩（会话页的客户名在 .app-header-main 里，仍可截断） */
+.app-header > .app-header-title {
+  flex-shrink: 0;
+}
 .app-header-main {
   min-width: 0;
   flex: 1;
 }
 .app-header-sub {
   display: flex;
-  gap: 6px;
+  gap: 2px 12px;
   flex-wrap: wrap;
   margin-top: 2px;
 }
 .app-header-right {
   margin-left: auto;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
 }
+.app-header-right .btn {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* 空间不够时先截断用户名，标题和按钮保持完整 */
 .app-header-user {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: 6px;
   font-size: 12px;
-  max-width: 140px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -268,7 +269,7 @@ input[type="radio"] {
   text-decoration: none;
   color: var(--text);
   padding: 6px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   line-height: 0;
 }
 .back-link:active {
@@ -285,7 +286,7 @@ input[type="radio"] {
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 8px 14px;
   cursor: pointer;
   transition: opacity 0.15s, background 0.15s, border-color 0.15s, filter 0.15s;
@@ -312,7 +313,6 @@ input[type="radio"] {
   background: var(--brand);
   border-color: var(--brand);
   color: #fff;
-  box-shadow: var(--shadow-sm);
 }
 .btn-primary:not(:disabled):active {
   background: var(--brand-strong);
@@ -322,10 +322,18 @@ input[type="radio"] {
   background: var(--danger-solid);
   border-color: var(--danger-solid);
   color: #fff;
-  box-shadow: var(--shadow-sm);
+}
+/* 描边款危险按钮：用于常驻在界面上的危险操作，不与日常操作抢视线；实心款只留给确认弹层 */
+.btn-danger-outline {
+  background: transparent;
+  color: var(--red);
+}
+.btn-danger-outline:not(:disabled):active {
+  background: var(--red-bg);
 }
 .btn-ghost {
   background: transparent;
+  border-color: transparent;
 }
 .btn-ghost:not(:disabled):active {
   background: var(--gray-bg);
@@ -338,135 +346,134 @@ input[type="radio"] {
   .btn-ghost:not(:disabled):hover {
     background: var(--gray-bg);
   }
-  .btn:not(.btn-primary):not(.btn-danger):not(.btn-ghost):not(:disabled):hover {
+  .btn-danger-outline:not(:disabled):hover {
+    background: var(--red-bg);
+    border-color: var(--red);
+  }
+  .btn:not(.btn-primary):not(.btn-danger):not(.btn-danger-outline):not(.btn-ghost):not(:disabled):hover {
     background: var(--panel-2);
   }
 }
 
-/* ---------- 徽标 ---------- */
-.badge {
+/* ---------- 状态：圆点 + 文字 ---------- */
+.status {
   display: inline-flex;
   align-items: center;
-  font-size: 11px;
-  font-weight: 500;
+  gap: 5px;
+  font-size: 12px;
   line-height: 18px;
-  padding: 0 7px;
-  border-radius: 9px;
+  color: var(--muted);
   white-space: nowrap;
 }
-.badge-red {
-  color: var(--red);
-  background: var(--red-bg);
+.status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gray);
+  flex-shrink: 0;
 }
-.badge-orange {
-  color: var(--orange);
-  background: var(--orange-bg);
+.status-red::before { background: var(--red); }
+.status-orange::before { background: var(--orange); }
+.status-blue::before { background: var(--blue); }
+.status-green::before { background: var(--green); }
+/* 行内辅助信息（渠道、认领人）：纯文字，不加底色 */
+.meta-text {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--faint);
+  white-space: nowrap;
 }
-.badge-blue {
-  color: var(--blue);
-  background: var(--blue-bg);
-}
-.badge-green {
-  color: var(--green);
-  background: var(--green-bg);
-}
-.badge-purple {
-  color: var(--purple);
-  background: var(--purple-bg);
-}
-.badge-gray {
-  color: var(--gray);
-  background: var(--gray-bg);
-}
-.badge-plain {
-  color: var(--muted);
-  background: var(--gray-bg);
-}
+.meta-mine { color: var(--primary); font-weight: 500; }
+.meta-open { color: var(--red); font-weight: 500; }
+
+.icon { flex: none; display: block; }
 
 /* ---------- 登录页 ---------- */
-.login-page {
+/* 手机：顶部品牌条 + 表单；≥860px：左侧品牌区 + 右侧表单（与管理后台同构） */
+.login {
   min-height: 100vh;
   min-height: 100dvh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-  /* 品牌氛围：两抹极淡的 teal 光晕，亮暗主题都走 --primary-weak 变量 */
-  background:
-    radial-gradient(640px 420px at 10% -8%, var(--primary-weak), transparent 62%),
-    radial-gradient(760px 480px at 108% 112%, var(--primary-weak), transparent 58%),
-    var(--bg);
-}
-.login-card {
-  width: 100%;
-  max-width: 384px;
+  display: grid;
+  grid-template-rows: auto 1fr;
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 32px 28px 22px;
-  box-shadow: var(--shadow);
+}
+.login-aside {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px 20px;
+  background: var(--ink);
+  color: #fff;
 }
 .login-brand {
-  position: relative;
-  width: 46px;
-  height: 46px;
-  border-radius: 13px;
-  background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
-  color: #fff;
   display: flex;
   align-items: center;
-  justify-content: center;
-  margin-bottom: 18px;
-  box-shadow: 0 6px 16px -6px rgba(15, 118, 110, 0.45);
-}
-/* 在线状态点：客服台"开门营业"的隐喻，也是两个控制台共用的品牌签名 */
-.login-presence {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: #2dd4bf;
-  box-shadow: 0 0 0 3px var(--panel);
-}
-@media (prefers-reduced-motion: no-preference) {
-  .login-presence::after {
-    content: "";
-    position: absolute;
-    inset: -2px;
-    border-radius: 50%;
-    border: 2px solid rgba(45, 212, 191, 0.55);
-    animation: presence-pulse 2.6s ease-out infinite;
-  }
-  @keyframes presence-pulse {
-    0% { transform: scale(0.7); opacity: 1; }
-    70%, 100% { transform: scale(1.9); opacity: 0; }
-  }
-}
-.login-eyebrow {
-  font-size: 11px;
+  gap: 10px;
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.14em;
-  color: var(--faint);
-  margin-bottom: 6px;
+}
+.login-aside-foot,
+.login-art {
+  display: none;
+}
+.login-statement {
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.login-note {
+  margin-top: 14px;
+  max-width: 26em;
+  font-size: 14px;
+  line-height: 1.75;
+  color: rgba(255, 255, 255, 0.62);
+}
+.login-main {
+  display: grid;
+  place-items: start center;
+  padding: 40px 24px 24px;
+}
+.login-form {
+  width: 360px;
+  max-width: 100%;
 }
 .login-title {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 32px;
   color: var(--text);
 }
 .login-sub {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--muted);
-  margin: 6px 0 22px;
+  margin: 6px 0 26px;
 }
 .login-hint {
-  margin-top: 16px;
-  font-size: 12px;
-  color: var(--muted); /* 功能性文案（找回路径），比 --faint 高一档保证可读 */
-  text-align: center;
+  margin-top: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+@media (min-width: 860px) {
+  .login {
+    grid-template-rows: none;
+    grid-template-columns: minmax(320px, 5fr) 7fr;
+  }
+  .login-aside {
+    padding: 36px 48px 56px;
+  }
+  .login-aside-foot {
+    display: block;
+  }
+  .login-art {
+    display: block;
+    width: min(100%, 400px);
+  }
+  .login-main {
+    place-items: center;
+    padding: 32px 24px;
+  }
 }
 .field {
   display: block;
@@ -481,7 +488,7 @@ input[type="radio"] {
 .input {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 9px 12px;
   font: inherit;
   /* ≥16px：iOS Safari 对聚焦时字号 <16px 的输入框会自动放大页面。设 16px 从根上避免，
@@ -509,7 +516,7 @@ input[type="radio"] {
 .form-error {
   color: var(--red);
   background: var(--red-bg);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-size: 13px;
   padding: 8px 10px;
   margin-bottom: 12px;
@@ -551,7 +558,7 @@ input[type="radio"] {
   font-size: 11px;
   font-weight: 500;
   line-height: 16px;
-  border-radius: 8px;
+  border-radius: 999px;
   color: var(--faint);
   background: var(--gray-bg);
 }
@@ -587,7 +594,7 @@ input[type="radio"] {
   flex-shrink: 0;
 }
 
-/* 空态（插画级文案） */
+/* 空态 */
 .empty {
   display: flex;
   flex-direction: column;
@@ -596,10 +603,7 @@ input[type="radio"] {
   padding: 72px 24px;
 }
 .empty-icon {
-  width: 72px;
-  height: 72px;
   color: var(--faint);
-  opacity: 0.55;
 }
 .empty-title {
   margin-top: 14px;
@@ -643,30 +647,14 @@ input[type="radio"] {
     background: var(--primary-weak);
   }
 }
-.conv-avatar {
-  position: relative;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: var(--primary-weak);
-  color: var(--primary);
-  font-size: 15px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  user-select: none;
-}
 .unread-dot {
-  position: absolute;
-  top: -1px;
-  right: -1px;
-  width: 9px;
-  height: 9px;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
   border-radius: 50%;
   background: var(--red);
-  border: 2px solid var(--panel);
+  vertical-align: 1px;
 }
 .conv-main {
   flex: 1;
@@ -700,8 +688,8 @@ input[type="radio"] {
 }
 .conv-meta {
   display: flex;
-  gap: 6px;
-  margin-top: 5px;
+  gap: 4px 12px;
+  margin-top: 6px;
   flex-wrap: wrap;
 }
 .conv-claim {
@@ -711,14 +699,8 @@ input[type="radio"] {
 /* ---------- 加载骨架 ---------- */
 .sk {
   background: var(--sk);
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   animation: sk-pulse 1.3s ease-in-out infinite;
-}
-.sk-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  flex-shrink: 0;
 }
 .sk-line {
   height: 12px;
@@ -730,7 +712,7 @@ input[type="radio"] {
 }
 .sk-bubble {
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
 .conv-item-sk {
   pointer-events: none;
@@ -762,6 +744,10 @@ input[type="radio"] {
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
   flex-shrink: 0;
+}
+/* 操作条里的次要按钮保留描边：与旁边的描边危险按钮同一视觉重量，不至于只剩危险操作像按钮 */
+.action-bar .btn-ghost {
+  border-color: var(--line);
 }
 .msgs-wrap {
   position: relative;
@@ -808,12 +794,11 @@ input[type="radio"] {
 }
 .bubble {
   padding: 8px 12px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   font-size: 14px;
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
-  box-shadow: var(--shadow-sm);
 }
 .bubble-user {
   background: var(--panel);
@@ -840,11 +825,14 @@ input[type="radio"] {
   width: 88px;
   height: 88px;
   object-fit: cover;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--line);
   display: block;
 }
 .attach-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 12px;
   color: var(--primary);
 }
@@ -941,6 +929,25 @@ input[type="radio"] {
   text-overflow: ellipsis;
 }
 
+.composer-tools {
+  display: flex;
+  gap: 4px;
+}
+/* 窄屏：工具按钮单独占一行，输入框与发送键独占下一行（否则输入框只剩 ~140px，占位文字都放不下） */
+@media (max-width: 599.98px) {
+  .composer {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .composer-tools {
+    flex: 0 0 100%;
+  }
+  .composer .composer-tools .btn {
+    height: 32px;
+    width: 36px;
+    padding: 0;
+  }
+}
 .composer {
   display: flex;
   align-items: flex-end;
@@ -961,9 +968,10 @@ input[type="radio"] {
 }
 .composer-input {
   flex: 1;
+  min-width: 0;
   resize: none;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 8px 10px;
   font: inherit;
   /* ≥16px：防止 iOS Safari 点击回复框时自动放大页面（见 .input 说明）。 */
@@ -1029,7 +1037,7 @@ input[type="radio"] {
 .emoji-item {
   border: 0;
   background: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-size: 22px;
   line-height: 1;
   padding: 7px 0;
@@ -1068,7 +1076,7 @@ input[type="radio"] {
   max-width: 180px;
   padding: 0 26px 0 10px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--bg);
   font-size: 13px;
 }
@@ -1076,7 +1084,7 @@ input[type="radio"] {
   height: 48px;
   max-width: 120px;
   margin-left: -6px;
-  border-radius: 6px;
+  border-radius: 4px;
   object-fit: cover;
 }
 .pending-name {
@@ -1125,10 +1133,7 @@ input[type="radio"] {
   background: var(--bg);
 }
 .desk-empty-icon {
-  width: 96px;
-  height: 96px;
   color: var(--faint);
-  opacity: 0.5;
 }
 .desk-empty-title {
   margin-top: 18px;
@@ -1160,7 +1165,7 @@ input[type="radio"] {
   max-width: 320px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--r-md);
   padding: 20px;
   box-shadow: var(--shadow);
   animation: dialog-in 0.16s ease-out;
@@ -1210,15 +1215,16 @@ input[type="radio"] {
   color: #fff;
   font-size: 13px;
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   box-shadow: var(--shadow);
   animation: toast-in 0.2s ease-out;
 }
+/* 固定深色底：两种主题下白字对比度都够 */
 .toast-success {
-  background: #0f9d6e;
+  background: #256a4c;
 }
 .toast-error {
-  background: #d92d20;
+  background: var(--danger-solid);
 }
 .toast-out {
   opacity: 0;
@@ -1267,18 +1273,6 @@ input[type="radio"] {
   align-items: center;
   gap: 12px;
 }
-.cp-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--primary-weak);
-  color: var(--primary);
-  font-weight: 600;
-  flex-shrink: 0;
-}
 .cp-head-main {
   min-width: 0;
   display: flex;
@@ -1297,7 +1291,6 @@ input[type="radio"] {
   font-size: 12px;
   font-weight: 600;
   color: var(--muted);
-  letter-spacing: 0.02em;
   margin-bottom: 8px;
 }
 .cp-row {
@@ -1325,7 +1318,7 @@ input[type="radio"] {
   display: block;
   padding: 8px 10px;
   margin: 0 -10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   color: inherit;
   text-decoration: none;
 }
@@ -1385,12 +1378,12 @@ input[type="radio"] {
 .distill-btn {
   margin-top: 4px;
   padding: 0 6px;
-  border: 1px dashed var(--line, #c9ced6);
+  border: 1px dashed var(--line);
   border-radius: 999px;
   background: transparent;
-  color: var(--muted, #6b7280);
+  color: var(--muted);
   font-size: 11px;
   line-height: 20px;
   cursor: pointer;
 }
-.distill-btn:hover { color: var(--accent, #0f766e); border-color: currentColor; }
+.distill-btn:hover { color: var(--primary); border-color: currentColor; }

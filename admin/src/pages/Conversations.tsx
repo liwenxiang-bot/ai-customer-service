@@ -3,7 +3,7 @@ import {
   Card, Table, Tag, Space, Select, Input, Drawer, Timeline, Descriptions, Button,
   Collapse, Empty, Tooltip, App as AntApp, Modal, Form, DatePicker, Popconfirm, theme,
 } from "antd";
-import { RobotOutlined, UserOutlined, ToolOutlined, BookOutlined, DownloadOutlined, PaperClipOutlined } from "@ant-design/icons";
+import { IconAgentDesk, IconAttachment, IconBot, IconDownload, IconKnowledge, IconTool, IconVisitor } from "../icons";
 import { useNavigate } from "react-router-dom";
 import { conversationApi } from "../api";
 import { apiError } from "../api/client";
@@ -14,11 +14,13 @@ import { useRealtime } from "../hooks/useRealtime";
 import { fmtTime } from "../utils/time";
 import { isImeComposing } from "../utils/ime";
 import { CHANNEL_TYPE, SESSION_STATUS, statusMeta } from "../utils/status";
+import { PageHeader } from "../components/PageHeader";
+import { StatusDot } from "../components/StatusDot";
 
 /** 会话状态 Tag：接管中优先，其次待人工旗标，其余按状态映射文案与颜色。 */
 const sessionTag = (status: string, escalated?: boolean) => {
   const m = statusMeta(SESSION_STATUS, status === "human_takeover" ? status : escalated ? "escalated" : status);
-  return <Tag color={m.color}>{m.label}</Tag>;
+  return <StatusDot meta={m} />;
 };
 
 export function Conversations() {
@@ -82,7 +84,7 @@ export function Conversations() {
       render: (t: string, r: any) =>
         t || (r.last_message?.text ? <span style={{ color: token.colorTextSecondary }}>{r.last_message.text}</span> : <span style={{ color: token.colorTextTertiary }}>（未留言，直接转人工）</span>),
     },
-    { title: "渠道", dataIndex: "channel_type", width: 110, render: (c: string) => <Tag>{statusMeta(CHANNEL_TYPE, c).label}</Tag> },
+    { title: "渠道", dataIndex: "channel_type", width: 110, render: (c: string) => statusMeta(CHANNEL_TYPE, c).label },
     { title: "用户", dataIndex: "end_user_id", width: 160, ellipsis: true, render: (u: string, r: any) => r.end_user_display || u },
     { title: "轮数", dataIndex: "message_count", width: 70 },
     { title: "状态", dataIndex: "status", width: 110, render: (s: string, r: any) => sessionTag(s, r.escalated) },
@@ -92,8 +94,7 @@ export function Conversations() {
 
   return (
     <div>
-      <div className="acs-page-title">对话记录</div>
-      <div className="acs-page-sub">查看全部历史会话与详情（工具调用、引用来源、调用链路），可一键加入知识库。实时接待请用「坐席工作台」。</div>
+      <PageHeader title="对话记录" sub="历史会话与详情，可把回答加入知识库。实时接待请到坐席工作台。" />
       <Card>
         <Space style={{ marginBottom: 12 }} wrap>
           <Input allowClear placeholder="搜索标题/内容/用户" style={{ width: 200 }} value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -119,7 +120,7 @@ export function Conversations() {
           <Select allowClear placeholder="降级" style={{ width: 110 }}
             options={[{ value: "1", label: "仅降级" }]}
             onChange={(v) => setParams((p: any) => ({ ...p, degraded: !!v, page: 1 }))} />
-          <Button icon={<DownloadOutlined />} loading={exporting} onClick={doExport}>导出 CSV</Button>
+          <Button icon={<IconDownload />} loading={exporting} onClick={doExport}>导出 CSV</Button>
         </Space>
         <Table
           rowKey="id" loading={loading} columns={columns as any} dataSource={data.items} size="small"
@@ -224,13 +225,13 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
         items={live.messages.map((m: any) => {
           const isHuman = m.model === "human";
           return {
-            dot: m.role === "user" ? <UserOutlined /> : <RobotOutlined style={{ color: isHuman ? "#10b981" : "#0F766E" }} />,
+            dot: m.role === "user" ? <IconVisitor /> : isHuman ? <IconAgentDesk style={{ color: token.colorSuccess }} /> : <IconBot style={{ color: token.colorPrimary }} />,
             children: (
               <div>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>
                   {m.role === "user" ? "用户" : isHuman ? "人工客服" : "客服"}
-                  {isHuman && <Tag color="green" style={{ marginLeft: 8 }}>人工</Tag>}
-                  {m.degraded && <Tag color="orange" style={{ marginLeft: 8 }}>降级</Tag>}
+                  {isHuman && <Tag color="success" style={{ marginLeft: 8 }}>人工</Tag>}
+                  {m.degraded && <Tag color="warning" style={{ marginLeft: 8 }}>降级</Tag>}
                   {!isHuman && m.model && <Tag style={{ marginLeft: 8 }}>{m.model}</Tag>}
                   {m.latency_ms > 0 && <span style={{ color: token.colorTextSecondary, fontSize: 12, marginLeft: 8 }}>{m.latency_ms}ms · {m.prompt_tokens + m.completion_tokens} tokens · ${m.cost_usd?.toFixed(5)}</span>}
                 </div>
@@ -244,7 +245,7 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
                         </a>
                       ) : (
                         <a key={i} href={a.url} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-                          <PaperClipOutlined /> {a.name || "文件"}
+                          <IconAttachment /> {a.name || "文件"}
                         </a>
                       )
                     )}
@@ -252,10 +253,10 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
                 )}
                 {m.tool_calls?.length > 0 && (
                   <Collapse size="small" ghost items={[{
-                    key: "t", label: <span><ToolOutlined /> 工具调用 ({m.tool_calls.length})</span>,
+                    key: "t", label: <span><IconTool /> 工具调用 ({m.tool_calls.length})</span>,
                     children: m.tool_calls.map((tc: any, i: number) => (
                       <div key={i} style={{ fontSize: 12, marginBottom: 8, background: token.colorFillTertiary, padding: 8, borderRadius: 6 }}>
-                        <b>{tc.name}</b> <Tag color={tc.status === "ok" ? "green" : "red"}>{tc.status}</Tag> {tc.duration_ms}ms
+                        <b>{tc.name}</b> <Tag color={tc.status === "ok" ? "success" : "error"}>{tc.status}</Tag> {tc.duration_ms}ms
                         <div style={{ color: token.colorTextSecondary }}>参数：{JSON.stringify(tc.arguments)}</div>
                         <div style={{ color: token.colorTextSecondary }}>结果：{String(tc.result).slice(0, 200)}</div>
                       </div>
@@ -268,7 +269,7 @@ function ConversationDetail({ sid, onClose, editable, onChanged }: any) {
                     {m.citations.map((c: any) => (
                       <Tooltip key={c.ref} title={c.item_id ? <>{c.snippet}<div style={{ marginTop: 4, opacity: 0.75 }}>点击可编辑该知识条目</div></> : c.snippet}>
                         <Tag
-                          icon={<BookOutlined />} color="blue"
+                          icon={<IconKnowledge />} color="blue"
                           style={c.item_id ? { cursor: "pointer" } : undefined}
                           onClick={c.item_id ? () => nav(`/knowledge?item=${c.item_id}`) : undefined}
                         >[{c.ref}] {c.title}</Tag>

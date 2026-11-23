@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ant-design/icons": "^5.5.2",
+    "@remixicon/react": "^4.9.0",
     "antd": "^5.22.5",
     "axios": "^1.21.0",
     "dayjs": "^1.11.13",

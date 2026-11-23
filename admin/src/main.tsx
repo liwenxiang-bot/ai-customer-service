@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useLayoutEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { ConfigProvider, App as AntApp, theme as antdTheme } from "antd";
@@ -7,14 +7,39 @@ import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import "antd/dist/reset.css";
 import { AuthProvider } from "./auth";
-import { ThemeModeCtx } from "./theme";
+import { ThemeModeCtx, buildTheme, inkPanel } from "./theme";
 import { App } from "./App";
 import "./index.css";
 
 dayjs.locale("zh-cn"); // 日期控件周起始/星期与 antd 中文语言包一致
 
-const FONT =
-  'system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif';
+/** 把 antd 主题 token 同步成 CSS 变量，供 index.css 里的自有样式使用 ——
+ *  颜色只在 theme.tsx 定义一次，浅色 / 深色自动跟随。 */
+function CssVars({ dark }: { dark: boolean }) {
+  const { token } = antdTheme.useToken();
+  useLayoutEffect(() => {
+    const vars: Record<string, string> = {
+      "--acs-font": token.fontFamily,
+      "--acs-ink": inkPanel(dark),
+      "--acs-primary": token.colorPrimary,
+      "--acs-primary-bg": token.colorPrimaryBg,
+      "--acs-text": token.colorText,
+      "--acs-text-2": token.colorTextSecondary,
+      "--acs-text-3": token.colorTextTertiary,
+      "--acs-line": token.colorBorderSecondary,
+      "--acs-surface": token.colorBgContainer,
+      "--acs-bg": token.colorBgLayout,
+      "--acs-fill": token.colorFillQuaternary,
+      "--acs-fill-hover": token.colorFillTertiary,
+      "--acs-success": token.colorSuccess,
+      "--acs-warning": token.colorWarning,
+      "--acs-error": token.colorError,
+    };
+    const root = document.documentElement.style;
+    Object.entries(vars).forEach(([k, v]) => root.setProperty(k, v));
+  }, [token, dark]);
+  return null;
+}
 
 function Root() {
   const [dark, setDark] = useState(() => localStorage.getItem("acs_admin_dark") === "1");
@@ -25,41 +50,8 @@ function Root() {
   }, [dark]);
 
   return (
-    <ConfigProvider
-      locale={zhCN}
-      theme={{
-        algorithm: dark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-        token: {
-          colorPrimary: "#0F766E",
-          borderRadius: 8,
-          fontFamily: FONT,
-          colorSuccess: "#16A34A",
-          colorWarning: "#D97706",
-          colorError: "#DC2626",
-          colorInfo: "#0EA5E9",
-          ...(dark ? {} : { colorBgLayout: "#F5F7FA", colorText: "#18222E", colorTextSecondary: "#5B6573", colorBorder: "#E5E9EE", colorBorderSecondary: "#EAEDF1" }),
-        },
-        components: dark
-          ? {
-              // Keep the sider, its trigger and the header on one dark surface (#141414)
-              // so the menu area doesn't read as a different shade from the brand bar.
-              Layout: { siderBg: "#141414", headerBg: "#141414", triggerBg: "#141414", triggerColor: "rgba(255,255,255,0.65)" },
-              Menu: { itemBorderRadius: 8, itemBg: "transparent", itemSelectedBg: "rgba(45,212,191,0.16)", itemSelectedColor: "#5eead4", itemMarginInline: 8 },
-              Table: { cellPaddingBlock: 12, headerSplitColor: "transparent" },
-              Card: { borderRadiusLG: 12 },
-              Tabs: { titleFontSize: 14 },
-              Button: { fontWeight: 500 },
-            }
-          : {
-              Layout: { siderBg: "#FFFFFF", headerBg: "#FFFFFF", bodyBg: "#F5F7FA" },
-              Table: { headerBg: "#F6F8FA", headerColor: "#5B6573", cellPaddingBlock: 12, headerSplitColor: "transparent", rowHoverBg: "#F7FAF9" },
-              Menu: { itemBorderRadius: 8, itemSelectedBg: "#E6F2F0", itemSelectedColor: "#0F766E", itemMarginInline: 8 },
-              Card: { borderRadiusLG: 12 },
-              Tabs: { titleFontSize: 14 },
-              Button: { fontWeight: 500 },
-            },
-      }}
-    >
+    <ConfigProvider locale={zhCN} theme={buildTheme(dark)}>
+      <CssVars dark={dark} />
       <AntApp>
         <BrowserRouter>
           <AuthProvider>

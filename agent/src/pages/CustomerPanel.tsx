@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { conversationApi } from "../api";
 import { channelLabel, fmtShort, HANDOFF_STATUS, sessionStatusMeta } from "../utils";
+import { Status } from "../components/Status";
 
 /** Rough device / browser label from a User-Agent (enough for an agent's at-a-glance context). */
 export function describeUA(ua?: string): string {
@@ -70,10 +71,9 @@ export function CustomerPanel({ detail, ticket }: { detail: any; ticket: any }) 
   return (
     <aside className="customer-panel" aria-label="客户信息">
       <section className="cp-section cp-head">
-        <span className="cp-avatar" aria-hidden="true">{Array.from(name.trim())[0] || "客"}</span>
         <div className="cp-head-main">
           <div className="cp-name" title={name}>{name}</div>
-          <span className="badge badge-plain">{channelLabel(s.channel_type)}</span>
+          <span className="meta-text">{channelLabel(s.channel_type)}</span>
         </div>
       </section>
 
@@ -87,11 +87,11 @@ export function CustomerPanel({ detail, ticket }: { detail: any; ticket: any }) 
 
       <section className="cp-section">
         <div className="cp-title">本次会话</div>
-        <Row k="状态" v={<span className={`badge badge-${st.cls}`}>{st.label}</span>} />
+        <Row k="状态" v={<Status tone={st.cls} label={st.label} />} />
         <Row k="消息数" v={String(detail?.messages?.length ?? 0)} />
         <Row
           k="工单"
-          v={tk && <span className={`badge badge-${tk.cls}`}>{tk.label}{ticket?.assignee_name ? ` · ${ticket.assignee_name}` : ""}</span>}
+          v={tk && <Status tone={tk.cls} label={ticket?.assignee_name ? `${tk.label}（${ticket.assignee_name}）` : tk.label} />}
         />
         <Row k="满意度" v={s.satisfaction_rating ? "★".repeat(s.satisfaction_rating) : ""} />
       </section>
@@ -109,7 +109,7 @@ export function CustomerPanel({ detail, ticket }: { detail: any; ticket: any }) 
               <Link key={h.id} to={`/s/${h.id}`} className="cp-hist">
                 <div className="cp-hist-row">
                   <span className="cp-hist-time">{fmtShort(h.last_activity_at || h.created_at)}</span>
-                  <span className={`badge badge-${hs.cls}`}>{hs.label}</span>
+                  <Status tone={hs.cls} label={hs.label} />
                 </div>
                 <div className="cp-hist-text">{h.last_message?.text || h.title || "（无内容）"}</div>
               </Link>
