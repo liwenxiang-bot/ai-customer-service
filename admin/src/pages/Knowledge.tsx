@@ -4,11 +4,7 @@ import {
   Upload, Tooltip, List, Popconfirm, App as AntApp, Badge, Alert, Progress, theme,
   Checkbox, AutoComplete, DatePicker, Segmented,
 } from "antd";
-import {
-  PlusOutlined, SearchOutlined, UploadOutlined, ExperimentOutlined,
-  HistoryOutlined, DownloadOutlined, PartitionOutlined, ThunderboltOutlined,
-  ReloadOutlined, ExportOutlined, EditOutlined,
-} from "@ant-design/icons";
+import { IconAdd, IconChunks, IconDownload, IconEdit, IconExport, IconHistory, IconPhrasings, IconReembed, IconRefresh, IconSearch, IconTestSearch, IconUpload } from "../icons";
 import ReactMarkdown from "react-markdown";
 import dayjs from "dayjs";
 import { Link, useLocation } from "react-router-dom";
@@ -19,6 +15,8 @@ import { useDebounce } from "../hooks/useDebounce";
 import { usePolling } from "../hooks/usePolling";
 import { fmtTime, fmtShort } from "../utils/time";
 import { KNOWLEDGE_STATUS, KNOWLEDGE_SOURCE, CHUNK_STATUS, statusMeta } from "../utils/status";
+import { PageHeader } from "../components/PageHeader";
+import { StatusDot } from "../components/StatusDot";
 
 export function Knowledge() {
   const { user } = useAuth();
@@ -52,8 +50,7 @@ export function Knowledge() {
 
   return (
     <div>
-      <div className="acs-page-title">知识库管理</div>
-      <div className="acs-page-sub">维护 AI 回答所依据的资料；保存后自动向量化，支持版本回滚、批量导入与对话自动沉淀审核。</div>
+      <PageHeader title="知识库" sub="AI 回答所依据的资料，保存后自动向量化。" />
       <Tabs
         activeKey={tab}
         onChange={setTab}
@@ -78,8 +75,8 @@ export function Knowledge() {
 }
 
 const GAP_KIND: Record<string, { label: string; color: string; tip: string }> = {
-  miss: { label: "检索未命中", color: "red", tip: "知识库检索没有返回任何资料" },
-  no_info: { label: "回答说没资料", color: "orange", tip: "检索有返回，但 AI 判断资料不能回答这个问题" },
+  miss: { label: "检索未命中", color: "error", tip: "知识库检索没有返回任何资料" },
+  no_info: { label: "回答说没资料", color: "warning", tip: "检索有返回，但 AI 判断资料不能回答这个问题" },
   unsearched: { label: "未检索", color: "default", tip: "AI 没有查知识库就直接回答了（新版本已改为每轮必查）" },
 };
 
@@ -164,7 +161,7 @@ function GapsTab({ editable, onCreate }: { editable: boolean; onCreate: (title: 
       <Space wrap style={{ marginBottom: 12, width: "100%", justifyContent: "space-between" }}>
         <Space wrap>
           <Segmented value={days} onChange={(v) => setDays(Number(v))} options={[{ label: "近 7 天", value: 7 }, { label: "近 30 天", value: 30 }, { label: "近 90 天", value: 90 }]} />
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+          <Button icon={<IconRefresh />} onClick={load} loading={loading}>刷新</Button>
         </Space>
         {data && (
           <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
@@ -211,7 +208,7 @@ function GapsTab({ editable, onCreate }: { editable: boolean; onCreate: (title: 
             title: "操作", width: 240,
             render: (_: any, r: any) => (
               <Space size={4} wrap>
-                {editable && <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => onCreate(r.question)}>新建知识</Button>}
+                {editable && <Button type="link" size="small" icon={<IconAdd />} onClick={() => onCreate(r.question)}>新建知识</Button>}
                 {editable && <Button type="link" size="small" onClick={() => setAttach(r.question)}>归入已有知识</Button>}
                 {r.session_id && <Link to={`/conversations?session=${r.session_id}`}>查看对话</Link>}
                 {editable && (
@@ -484,21 +481,21 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
 
   const columns = [
     { title: "标题", dataIndex: "title", render: (t: string, r: any) => t || <span style={{ color: token.colorTextTertiary }}>{r.content.slice(0, 30)}…</span> },
-    { title: "分类", dataIndex: "category", width: 120, render: (c: string) => c ? <Tag>{c}</Tag> : "—" },
-    { title: "状态", dataIndex: "status", width: 90, render: (s: string) => { const m = statusMeta(KNOWLEDGE_STATUS, s); return <Tag color={m.color}>{m.label}</Tag>; } },
+    { title: "分类", dataIndex: "category", width: 120, ellipsis: true, render: (c: string) => c || "—" },
+    { title: "状态", dataIndex: "status", width: 90, render: (s: string) => <StatusDot meta={statusMeta(KNOWLEDGE_STATUS, s)} /> },
     {
       title: "有效期", width: 100, render: (_: any, r: any) => {
         const now = Date.now();
         if (r.expires_at && new Date(r.expires_at).getTime() <= now)
-          return <Tooltip title={`已于 ${fmtTime(r.expires_at)} 过期，检索不再命中——请更新时效或归档`}><Tag color="red">已过期</Tag></Tooltip>;
+          return <Tooltip title={`已于 ${fmtTime(r.expires_at)} 过期，检索不再命中——请更新时效或归档`}><Tag color="error">已过期</Tag></Tooltip>;
         if (r.effective_from && new Date(r.effective_from).getTime() > now)
-          return <Tooltip title={`${fmtTime(r.effective_from)} 起才生效，此前检索不命中`}><Tag color="blue">未生效</Tag></Tooltip>;
+          return <Tooltip title={`${fmtTime(r.effective_from)} 起才生效，此前检索不命中`}><Tag color="warning">未生效</Tag></Tooltip>;
         if (r.expires_at)
           return <Tooltip title={`有效至 ${fmtTime(r.expires_at)}`}><span style={{ fontSize: 12, color: token.colorTextSecondary }}>至 {fmtShort(r.expires_at)}</span></Tooltip>;
         return "—";
       },
     },
-    { title: "来源", dataIndex: "source", width: 100, render: (s: string) => { const m = statusMeta(KNOWLEDGE_SOURCE, s); return <Tag color={m.color}>{m.label}</Tag>; } },
+    { title: "来源", dataIndex: "source", width: 100, render: (s: string) => statusMeta(KNOWLEDGE_SOURCE, s).label },
     { title: "版本", dataIndex: "version", width: 70 },
     {
       title: "向量", width: 90, render: (_: any, r: any) => {
@@ -508,7 +505,7 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
         if (!total) return <Tooltip title="保存后系统自动分块并生成向量，稍候刷新即可"><Tag>未分块</Tag></Tooltip>;
         return (
           <Tooltip title={ready >= total ? "向量已就绪" : "部分分片缺向量，检索可能漏命中——点「分片」查看或重新嵌入"}>
-            <Tag color={ready >= total ? "green" : "error"}>{ready}/{total}</Tag>
+            {ready >= total ? <span>{ready}/{total}</span> : <Tag color="error">{ready}/{total}</Tag>}
           </Tooltip>
         );
       },
@@ -519,8 +516,8 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
       render: (_: any, r: any) => {
         const u = usage[r.id];
         const n = u?.citation_count || 0;
-        if (!n) return <Tooltip title="从未被 AI 回答引用——可能是死知识，建议核查内容或归档"><Tag>未引用</Tag></Tooltip>;
-        return <Tooltip title={u?.last_cited_at ? `最近引用：${fmtTime(u.last_cited_at)}` : undefined}><Tag color="blue">{n} 次</Tag></Tooltip>;
+        if (!n) return <Tooltip title="从未被 AI 回答引用——可能是死知识，建议核查内容或归档"><span style={{ color: token.colorTextTertiary }}>未引用</span></Tooltip>;
+        return <Tooltip title={u?.last_cited_at ? `最近引用：${fmtTime(u.last_cited_at)}` : undefined}><span>{n} 次</span></Tooltip>;
       },
     },
     { title: "更新时间", dataIndex: "updated_at", width: 160, render: (t: string) => fmtTime(t) },
@@ -528,11 +525,11 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
       title: "操作", width: 210, render: (_: any, r: any) => (
         <Space size="small">
           <a onClick={() => openEdit(r)}>{editable ? "编辑" : "查看"}</a>
-          <a onClick={() => setChunksItem(r)}><PartitionOutlined /> 分片</a>
-          <a onClick={() => setVersionsItem(r)}><HistoryOutlined /> 版本</a>
+          <a onClick={() => setChunksItem(r)}><IconChunks /> 分片</a>
+          <a onClick={() => setVersionsItem(r)}><IconHistory /> 版本</a>
           {editable && (
             <Popconfirm title="确认删除？删除后不可恢复" onConfirm={() => removeOne(r)}>
-              <a style={{ color: "#ef4444" }}>删除</a>
+              <a className="acs-danger">删除</a>
             </Popconfirm>
           )}
         </Space>
@@ -570,7 +567,7 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
 
       <Space style={{ marginBottom: 12 }} wrap>
         <Input
-          allowClear placeholder="搜索标题/内容" prefix={<SearchOutlined />} style={{ width: 220 }}
+          allowClear placeholder="搜索标题/内容" prefix={<IconSearch />} style={{ width: 220 }}
           value={search} onChange={(e) => setSearch(e.target.value)}
         />
         <Select
@@ -580,7 +577,7 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
         />
         {editable && (
           <Tooltip title="重命名分类；改成已有分类名即合并两个分类">
-            <Button icon={<EditOutlined />} onClick={() => setRenameOpen(true)}>重命名分类</Button>
+            <Button icon={<IconEdit />} onClick={() => setRenameOpen(true)}>重命名分类</Button>
           </Tooltip>
         )}
         <Select
@@ -608,14 +605,14 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
           onChange={(v) => setParams((p: any) => ({ ...p, validity: v || "", page: 1 }))}
         />
         <Checkbox checked={unusedOnly} onChange={(e) => setUnusedOnly(e.target.checked)}>只看未引用</Checkbox>
-        <Button icon={<ExperimentOutlined />} onClick={() => setTestOpen(true)}>测试检索</Button>
-        {editable && <Button icon={<UploadOutlined />} onClick={() => setImportOpen(true)}>批量导入</Button>}
+        <Button icon={<IconTestSearch />} onClick={() => setTestOpen(true)}>测试检索</Button>
+        {editable && <Button icon={<IconUpload />} onClick={() => setImportOpen(true)}>批量导入</Button>}
         <Tooltip title="按当前状态/分类筛选导出 CSV（搜索词、标签等其他筛选不参与）">
-          <Button icon={<ExportOutlined />} loading={exporting} onClick={exportNow}>导出</Button>
+          <Button icon={<IconExport />} loading={exporting} onClick={exportNow}>导出</Button>
         </Tooltip>
         {editable && (
           <Tooltip title="为所有缺向量/未分块的条目重新生成向量；系统每 10 分钟也会自动补齐，此按钮用于立即触发">
-            <Button icon={<ReloadOutlined />} onClick={reembedPending}>重嵌待处理</Button>
+            <Button icon={<IconReembed />} onClick={reembedPending}>重嵌待处理</Button>
             <Popconfirm
               title="为没有问法的已发布条目生成客户问法？"
               description="每条调用一次大模型（最多 300 条），后台排队执行，完成后自动重建向量。"
@@ -628,11 +625,11 @@ function ItemsTab({ editable, openItemId, onOpenedItem, prefill }: { editable: b
                 }
               }}
             >
-              <Button icon={<ThunderboltOutlined />}>批量生成问法</Button>
+              <Button icon={<IconPhrasings />}>批量生成问法</Button>
             </Popconfirm>
           </Tooltip>
         )}
-        {editable && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>新增条目</Button>}
+        {editable && <Button type="primary" icon={<IconAdd />} onClick={() => openEdit(null)}>新增条目</Button>}
       </Space>
 
       {editable && selected.length > 0 && (
@@ -833,8 +830,8 @@ function ChunksModal({ item, editable, onClose, onReembedded }: any) {
       title={`分片详情 — ${item?.title || "（无标题）"}`} open={!!item} onCancel={onClose} width={760}
       footer={[
         // 重嵌是异步任务，弹窗数据只在打开时拉一次——刷新按钮让「重嵌→确认结果」不必关弹窗重开
-        <Button key="f" icon={<ReloadOutlined />} loading={loading} onClick={() => { loadChunks(); onReembedded?.(); }}>刷新</Button>,
-        ...(editable ? [<Button key="r" icon={<ThunderboltOutlined />} loading={busy} onClick={reembed}>重新嵌入此条</Button>] : []),
+        <Button key="f" icon={<IconRefresh />} loading={loading} onClick={() => { loadChunks(); onReembedded?.(); }}>刷新</Button>,
+        ...(editable ? [<Button key="r" icon={<IconReembed />} loading={busy} onClick={reembed}>重新嵌入此条</Button>] : []),
         <Button key="c" type="primary" onClick={onClose}>关闭</Button>,
       ]}
     >
@@ -918,7 +915,7 @@ function TestRetrievalModal({ open, onClose, onOpenItem }: any) {
         <Button type="primary" onClick={run} loading={loading}>检索</Button>
       </Space.Compact>
       {ran && (
-        <div style={{ marginBottom: 12, fontSize: 12, color: "#6b7280", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ marginBottom: 12, fontSize: 12, color: "var(--acs-text-2)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span>标注为评测用例：</span>
           <Button size="small" onClick={() => addCase(null)}>应该无结果</Button>
           <span>或在下方结果上点「应命中这条」。用例用于「AI 配置 → 评测与校准」。</span>
@@ -937,11 +934,11 @@ function TestRetrievalModal({ open, onClose, onOpenItem }: any) {
                     ? <a onClick={() => onOpenItem(r.item_id)}>{r.title || "（无标题）"}</a>
                     : (r.title || "（无标题）")}{" "}
                   <Tooltip title={kindTip}>
-                    <Tag color={kind === "rerank" ? "blue" : "default"}>
+                    <Tag color={kind === "rerank" ? "processing" : "default"}>
                       {kind ? `${kind} ${r.score}` : `score ${r.score}`}
                     </Tag>
                   </Tooltip>
-                  {r.matched_question && <Tag color="geekblue">问法命中：{r.matched_question}</Tag>}
+                  {r.matched_question && <Tag color="processing">问法命中：{r.matched_question}</Tag>}
                 </span>
               }
               description={r.snippet}
@@ -1174,9 +1171,9 @@ function ImportModal({ open, onClose, onDone }: any) {
                 />
                 {docOptions}
                 <Space style={{ marginBottom: 12 }} wrap>
-                  <Button icon={<DownloadOutlined />} onClick={downloadTemplate}>下载 CSV 模板</Button>
+                  <Button icon={<IconDownload />} onClick={downloadTemplate}>下载 CSV 模板</Button>
                   <Upload accept=".csv,.json,.md,.markdown,.mdx,.txt,.html,.htm,.docx,.pdf" showUploadList={false} customRequest={({ file: f }: any) => pick(f)}>
-                    <Button icon={<UploadOutlined />} loading={checking}>{file ? "重新选择文件" : "选择文件（先预检，不入库）"}</Button>
+                    <Button icon={<IconUpload />} loading={checking}>{file ? "重新选择文件" : "选择文件（先预检，不入库）"}</Button>
                   </Upload>
                 </Space>
                 {file && <div style={{ marginBottom: 12, fontSize: 12, color: token.colorTextSecondary }}>文件：{file.name}{isDocFile(file) && category ? ` · 分类「${category}」` : ""}</div>}
@@ -1214,7 +1211,7 @@ function ImportModal({ open, onClose, onDone }: any) {
           <div style={{ marginBottom: 8, fontSize: 13 }}>预检结果（尚未写入知识库）：</div>
           {report(preview, true)}
           <div style={{ marginTop: 12 }}>
-            <Button type="primary" icon={<UploadOutlined />} loading={importing} disabled={previewCount <= 0} onClick={doImport}>
+            <Button type="primary" icon={<IconUpload />} loading={importing} disabled={previewCount <= 0} onClick={doImport}>
               确认导入 {previewCount} 条
             </Button>
             {previewCount <= 0 && (
@@ -1227,7 +1224,7 @@ function ImportModal({ open, onClose, onDone }: any) {
         <>
           {report(result, false)}
           {result.failed_rows?.length > 0 && (
-            <Button style={{ marginTop: 12 }} icon={<DownloadOutlined />} onClick={downloadFailedRows}>
+            <Button style={{ marginTop: 12 }} icon={<IconDownload />} onClick={downloadFailedRows}>
               下载失败行 CSV（{result.failed_rows.length} 行，修正后可直接重新导入）
             </Button>
           )}
@@ -1514,11 +1511,11 @@ function ReviewTab({ editable, onCount, onOpenItem }: any) {
           <List.Item
             actions={editable ? [
               <Popconfirm key="ok" title="通过并加入知识库？" onConfirm={() => approvePlain(c)}>
-                <a style={{ color: "#10b981" }}>通过</a>
+                <a>通过</a>
               </Popconfirm>,
               <a key="edit" onClick={() => { setDupNotice(null); setEditCand(c); }}>编辑后通过</a>,
               <Popconfirm key="no" title="拒绝该候选？" onConfirm={async () => { try { await knowledgeApi.reviewReject(c.id); message.success("已拒绝"); } catch (e) { message.error(apiError(e)); } load(); }}>
-                <a style={{ color: "#ef4444" }}>拒绝</a>
+                <a className="acs-danger">拒绝</a>
               </Popconfirm>,
             ] : []}
           >

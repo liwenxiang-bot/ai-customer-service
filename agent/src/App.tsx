@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from "./auth";
 import { Login } from "./pages/Login";
 import { Inbox } from "./pages/Inbox";
 import { SessionPage } from "./pages/Session";
+import { IconChat } from "./icons";
 
 /** 会话面板错误边界：把单会话渲染故障限制在右栏，避免整站白屏。
  *  按会话 id 作 key 重建，切换会话时自动清除上一个会话的错误态。 */
@@ -49,15 +50,9 @@ function RequireAuth({ children }: { children: ReactElement }) {
 function DeskPlaceholder() {
   return (
     <div className="desk-empty">
-      <svg className="desk-empty-icon" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-        <path d="M20 38v-5c0-7 5.4-12 12-12s12 5 12 12v5" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
-        <rect x="16.6" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
-        <rect x="40.4" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
-        <path d="M43.6 47.4c-.6 3.2-3.8 5-7.6 5h-2.4" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
-        <circle cx="32.4" cy="52.4" r="2.2" fill="currentColor" />
-      </svg>
-      <div className="desk-empty-title">选择一个会话开始接待</div>
-      <div className="desk-empty-sub">左侧收件箱里点开任意会话，即可查看消息并回复客户</div>
+      <IconChat className="desk-empty-icon" size={40} />
+      <div className="desk-empty-title">选择一个会话</div>
+      <div className="desk-empty-sub">在左侧列表点开会话，查看消息并回复客户。</div>
     </div>
   );
 }

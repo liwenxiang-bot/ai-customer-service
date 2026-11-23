@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Card, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Popconfirm, App as AntApp } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { IconAdd } from "../icons";
+import { PageHeader } from "../components/PageHeader";
+import { StatusDot } from "../components/StatusDot";
 import { accountApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth } from "../auth";
 import { fmtTime } from "../utils/time";
 
 const ROLE_LABELS: any = { admin: "管理员", operator: "运营", readonly: "只读" };
-const ROLE_COLORS: any = { admin: "purple", operator: "blue", readonly: "default" };
 
 // 与 backend 各处 write_audit 的 action 值对应，用于日志筛选与展示。
 const ACTION_LABELS: Record<string, string> = {
@@ -26,8 +27,7 @@ const ACTION_LABELS: Record<string, string> = {
 export function Accounts() {
   return (
     <div>
-      <div className="acs-page-title">账号与权限</div>
-      <div className="acs-page-sub">管理后台账号与角色（管理员 / 运营 / 只读），查看敏感操作的审计日志。</div>
+      <PageHeader title="账号权限" />
       <Tabs items={[
         { key: "users", label: "账号管理", children: <UsersTab /> },
         { key: "audit", label: "操作日志", children: <AuditTab /> },
@@ -61,8 +61,8 @@ function UsersTab() {
   const columns = [
     { title: "邮箱", dataIndex: "email" },
     { title: "姓名", dataIndex: "name", render: (n: string) => n || "—" },
-    { title: "角色", dataIndex: "role", render: (r: string) => <Tag color={ROLE_COLORS[r]}>{ROLE_LABELS[r]}</Tag> },
-    { title: "状态", dataIndex: "is_active", render: (a: boolean) => a ? <Tag color="green">启用</Tag> : <Tag>停用</Tag> },
+    { title: "角色", dataIndex: "role", render: (r: string) => ROLE_LABELS[r] || r },
+    { title: "状态", dataIndex: "is_active", render: (a: boolean) => <StatusDot meta={a ? { label: "启用", color: "success" } : { label: "停用", color: "default" }} /> },
     { title: "最近登录", dataIndex: "last_login_at", render: (t: string) => fmtTime(t) },
     {
       title: "操作", render: (_: any, r: any) => (
@@ -79,7 +79,7 @@ function UsersTab() {
 
   return (
     <Card>
-      <Button type="primary" icon={<PlusOutlined />} style={{ marginBottom: 16 }} onClick={() => openModal(null)}>新增账号</Button>
+      <Button type="primary" icon={<IconAdd />} style={{ marginBottom: 16 }} onClick={() => openModal(null)}>新增账号</Button>
       <Table rowKey="id" columns={columns as any} dataSource={users} pagination={false} size="small" />
       <Modal title={modal?.id ? "编辑账号" : "新增账号"} open={!!modal} onCancel={() => setModal(null)} onOk={save}>
         <Form form={form} layout="vertical">

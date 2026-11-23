@@ -5,10 +5,12 @@ import { handoffApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit, agentSessionLink } from "../auth";
 import { CHANNEL_TYPE, HANDOFF_REASON, HANDOFF_STATUS, statusMeta } from "../utils/status";
+import { PageHeader } from "../components/PageHeader";
+import { StatusDot } from "../components/StatusDot";
 import { useRealtime } from "../hooks/useRealtime";
 
 const PRIO: any = {
-  urgent: { c: "red", t: "紧急" }, high: { c: "orange", t: "高" }, normal: { c: "blue", t: "普通" }, low: { c: "default", t: "低" },
+  urgent: { c: "error", t: "紧急" }, high: { c: "warning", t: "高" }, normal: { c: "default", t: "普通" }, low: { c: "default", t: "低" },
 };
 const PRIO_OPTS = [
   { value: "urgent", label: "紧急" }, { value: "high", label: "高" }, { value: "normal", label: "普通" }, { value: "low", label: "低" },
@@ -70,12 +72,12 @@ export function Handoff() {
       ) : <Tag color={PRIO[p]?.c}>{PRIO[p]?.t || p}</Tag>,
     },
     { title: "用户", dataIndex: "end_user_id", width: 140, ellipsis: true },
-    { title: "渠道", dataIndex: "channel_type", width: 100, render: (c: string) => { const m = statusMeta(CHANNEL_TYPE, c); return <Tag color={m.color}>{m.label}</Tag>; } },
+    { title: "渠道", dataIndex: "channel_type", width: 100, render: (c: string) => statusMeta(CHANNEL_TYPE, c).label },
     { title: "原因", dataIndex: "reason", width: 110, render: (r: string) => statusMeta(HANDOFF_REASON, r).label },
     { title: "摘要", dataIndex: "conversation_summary", ellipsis: true },
     { title: "受理人", dataIndex: "assignee_name", width: 150, ellipsis: true, render: (n: string, r: any) => n || r.assignee_email || <Typography.Text type="secondary">未分配</Typography.Text> },
-    { title: "通知", dataIndex: "notified", width: 80, render: (n: boolean, r: any) => n ? <Tag color="green">已通知</Tag> : <Tag color="default" title={r.notify_error}>未送达</Tag> },
-    { title: "状态", dataIndex: "status", width: 84, render: (s: string) => { const m = statusMeta(HANDOFF_STATUS, s); return <Tag color={m.color}>{m.label}</Tag>; } },
+    { title: "通知", dataIndex: "notified", width: 96, render: (n: boolean, r: any) => n ? <StatusDot meta={{ label: "已通知", color: "success" }} /> : <span title={r.notify_error}><StatusDot meta={{ label: "未送达", color: "default" }} /></span> },
+    { title: "状态", dataIndex: "status", width: 96, render: (s: string) => <StatusDot meta={statusMeta(HANDOFF_STATUS, s)} /> },
     {
       title: "操作", width: 240, render: (_: any, r: any) => (
         <Space size="small" wrap>
@@ -108,10 +110,10 @@ export function Handoff() {
 
   return (
     <div>
-      <div className="acs-page-title">
-        转人工工单 <Badge count={data.open_count} style={{ marginLeft: 8 }} />
-      </div>
-      <div className="acs-page-sub">AI 转人工产生的工单：可认领、设优先级，「去接管」直达坐席工作台与客户实时对话。</div>
+      <PageHeader
+        title={<>转人工工单 <Badge count={data.open_count} style={{ marginLeft: 8 }} /></>}
+        sub="认领工单后点「去接管」，到坐席工作台与客户实时对话。"
+      />
       <Card>
         <Space style={{ marginBottom: 12 }} wrap>
           <Select allowClear placeholder="状态" style={{ width: 130 }}

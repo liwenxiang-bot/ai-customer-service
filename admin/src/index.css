@@ -1,152 +1,158 @@
+/* 颜色一律走 --acs-* 变量（main.tsx 的 CssVars 从 antd token 同步而来），
+   浅色 / 深色自动跟随，这里不写死色值。 */
+:root {
+  --acs-gutter: 24px;
+  /* 指标数字用 DIN 系窄体：macOS/iOS 自带 DIN Alternate，Windows 自带 Bahnschrift，无需下载字体 */
+  --acs-num: "DIN Alternate", "Bahnschrift", "Roboto Condensed", "Helvetica Neue", Arial, sans-serif;
+}
+@media (max-width: 992px) { :root { --acs-gutter: 16px; } }
+@media (max-width: 576px) { :root { --acs-gutter: 12px; } }
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html, body, #root { height: 100%; }
 
 body {
-  font-family: "IBM Plex Sans", "Source Han Sans SC", system-ui, -apple-system,
-    "PingFang SC", "Microsoft YaHei", sans-serif;
-  font-variant-numeric: tabular-nums; /* aligned digits across tables / metrics */
+  font-family: var(--acs-font);
+  font-variant-numeric: tabular-nums; /* 表格与指标里的数字等宽对齐 */
   -webkit-font-smoothing: antialiased;
-  color: #18222e;
+  color: var(--acs-text);
+  background: var(--acs-bg);
 }
 
-/* Monospace for machine data: ids, timestamps, token counts, trace ids. */
-.acs-mono {
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-}
+/* 图标：Remix 字形自带留白，略放大并下沉，与文字基线对齐 */
+.acs-icon { flex: none; vertical-align: -0.2em; }
 
-.acs-page-title {
-  font-size: 19px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: #18222e;
-  margin-bottom: 16px;
-}
-/* Tighten the gap to a description line when one follows the title. */
-.acs-page-title:has(+ .acs-page-sub) { margin-bottom: 4px; }
-.acs-page-sub { color: #5b6573; font-size: 13px; line-height: 1.5; margin-bottom: 18px; }
-.acs-content { padding: 20px; }
-.acs-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
-
-.acs-content { padding: 24px; }
-/* Narrow screens: tighter page padding (matches the sider's lg auto-collapse). */
-@media (max-width: 992px) { .acs-content { padding: 16px; } }
-@media (max-width: 576px) { .acs-content { padding: 12px; } }
-
-/* Dark mode: the few hand-set text colors above need readable values on dark. */
-[data-theme="dark"] body { color: rgba(255, 255, 255, 0.85); }
-[data-theme="dark"] .acs-page-title { color: rgba(255, 255, 255, 0.92); }
-[data-theme="dark"] .acs-page-sub { color: rgba(255, 255, 255, 0.5); }
-
-/* ─────────────────────────── Login ─────────────────────────── */
-.acs-login-bg {
-  min-height: 100dvh; /* dvh：移动端工具栏收展不产生死滚动，与坐席站登录页一致 */
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  /* 深 teal 底 + 一抹光晕 + 右下角超大对话气泡线稿（产品母题，5% 白描边） */
-  background:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='520' height='520' viewBox='0 0 520 520'%3E%3Cpath d='M124 80h272a64 64 0 0 1 64 64v152a64 64 0 0 1-64 64H268l-92 80v-80h-52a64 64 0 0 1-64-64V144a64 64 0 0 1 64-64z' fill='none' stroke='rgba(255,255,255,0.05)' stroke-width='10'/%3E%3C/svg%3E")
-      no-repeat calc(100% + 130px) calc(100% + 150px),
-    radial-gradient(900px 480px at 76% -10%, rgba(45, 212, 191, 0.16), transparent 60%),
-    linear-gradient(160deg, #10655d 0%, #0c4a44 48%, #0a3833 100%);
-}
-.acs-login-card {
-  width: 404px;
-  max-width: 100%;
-  background: #fff;
-  border-radius: 18px;
-  padding: 36px 36px 24px;
-  box-shadow: 0 24px 64px -24px rgba(4, 32, 30, 0.55), 0 2px 8px rgba(0, 0, 0, 0.08);
-}
-.acs-login-brand { display: flex; align-items: center; gap: 14px; }
-.acs-login-logo {
-  position: relative;
-  width: 48px; height: 48px; flex: none;
-  border-radius: 13px;
+/* ─────────────────────────── 外壳 ─────────────────────────── */
+.acs-bar { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--acs-line); }
+.acs-bar-btn {
+  width: 32px; height: 32px; flex: none;
   display: grid; place-items: center;
-  background: linear-gradient(135deg, #14b8a6 0%, #0f766e 100%);
-  color: #fff; font-size: 23px;
-  box-shadow: 0 6px 16px -6px rgba(15, 118, 110, 0.45);
+  border: 0; border-radius: 6px; background: transparent;
+  color: var(--acs-text-2); font-size: 16px; cursor: pointer;
 }
-/* 在线状态点：与坐席站登录页共用的品牌签名（服务在线） */
-.acs-login-presence {
-  position: absolute;
-  right: -3px; bottom: -3px;
-  width: 11px; height: 11px;
-  border-radius: 50%;
-  background: #2dd4bf;
-  box-shadow: 0 0 0 3px #fff;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .acs-login-presence::after {
-    content: "";
-    position: absolute;
-    inset: -2px;
-    border-radius: 50%;
-    border: 2px solid rgba(45, 212, 191, 0.55);
-    animation: acs-presence-pulse 2.6s ease-out infinite;
-  }
-  @keyframes acs-presence-pulse {
-    0% { transform: scale(0.7); opacity: 1; }
-    70%, 100% { transform: scale(1.9); opacity: 0; }
-  }
-}
-.acs-login-eyebrow {
-  font-size: 11px; font-weight: 600; letter-spacing: 0.14em;
-  color: #93a3a0; margin-bottom: 3px;
-}
-.acs-login-title { font-size: 21px; font-weight: 700; letter-spacing: -0.01em; color: #18222e; line-height: 1.15; }
-.acs-login-sub { font-size: 13px; color: #6b7480; margin: 10px 0 26px; }
-.acs-login-icon { color: #aab2bd; }
-.acs-login-row { display: flex; align-items: center; margin: 2px 0 20px; }
-.acs-login-card .ant-form-item-label > label { font-size: 13px; color: #4b5563; }
-.acs-login-card .ant-form-item { margin-bottom: 18px; }
-.acs-login-card .acs-login-btn { height: 44px; font-size: 15px; font-weight: 600; box-shadow: none; }
-.acs-login-card .ant-input-affix-wrapper { padding-top: 9px; padding-bottom: 9px; }
-/* hint 是功能性文案（找回路径），对比度须过 AA；eyebrow 纯装饰可更浅 */
-.acs-login-hint { margin-top: 18px; font-size: 12px; color: #6b7480; text-align: center; }
-[data-theme="dark"] .acs-login-card { background: #171c22; }
-[data-theme="dark"] .acs-login-hint { color: #98a2b0; }
-[data-theme="dark"] .acs-login-title { color: #e6eaf0; }
-[data-theme="dark"] .acs-login-sub { color: #98a2b0; }
-[data-theme="dark"] .acs-login-card .ant-form-item-label > label { color: #98a2b0; }
-[data-theme="dark"] .acs-login-presence { box-shadow: 0 0 0 3px #171c22; }
+.acs-bar-btn:hover, .acs-user:hover { background: var(--acs-fill-hover); color: var(--acs-text); }
+.acs-bar-btn:focus-visible, .acs-user:focus-visible { outline: 2px solid var(--acs-primary); outline-offset: 1px; }
 
-/* ─────────────────────────── Dashboard ─────────────────────────── */
-/* Equal-height cards per row → no ragged bottoms. */
+.acs-brand { display: flex; align-items: center; gap: 10px; margin-left: 8px; color: var(--acs-text); font-size: 15px; font-weight: 600; white-space: nowrap; }
+.acs-brand-scope { padding-left: 10px; border-left: 1px solid var(--acs-line); font-size: 13px; font-weight: 400; color: var(--acs-text-2); line-height: 14px; }
+.acs-bar-space { flex: 1; }
+
+.acs-user {
+  display: flex; align-items: center; gap: 8px; min-width: 0;
+  height: 32px; padding: 0 6px 0 10px; margin-left: 4px;
+  border: 0; border-radius: 6px; background: transparent;
+  color: var(--acs-text); font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
+}
+.acs-user-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acs-user-role { color: var(--acs-text-3); white-space: nowrap; }
+@media (max-width: 576px) { .acs-brand-scope, .acs-user-role { display: none; } }
+
+.acs-sider { border-right: 1px solid var(--acs-line); overflow-y: auto; }
+.acs-sider .ant-menu { border-inline-end: 0 !important; padding: 6px 0 16px; }
+.acs-sider .ant-menu-item-group-title { padding: 14px 24px 6px; font-size: 12px; line-height: 18px; color: var(--acs-text-3); }
+.acs-sider .ant-menu-item .acs-icon { font-size: 15px; }
+.acs-sider .ant-menu-item-selected { font-weight: 500; }
+.acs-sider .ant-menu-item-divider { margin: 8px 16px; }
+.acs-nav-ext { margin-left: 6px; font-size: 12px; opacity: 0.55; }
+
+.acs-content { padding: 20px var(--acs-gutter) 32px; }
+
+/* ─────────────────────────── 页头 ─────────────────────────── */
+/* 标题直接落在画布上：左侧标题（可带一行说明），右侧放页面级操作 */
+.acs-page-header {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px;
+  min-height: 32px; margin-bottom: 16px;
+}
+.acs-page-title { font-size: 20px; font-weight: 600; line-height: 28px; color: var(--acs-text); }
+.acs-page-sub { margin-top: 2px; max-width: 72ch; font-size: 13px; line-height: 20px; color: var(--acs-text-2); }
+.acs-page-extra { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acs-page-header:has(+ .ant-tabs) { margin-bottom: 4px; }
+
+/* 页底操作条（如「保存配置」）：贴底通栏，替代悬浮按钮 */
+.acs-footer-bar {
+  position: sticky; bottom: 0; z-index: 5;
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin: 20px calc(-1 * var(--acs-gutter)) -32px;
+  padding: 12px var(--acs-gutter);
+  background: var(--acs-surface);
+  border-top: 1px solid var(--acs-line);
+}
+
+/* ─────────────────────────── 概览 ─────────────────────────── */
+/* 指标带：一整条面板，用 1px 间隙露出底色当分隔线 */
+.acs-metrics {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px;
+  background: var(--acs-line);
+  border: 1px solid var(--acs-line); border-radius: 8px; overflow: hidden;
+}
+@media (max-width: 1200px) { .acs-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 576px) { .acs-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.acs-metric { padding: 16px 20px 14px; background: var(--acs-surface); min-width: 0; }
+.acs-metric-label { font-size: 13px; line-height: 20px; color: var(--acs-text-2); white-space: nowrap; }
+.acs-metric-label[data-tip] { cursor: help; text-decoration: underline dotted var(--acs-text-3); text-underline-offset: 4px; }
+.acs-metric-value { margin-top: 4px; font-family: var(--acs-num); font-size: 30px; line-height: 38px; color: var(--acs-text); white-space: nowrap; }
+.acs-metric-unit { margin-left: 4px; font-family: var(--acs-font); font-size: 13px; color: var(--acs-text-3); }
+.acs-num { font-family: var(--acs-num); }
+.ant-statistic .ant-statistic-content { font-family: var(--acs-num); }
+
 .acs-dash .ant-card { height: 100%; }
-.acs-kpi-ic {
-  width: 42px; height: 42px; flex: none;
-  border-radius: 11px;
-  display: grid; place-items: center;
-  font-size: 19px;
-}
-.acs-kpi-label { font-size: 12.5px; line-height: 1.2; white-space: nowrap; }
-.acs-kpi-value { font-size: 23px; font-weight: 680; line-height: 1.25; letter-spacing: -0.01em; }
+.acs-dash-grid { margin-top: 16px; }
 
-/* ─────────────────────────── Global polish (all pages) ─────────────────────────── */
-/* Soft layered card surfaces in light mode (dark relies on antd elevation). */
-[data-theme="light"] .ant-card {
-  border-color: #e9edf1;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.035);
+/* 紧凑数据行：主信息靠左截断，辅助信息靠右 */
+.acs-rows { display: flex; flex-direction: column; }
+.acs-row {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 9px 0; border: 0; border-top: 1px solid var(--acs-line);
+  background: transparent; color: var(--acs-text); font: inherit; font-size: 13px; line-height: 20px; text-align: left;
 }
-/* Tighter, label-like table headers. */
-.ant-table-wrapper .ant-table-thead > tr > th { font-weight: 600; font-size: 12.5px; letter-spacing: 0.02em; }
-/* A page-title row that carries right-aligned actions (search / buttons). */
-.acs-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.acs-page-head .acs-page-title:has(+ .acs-page-sub) { margin-bottom: 4px; }
-/* Refined custom scrollbars. */
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-thumb { background: rgba(120, 130, 145, 0.3); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
-*::-webkit-scrollbar-thumb:hover { background: rgba(120, 130, 145, 0.48); background-clip: content-box; }
-*::-webkit-scrollbar-track { background: transparent; }
-/* Clickable list rows feel interactive. */
-.ant-list-item { transition: background 0.15s ease; }
-.acs-clickable-list .ant-list-item { cursor: pointer; border-radius: 8px; padding-inline: 8px; }
-.acs-clickable-list .ant-list-item:hover { background: var(--acs-hover, rgba(15, 118, 110, 0.05)); }
-[data-theme="dark"] { --acs-hover: rgba(255, 255, 255, 0.04); }
+.acs-row:first-child { border-top: 0; }
+.acs-row-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acs-row-meta { flex: none; color: var(--acs-text-3); white-space: nowrap; }
+button.acs-row { cursor: pointer; margin: 0 -8px; padding-inline: 8px; width: calc(100% + 16px); }
+button.acs-row:hover { background: var(--acs-fill); }
+button.acs-row:focus-visible { outline: 2px solid var(--acs-primary); outline-offset: -2px; }
+.acs-rows-empty { padding: 20px 0; text-align: center; font-size: 13px; color: var(--acs-text-3); }
+.acs-caption { font-size: 12px; line-height: 18px; color: var(--acs-text-3); }
 
-/* AI 配置 → 评测与校准：推荐门槛行高亮 */
-.acs-row-recommended > td { background: rgba(15, 118, 110, 0.08) !important; }
+/* 小型数值组：标签在上，数字在下 */
+.acs-figures { display: flex; flex-wrap: wrap; gap: 8px 32px; }
+.acs-figure-label { font-size: 13px; line-height: 20px; color: var(--acs-text-2); white-space: nowrap; }
+.acs-figure-value { font-family: var(--acs-num); font-size: 24px; line-height: 32px; color: var(--acs-text); }
+.acs-figure-value[data-tone="error"] { color: var(--acs-error); }
+.acs-figure-value[data-tone="warning"] { color: var(--acs-warning); }
+
+/* ─────────────────────────── 登录 ─────────────────────────── */
+.acs-login {
+  min-height: 100dvh; /* dvh：移动端工具栏收展不产生死滚动 */
+  display: grid; grid-template-columns: minmax(320px, 5fr) 7fr;
+  background: var(--acs-surface);
+}
+.acs-login-aside {
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 36px 48px 56px;
+  background: var(--acs-ink); color: #fff;
+}
+.acs-login-brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; }
+.acs-login-art { width: min(100%, 400px); }
+.acs-login-statement { font-size: 34px; font-weight: 600; line-height: 1.3; }
+.acs-login-note { margin-top: 14px; max-width: 26em; font-size: 14px; line-height: 1.75; color: rgba(255, 255, 255, 0.62); }
+.acs-login-main { display: grid; place-items: center; padding: 32px 24px; }
+.acs-login-form { width: 360px; max-width: 100%; }
+.acs-login-title { font-size: 24px; font-weight: 600; line-height: 32px; color: var(--acs-text); }
+.acs-login-sub { margin: 6px 0 28px; font-size: 14px; color: var(--acs-text-2); }
+.acs-login-form .ant-form-item { margin-bottom: 18px; }
+.acs-login-form .acs-login-btn { margin-top: 6px; }
+.acs-login-hint { margin-top: 20px; font-size: 13px; color: var(--acs-text-2); }
+@media (max-width: 860px) {
+  .acs-login { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .acs-login-aside { padding: 14px 20px; }
+  .acs-login-aside > div:last-child, .acs-login-art { display: none; }
+  .acs-login-main { place-items: start center; padding-top: 48px; }
+}
+
+/* ─────────────────────────── 全局微调 ─────────────────────────── */
+.ant-table-wrapper .ant-table-thead > tr > th { font-weight: 500; font-size: 13px; }
+/* AI 配置 → 评测与校准：推荐门槛行 */
+.acs-row-recommended > td { background: var(--acs-primary-bg) !important; }
+/* 表格行内的危险操作 */
+a.acs-danger, a.acs-danger:hover { color: var(--acs-error); }

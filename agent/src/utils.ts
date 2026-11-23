@@ -18,21 +18,21 @@ export function isImeComposing(e: unknown): boolean {
   return Boolean(native?.isComposing) || native?.keyCode === 229 || ev.keyCode === 229;
 }
 
-// 枚举值与 backend/app/models/enums.py 对应；cls 对应 styles.css 的 badge-* 配色。
+// 枚举值与 backend/app/models/enums.py 对应；cls 对应 styles.css 的 status-* 圆点颜色。
 // 文案/颜色语义对齐 admin 的 src/utils/status.ts（本地小映射，不跨包 import）。
 export const SESSION_STATUS: Record<string, { label: string; cls: string }> = {
-  active: { label: "进行中", cls: "green" },
+  active: { label: "进行中", cls: "blue" },
   idle: { label: "空闲", cls: "gray" },
   closed: { label: "已结束", cls: "gray" },
   escalated: { label: "待人工", cls: "red" },
-  human_takeover: { label: "接管中", cls: "blue" },
-  human_handled: { label: "人工已处理", cls: "purple" },
+  human_takeover: { label: "接管中", cls: "orange" },
+  human_handled: { label: "人工已处理", cls: "green" },
 };
 
-// 工单状态：open 红 / in_progress 橙 / resolved 绿（同 admin HANDOFF_STATUS 语义）。
+// 工单状态：open 红 / in_progress 蓝 / resolved 绿（同 admin HANDOFF_STATUS 语义）。
 export const HANDOFF_STATUS: Record<string, { label: string; cls: string }> = {
   open: { label: "待处理", cls: "red" },
-  in_progress: { label: "跟进中", cls: "orange" },
+  in_progress: { label: "跟进中", cls: "blue" },
   resolved: { label: "已解决", cls: "green" },
 };
 

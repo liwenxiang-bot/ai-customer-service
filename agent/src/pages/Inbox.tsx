@@ -7,46 +7,34 @@ import { useRealtime } from "../realtime";
 import { currentTheme, toggleTheme, ThemeMode } from "../theme";
 import { alertActivity, notifyEnabled, setNotifyEnabled } from "../notify";
 import { toast } from "../toast";
-import { channelLabel, fmtShort, HANDOFF_STATUS, sessionStatusMeta } from "../utils";
+import { channelLabel, fmtShort, sessionStatusMeta } from "../utils";
+import { IconBell, IconBellOff, IconInbox, IconMoon, IconSun } from "../icons";
+import { Logo } from "../components/Logo";
+import { Status } from "../components/Status";
 
 type Tab = "waiting" | "mine" | "all";
 
 const APP_TITLE = "坐席工作台";
 
-/** 各 tab 的空态文案（插画共用一个耳机线稿）。 */
+/** 各 tab 的空态文案：一句现状 + 一句去向。 */
 const EMPTY_COPY: Record<Tab, { title: string; sub: string }> = {
-  waiting: { title: "现在没有客户在等待", sub: "客户转人工后会第一时间出现在这里，安心喝口水吧" },
-  mine: { title: "还没有认领的会话", sub: "去「待认领」把需要帮助的客户接过来吧" },
-  all: { title: "暂无需要关注的会话", sub: "待人工与接管中的会话都会汇总在这里" },
+  waiting: { title: "没有等待中的客户", sub: "客户转人工后会出现在这里。" },
+  mine: { title: "你还没有认领会话", sub: "到「待认领」认领需要人工的客户。" },
+  all: { title: "没有需要人工的会话", sub: "待人工和接管中的会话会显示在这里。" },
 };
 
-/** 工单认领徽标：待认领红（=admin open）/ 他人跟进橙（=admin in_progress）/ 我认领的蓝。
+/** 工单认领信息（纯文字）：待认领红 / 我认领的主色 / 他人跟进中性。
  *  列表项未附 ticket 字段（如「全部」tab 老数据）时不显示。 */
-function ClaimBadge({ ticket, myId, status }: { ticket: any; myId?: string; status?: string }) {
+function ClaimText({ ticket, myId, status }: { ticket: any; myId?: string; status?: string }) {
   if (ticket === undefined) return null;
   if (!ticket || ticket.status === "open") {
-    // 接管中的会话没有存活工单时不标「待认领」——旁边的状态徽标已说明有人在接待。
+    // 接管中的会话没有存活工单时不标「待认领」——旁边的状态已说明有人在接待。
     if (!ticket && status === "human_takeover") return null;
-    return <span className={`badge badge-${HANDOFF_STATUS.open.cls}`}>待认领</span>;
+    return <span className="meta-text meta-open">待认领</span>;
   }
   if (ticket.assignee_id && ticket.assignee_id === myId)
-    return <span className="badge badge-blue">我认领的</span>;
-  return (
-    <span className={`badge badge-${HANDOFF_STATUS.in_progress.cls}`}>
-      {ticket.assignee_name || "同事"}跟进中
-    </span>
-  );
-}
-
-/** 头像取名字首字符（Array.from 兼容 emoji/生僻字），带未读红点。 */
-function Avatar({ name, unread }: { name: string; unread: boolean }) {
-  const ch = Array.from((name || "客").trim())[0] || "客";
-  return (
-    <span className="conv-avatar" aria-hidden="true">
-      {ch}
-      {unread && <i className="unread-dot" />}
-    </span>
-  );
+    return <span className="meta-text meta-mine">我认领的</span>;
+  return <span className="meta-text">{ticket.assignee_name || "同事"}跟进中</span>;
 }
 
 const FROM_LABEL: Record<string, string> = { customer: "", ai: "AI：", agent: "我方：" };
@@ -55,7 +43,7 @@ const newer = (a?: string | null, b?: string | null) =>
   !!a && !!b && Date.parse(a) > Date.parse(b);
 
 /** 收件箱：待认领 / 我的 / 全部 三个队列，15s 轮询 + queue 事件即时刷新。
- *  桌面端作为左栏常驻（activeId 高亮当前会话）；后台有新动态的会话打未读点并闪动标题。 */
+ *  桌面端作为左栏常驻（activeId 高亮当前会话）；后台有新动态的会话在名字前打未读点并闪动标题。 */
 export function Inbox({ activeId = "" }: { activeId?: string }) {
   const { user, logout } = useAuth();
   const nav = useNavigate();
@@ -258,6 +246,7 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
   return (
     <div className="app-shell">
       <header className="app-header">
+        <Logo size={22} />
         <div className="app-header-title">{APP_TITLE}</div>
         <div className="app-header-right">
           <span className="muted app-header-user">{user?.name || user?.email}</span>
@@ -267,18 +256,7 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
             title={themeMode === "dark" ? "切换为浅色" : "切换为深色"}
             aria-label="切换主题"
           >
-            {themeMode === "dark" ? (
-              <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true">
-                <circle cx="10" cy="10" r="4" fill="currentColor" />
-                <g stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-                  <path d="M10 1.6v2M10 16.4v2M1.6 10h2M16.4 10h2M4.1 4.1l1.4 1.4M14.5 14.5l1.4 1.4M15.9 4.1l-1.4 1.4M5.5 14.5l-1.4 1.4" />
-                </g>
-              </svg>
-            ) : (
-              <svg viewBox="0 0 20 20" width="16" height="16" fill="currentColor" aria-hidden="true">
-                <path d="M17.4 12.3A7.5 7.5 0 0 1 7.7 2.6a.5.5 0 0 0-.65-.62 8.3 8.3 0 1 0 10.97 10.97.5.5 0 0 0-.62-.65z" />
-              </svg>
-            )}
+            {themeMode === "dark" ? <IconSun /> : <IconMoon />}
           </button>
           <button
             className={`btn btn-ghost btn-icon${notifyOn ? " btn-on" : ""}`}
@@ -287,15 +265,11 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
               if (!notifyOn && !next) toast("浏览器未允许通知，请在地址栏左侧的站点设置中开启", "error");
               setNotifyOn(next);
             }}
-            title={notifyOn ? "已开启新消息提醒（页面在后台时弹通知并提示音）" : "开启新消息提醒"}
-            aria-label={notifyOn ? "关闭新消息提醒" : "开启新消息提醒"}
+            title={notifyOn ? "新消息提醒已开启（页面在后台时弹通知并响提示音），点击关闭" : "新消息提醒已关闭，点击开启"}
+            aria-label="新消息提醒"
             aria-pressed={notifyOn}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              {!notifyOn && <line x1="3" y1="3" x2="21" y2="21" />}
-            </svg>
+            {notifyOn ? <IconBell /> : <IconBellOff />}
           </button>
           <button className="btn btn-ghost btn-sm" onClick={doLogout}>退出</button>
         </div>
@@ -325,7 +299,6 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
           <div aria-hidden="true">
             {[0, 1, 2, 3].map((i) => (
               <div key={i} className="conv-item conv-item-sk">
-                <span className="sk sk-avatar" />
                 <div className="conv-main">
                   <div className="sk sk-line" style={{ width: `${52 - i * 4}%` }} />
                   <div className="sk sk-line sk-line-dim" style={{ width: `${84 - i * 6}%` }} />
@@ -335,14 +308,7 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
           </div>
         ) : list.length === 0 && !error ? (
           <div className="empty">
-            <svg className="empty-icon" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-              <path d="M20 38v-5c0-7 5.4-12 12-12s12 5 12 12v5" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" />
-              <rect x="16.6" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
-              <rect x="40.4" y="36.4" width="7" height="11" rx="3.2" fill="currentColor" />
-              <path d="M43.6 47.4c-.6 3.2-3.8 5-7.6 5h-2.4" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
-              <circle cx="32.4" cy="52.4" r="2.2" fill="currentColor" />
-              <path d="M49 14l1 2.6 2.6 1-2.6 1-1 2.6-1-2.6-2.6-1 2.6-1zM14 18l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" fill="currentColor" opacity="0.5" />
-            </svg>
+            <IconInbox className="empty-icon" size={36} />
             <div className="empty-title">{empty.title}</div>
             <div className="empty-sub">{empty.sub}</div>
           </div>
@@ -357,10 +323,12 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
                 className={`conv-item${it.id === activeId ? " conv-item-active" : ""}`}
                 onClick={() => nav(`/s/${it.id}`)}
               >
-                <Avatar name={name} unread={unread.has(it.id)} />
                 <div className="conv-main">
                   <div className="conv-row">
-                    <span className="conv-name">{name}</span>
+                    <span className="conv-name">
+                      {unread.has(it.id) && <i className="unread-dot" aria-label="有新消息" />}
+                      {name}
+                    </span>
                     <span className="conv-time">{fmtShort(it.last_activity_at)}</span>
                   </div>
                   <div className="conv-summary">
@@ -374,9 +342,9 @@ export function Inbox({ activeId = "" }: { activeId?: string }) {
                     )}
                   </div>
                   <div className="conv-meta">
-                    <span className="badge badge-plain">{channelLabel(it.channel_type)}</span>
-                    <span className={`badge badge-${st.cls}`}>{st.label}</span>
-                    <ClaimBadge ticket={it.ticket} myId={user?.id} status={it.status} />
+                    <Status tone={st.cls} label={st.label} />
+                    <ClaimText ticket={it.ticket} myId={user?.id} status={it.status} />
+                    <span className="meta-text">{channelLabel(it.channel_type)}</span>
                   </div>
                 </div>
                 {claimable && (

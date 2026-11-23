@@ -1,25 +1,15 @@
 import { Suspense, lazy, useState, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { Layout, Menu, Spin, Dropdown, Avatar, Tag, Button, Tooltip, Alert, theme } from "antd";
+import { Layout, Menu, Spin, Dropdown, Button, Tooltip, Alert, theme, type MenuProps } from "antd";
 import {
-  DashboardOutlined,
-  BookOutlined,
-  RobotOutlined,
-  ApiOutlined,
-  MessageOutlined,
-  CustomerServiceOutlined,
-  TeamOutlined,
-  LogoutOutlined,
-  UserOutlined,
-  BellOutlined,
-  BulbOutlined,
-  ThunderboltOutlined,
-  ApartmentOutlined,
-  ExportOutlined,
-} from "@ant-design/icons";
+  IconOverview, IconConversations, IconTicket, IconAgentDesk, IconKnowledge, IconCanned,
+  IconModel, IconChannel, IconAccounts, IconTenant,
+  IconMenuFold, IconMenuUnfold, IconSun, IconMoon, IconLogout, IconCaretDown, IconExternal,
+} from "./icons";
 import { useAuth, isAdmin, isSuperAdmin, agentConsoleUrl } from "./auth";
 import { tenantStore } from "./api/client";
 import { useThemeMode } from "./theme";
+import { Logo } from "./components/Logo";
 
 // Route-level code splitting: each page loads on demand (pages use named exports).
 const Login = lazy(() => import("./pages/Login").then((m) => ({ default: m.Login })));
@@ -47,17 +37,38 @@ const PageLoading = ({ full }: { full?: boolean }) => (
 // {APP_BASE_URL}/agent），admin 与坐席站可能不同域，不能写相对路径。
 const AGENT_MENU_KEY = "__agent_console__";
 
-const MENU = [
-  { key: "/dashboard", icon: <DashboardOutlined />, label: "概览" },
-  { key: "/conversations", icon: <MessageOutlined />, label: "对话记录" },
-  { key: "/knowledge", icon: <BookOutlined />, label: "知识库" },
-  { key: "/handoff", icon: <BellOutlined />, label: "转人工工单" },
-  { key: "/canned", icon: <ThunderboltOutlined />, label: "快捷回复" },
-  { key: "/ai-config", icon: <RobotOutlined />, label: "AI 配置" },
-  { key: "/channels", icon: <ApiOutlined />, label: "渠道配置" },
-  { key: "/accounts", icon: <TeamOutlined />, label: "账号权限", adminOnly: true },
-  { key: "/tenants", icon: <ApartmentOutlined />, label: "租户管理", superOnly: true },
+type NavItem = { key: string; icon: ReactNode; label: string; external?: boolean; adminOnly?: boolean; superOnly?: boolean };
+
+// 导航按「日常运营 → 内容与模型 → 系统」分三组，组内按使用频率排序。
+const NAV: { title: string; items: NavItem[] }[] = [
+  {
+    title: "运营",
+    items: [
+      { key: "/dashboard", icon: <IconOverview />, label: "概览" },
+      { key: "/conversations", icon: <IconConversations />, label: "对话记录" },
+      { key: "/handoff", icon: <IconTicket />, label: "转人工工单" },
+      { key: AGENT_MENU_KEY, icon: <IconAgentDesk />, label: "坐席工作台", external: true },
+    ],
+  },
+  {
+    title: "知识与模型",
+    items: [
+      { key: "/knowledge", icon: <IconKnowledge />, label: "知识库" },
+      { key: "/canned", icon: <IconCanned />, label: "快捷回复" },
+      { key: "/ai-config", icon: <IconModel />, label: "AI 配置" },
+    ],
+  },
+  {
+    title: "系统",
+    items: [
+      { key: "/channels", icon: <IconChannel />, label: "渠道配置" },
+      { key: "/accounts", icon: <IconAccounts />, label: "账号权限", adminOnly: true },
+      { key: "/tenants", icon: <IconTenant />, label: "租户管理", superOnly: true },
+    ],
+  },
 ];
+
+const ROLE_LABEL: Record<string, string> = { admin: "管理员", operator: "运营", readonly: "只读" };
 
 function AppLayout() {
   const { user, logout } = useAuth();
@@ -66,21 +77,24 @@ function AppLayout() {
   const { token } = theme.useToken();
   const { dark, toggle } = useThemeMode();
   const [collapsed, setCollapsed] = useState(false);
-  const items = MENU.filter(
-    (m) => (!m.adminOnly || isAdmin(user?.role)) && (!m.superOnly || isSuperAdmin(user))
-  );
-  // 坐席工作台外链入口（放在「概览」之后）；点击在新标签打开独立站。
-  const agentUrl = agentConsoleUrl(user);
-  const menuItems: { key: string; icon: ReactNode; label: ReactNode }[] = items.map((m) => ({ key: m.key, icon: m.icon, label: m.label }));
-  menuItems.splice(1, 0, {
-    key: AGENT_MENU_KEY,
-    icon: <CustomerServiceOutlined />,
-    label: (
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-        坐席工作台 <ExportOutlined style={{ fontSize: 11, opacity: 0.65 }} />
-      </span>
-    ),
+
+  const groups = NAV.map((g) => ({
+    ...g,
+    items: g.items.filter((m) => (!m.adminOnly || isAdmin(user?.role)) && (!m.superOnly || isSuperAdmin(user))),
+  })).filter((g) => g.items.length > 0);
+  const toMenuItem = (m: NavItem) => ({
+    key: m.key,
+    icon: m.icon,
+    title: m.label,
+    label: m.external ? <>{m.label}<IconExternal className="acs-nav-ext" /></> : m.label,
   });
+  // 展开时带分组标题；折叠成图标栏后标题放不下，改用分隔线保留分组。
+  const menuItems: MenuProps["items"] = collapsed
+    ? groups.flatMap((g, i) => [...(i ? [{ type: "divider" as const, key: `d${i}` }] : []), ...g.items.map(toMenuItem)])
+    : groups.map((g) => ({ type: "group" as const, key: g.title, label: g.title, children: g.items.map(toMenuItem) }));
+
+  // 坐席工作台是独立站：点击在新标签打开，不走站内路由。
+  const agentUrl = agentConsoleUrl(user);
   const onMenuClick = (key: string) => {
     if (key === AGENT_MENU_KEY) { window.open(agentUrl, "_blank", "noopener,noreferrer"); return; }
     nav(key);
@@ -90,43 +104,59 @@ function AppLayout() {
 
   return (
     <Layout style={{ height: "100vh" }}>
-      <Sider theme={dark ? "dark" : "light"} width={200} breakpoint="lg" collapsible collapsed={collapsed} onCollapse={setCollapsed} style={{ borderRight: `1px solid ${token.colorBorderSecondary}` }}>
-        <div style={{ height: 56, display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, padding: collapsed ? 0 : "0 20px", fontWeight: 700, fontSize: 16, color: dark ? "#2DD4BF" : "#0F766E", whiteSpace: "nowrap", overflow: "hidden" }}>
-          <RobotOutlined style={{ fontSize: 18 }} />{!collapsed && "AI 客服后台"}
+      <Header className="acs-bar">
+        <button type="button" className="acs-bar-btn" onClick={() => setCollapsed((c) => !c)} aria-label={collapsed ? "展开导航" : "收起导航"}>
+          {collapsed ? <IconMenuUnfold /> : <IconMenuFold />}
+        </button>
+        <div className="acs-brand">
+          <Logo size={24} />
+          AI 客服
+          <span className="acs-brand-scope">运营后台</span>
         </div>
-        <Menu
-          mode="inline"
-          style={{ borderInlineEnd: "none" }}
-          selectedKeys={[loc.pathname]}
-          items={menuItems}
-          onClick={({ key }) => onMenuClick(key)}
-        />
-      </Sider>
+        <div className="acs-bar-space" />
+        <Tooltip title={dark ? "切换到浅色" : "切换到深色"}>
+          <button type="button" className="acs-bar-btn" onClick={toggle} aria-label="切换主题">
+            {dark ? <IconSun /> : <IconMoon />}
+          </button>
+        </Tooltip>
+        <Dropdown
+          trigger={["click"]}
+          menu={{ items: [{ key: "logout", icon: <IconLogout />, label: "退出登录", onClick: async () => { await logout(); nav("/login"); } }] }}
+        >
+          <button type="button" className="acs-user">
+            <span className="acs-user-name">{user?.name || user?.email}</span>
+            <span className="acs-user-role">{ROLE_LABEL[user?.role || ""] || "只读"}</span>
+            <IconCaretDown />
+          </button>
+        </Dropdown>
+      </Header>
       <Layout>
-        <Header style={{ background: token.colorBgContainer, display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 4, padding: "0 16px", borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
-          <Tooltip title={dark ? "切换到浅色" : "切换到深色"}>
-            <Button type="text" icon={<BulbOutlined />} onClick={toggle} aria-label="切换主题" />
-          </Tooltip>
-          <Dropdown
-            menu={{ items: [{ key: "logout", icon: <LogoutOutlined />, label: "退出登录", onClick: async () => { await logout(); nav("/login"); } }] }}
-          >
-            <span style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 8, marginLeft: 8, minWidth: 0 }}>
-              <Avatar size="small" icon={<UserOutlined />} style={{ background: "#0F766E" }} />
-              {/* Truncate long names on narrow screens instead of wrapping the header. */}
-              <span style={{ maxWidth: 160, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user?.name || user?.email}</span>
-              <Tag color={isAdmin(user?.role) ? "purple" : user?.role === "operator" ? "blue" : "default"}>
-                {user?.role === "admin" ? "管理员" : user?.role === "operator" ? "运营" : "只读"}
-              </Tag>
-            </span>
-          </Dropdown>
-        </Header>
+        <Sider
+          className="acs-sider"
+          theme="light"
+          width={208}
+          collapsedWidth={56}
+          breakpoint="lg"
+          trigger={null}
+          collapsed={collapsed}
+          onBreakpoint={setCollapsed}
+          style={{ background: token.colorBgContainer }}
+        >
+          <Menu
+            mode="inline"
+            inlineIndent={16}
+            selectedKeys={[loc.pathname]}
+            items={menuItems}
+            onClick={({ key }) => onMenuClick(key)}
+          />
+        </Sider>
         <Content style={{ overflow: "auto", background: token.colorBgLayout }}>
           {actingAs && (
             <Alert
               banner
               type="warning"
               showIcon
-              message={<span>正在以租户 <b>{tenantStore.name || actingAs}</b> 身份查看 —— 所有数据已切换到该租户</span>}
+              message={<span>正在以租户 <b>{tenantStore.name || actingAs}</b> 身份查看，所有数据已切换到该租户</span>}
               action={<Button size="small" onClick={() => { tenantStore.set(""); window.location.assign("/tenants"); }}>退出</Button>}
             />
           )}

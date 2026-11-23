@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { App as AntApp, Button, Card, Form, Input, Modal, Popconfirm, Space, Switch, Table, Tag } from "antd";
-import { LoginOutlined, PlusOutlined } from "@ant-design/icons";
+import { IconAdd, IconEnter } from "../icons";
+import { PageHeader } from "../components/PageHeader";
+import { StatusDot } from "../components/StatusDot";
 import { tenantApi } from "../api";
 import { apiError, tenantStore } from "../api/client";
 
@@ -54,14 +56,14 @@ export function Tenants() {
     { title: "Widget channel_key", dataIndex: "web_channel_key", render: (s: string) => <code>{s || "—"}</code> },
     { title: "管理员", dataIndex: "admins", width: 80 },
     { title: "知识条目", dataIndex: "knowledge_items", width: 90 },
-    { title: "状态", dataIndex: "is_active", width: 80, render: (a: boolean) => <Tag color={a ? "green" : "red"}>{a ? "启用" : "停用"}</Tag> },
+    { title: "状态", dataIndex: "is_active", width: 80, render: (a: boolean) => <StatusDot meta={a ? { label: "启用", color: "success" } : { label: "停用", color: "default" }} /> },
     {
       title: "操作", width: 200, render: (_: any, r: any) => (
         <Space>
           {active === r.slug ? (
-            <Tag color="gold">查看中</Tag>
+            <Tag color="warning">查看中</Tag>
           ) : (
-            <Button size="small" icon={<LoginOutlined />} disabled={!r.is_active} onClick={() => enter(r)}>进入</Button>
+            <Button size="small" icon={<IconEnter />} disabled={!r.is_active} onClick={() => enter(r)}>进入</Button>
           )}
           {r.is_active ? (
             // 停用是高危操作：整租户立即不可用，需二次确认；启用方向无需拦截。
@@ -78,13 +80,15 @@ export function Tenants() {
   ];
 
   return (
-    <Card>
-      <div className="acs-page-title">租户管理</div>
-      <div className="acs-page-sub">超级管理员可创建租户；各租户的知识库、会话、坐席、账号由数据库 RLS 强制隔离。</div>
-      <div style={{ marginBottom: 12 }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新建租户</Button>
-      </div>
-      <Table rowKey="id" loading={loading} columns={columns as any} dataSource={rows} size="small" pagination={false} />
+    <div>
+      <PageHeader
+        title="租户管理"
+        sub="各租户的知识库、会话、坐席与账号相互隔离。"
+        extra={<Button type="primary" icon={<IconAdd />} onClick={() => setOpen(true)}>新建租户</Button>}
+      />
+      <Card>
+        <Table rowKey="id" loading={loading} columns={columns as any} dataSource={rows} size="small" pagination={false} />
+      </Card>
 
       <Modal title="新建租户" open={open} onCancel={() => setOpen(false)} onOk={create} okText="创建并开通" destroyOnHidden>
         <Form form={form} layout="vertical">
@@ -103,19 +107,19 @@ export function Tenants() {
         </Form>
       </Modal>
 
-      <Modal title="租户已创建 ✅" open={!!created} onCancel={() => setCreated(null)}
+      <Modal title="租户已创建" open={!!created} onCancel={() => setCreated(null)}
         footer={[<Button key="ok" type="primary" onClick={() => setCreated(null)}>知道了</Button>]}>
         {created && (
           <div style={{ lineHeight: 2 }}>
             <div>租户：<b>{created.name}</b></div>
             <div>登录标识 slug：<code>{created.slug}</code>（该租户管理员登录时填这个）</div>
             <div>Widget channel_key：<code>{created.web_channel_key}</code>（嵌入该租户网站时用）</div>
-            <div style={{ color: "#888", fontSize: 12, marginTop: 8 }}>
+            <div className="acs-caption" style={{ marginTop: 8 }}>
               管理员用上面的邮箱+初始密码、并在登录页填入 slug 即可登录；数据与其他租户完全隔离。
             </div>
           </div>
         )}
       </Modal>
-    </Card>
+    </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { App as AntApp, Button, Card, Drawer, Form, Input, InputNumber, Popconfirm, Space, Table, Tag, Typography } from "antd";
-import { PlusOutlined, SearchOutlined } from "@ant-design/icons";
+import { App as AntApp, Button, Card, Drawer, Form, Input, InputNumber, Popconfirm, Space, Table, Typography } from "antd";
+import { IconAdd, IconSearch } from "../icons";
+import { PageHeader } from "../components/PageHeader";
 import { cannedApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, canEdit } from "../auth";
@@ -40,7 +41,7 @@ export function CannedResponses() {
 
   const columns = [
     { title: "标题", dataIndex: "title", width: 200, render: (t: string) => t || <Typography.Text type="secondary">（无标题）</Typography.Text> },
-    { title: "分类", dataIndex: "category", width: 120, render: (c: string) => c ? <Tag>{c}</Tag> : "—" },
+    { title: "分类", dataIndex: "category", width: 120, render: (c: string) => c || "—" },
     { title: "内容", dataIndex: "content", ellipsis: true },
     { title: "排序", dataIndex: "sort_order", width: 70 },
     ...(editable ? [{
@@ -57,13 +58,12 @@ export function CannedResponses() {
 
   return (
     <div>
-      <div className="acs-page-title">快捷回复</div>
-      <div className="acs-page-sub">维护常用回复模板，坐席在工作台接管对话时可一键插入。</div>
+      <PageHeader title="快捷回复" sub="坐席接管对话时，可在工作台一键插入这里的模板。" />
       <Card>
         <Space style={{ marginBottom: 12 }} wrap>
-          <Input allowClear placeholder="搜索标题/内容" prefix={<SearchOutlined />} style={{ width: 220 }}
+          <Input allowClear placeholder="搜索标题/内容" prefix={<IconSearch />} style={{ width: 220 }}
             value={search} onChange={(e) => setSearch(e.target.value)} />
-          {editable && <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit(null)}>新增模板</Button>}
+          {editable && <Button type="primary" icon={<IconAdd />} onClick={() => openEdit(null)}>新增模板</Button>}
         </Space>
         <Table rowKey="id" loading={loading} columns={columns as any} dataSource={items} size="small" pagination={{ pageSize: 20, hideOnSinglePage: true }} />
       </Card>

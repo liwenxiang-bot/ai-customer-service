@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Form, Input, Switch, Tabs, Select, InputNumber, Space, Alert, ColorPicker, App as AntApp, Divider } from "antd";
+import { PageHeader } from "../components/PageHeader";
 import { channelApi } from "../api";
 import { apiError } from "../api/client";
 import { useAuth, isAdmin } from "../auth";
@@ -7,8 +8,7 @@ import { useAuth, isAdmin } from "../auth";
 export function Channels() {
   return (
     <div>
-      <div className="acs-page-title">渠道配置</div>
-      <div className="acs-page-sub">配置 Web 对话窗口的品牌与防滥用、转人工通知方式，以及企业微信接入。</div>
+      <PageHeader title="渠道配置" />
       <Tabs
         items={[
           { key: "web", label: "Web 对话窗口", children: <WebTab /> },
